@@ -1,0 +1,955 @@
+{
+  "no_match_score_floor": 4.0,
+  "configs": {
+    "200_40": {
+      "chunk_count": 35,
+      "overall": {
+        "hit_at_1": 0.625,
+        "hit_at_5": 0.875,
+        "mrr": 0.7291666666666666
+      },
+      "by_category": {
+        "exact_term": {
+          "count": 4,
+          "hit_at_1": 0.75,
+          "hit_at_5": 1.0,
+          "mrr": 0.875
+        },
+        "synonym_poor": {
+          "count": 2,
+          "hit_at_1": 0.5,
+          "hit_at_5": 0.5,
+          "mrr": 0.5
+        },
+        "multi_chunk": {
+          "count": 2,
+          "hit_at_1": 0.5,
+          "hit_at_5": 1.0,
+          "mrr": 0.6666666666666666,
+          "full_hit_rate": 0.5
+        }
+      },
+      "no_match": {
+        "Q09": {
+          "category": "no_match",
+          "top_score": 10.801036868264658,
+          "phrase_support": false,
+          "matched_phrases": [],
+          "missing_phrases": [
+            "interest rate",
+            "late payment"
+          ],
+          "top_chunk": {
+            "chunk_id": "8f3a43267b698f4e",
+            "source_file": "DOC-003-pricing-payment.md"
+          },
+          "correctly_abstained": true
+        },
+        "Q10": {
+          "category": "no_match",
+          "top_score": 7.557917954886094,
+          "phrase_support": false,
+          "matched_phrases": [],
+          "missing_phrases": [
+            "fee applies",
+            "late delivery",
+            "penalty fee"
+          ],
+          "top_chunk": {
+            "chunk_id": "293a08cfc07546ca",
+            "source_file": "DOC-005-delivery-inspection.md"
+          },
+          "correctly_abstained": true
+        }
+      },
+      "per_query": {
+        "Q01": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "54e9e35c0ed7df46",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 13.480469423105854
+          },
+          "top1_terms": [
+            {
+              "term": "public",
+              "tf": 1,
+              "idf": 3.178
+            },
+            {
+              "term": "liability",
+              "tf": 1,
+              "idf": 3.178
+            },
+            {
+              "term": "insurance",
+              "tf": 1,
+              "idf": 2.331
+            },
+            {
+              "term": "hold",
+              "tf": 1,
+              "idf": 2.331
+            },
+            {
+              "term": "minimum",
+              "tf": 1,
+              "idf": 1.879
+            },
+            {
+              "term": "must",
+              "tf": 2,
+              "idf": 0.345
+            }
+          ],
+          "vocab_overlap_with_anchor": true
+        },
+        "Q02": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "589221130d30161b",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 12.341679759866222
+          },
+          "top1_terms": [
+            {
+              "term": "valid",
+              "tf": 3,
+              "idf": 2.079
+            },
+            {
+              "term": "standard",
+              "tf": 1,
+              "idf": 1.712
+            },
+            {
+              "term": "terms",
+              "tf": 2,
+              "idf": 1.332
+            },
+            {
+              "term": "invoice",
+              "tf": 8,
+              "idf": 1.141
+            },
+            {
+              "term": "payment",
+              "tf": 6,
+              "idf": 1.058
+            },
+            {
+              "term": "for",
+              "tf": 1,
+              "idf": 0.345
+            }
+          ],
+          "vocab_overlap_with_anchor": true
+        },
+        "Q03": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "0bc7394d69f1ed86",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 8.553554733458364
+          },
+          "top1_terms": [
+            {
+              "term": "weighting",
+              "tf": 5,
+              "idf": 2.667
+            },
+            {
+              "term": "price",
+              "tf": 1,
+              "idf": 1.569
+            },
+            {
+              "term": "evaluation",
+              "tf": 1,
+              "idf": 1.141
+            },
+            {
+              "term": "in",
+              "tf": 1,
+              "idf": 0.234
+            },
+            {
+              "term": "to",
+              "tf": 3,
+              "idf": 0.134
+            },
+            {
+              "term": "is",
+              "tf": 4,
+              "idf": 0.102
+            }
+          ],
+          "vocab_overlap_with_anchor": true
+        },
+        "Q04": {
+          "category": "exact_term",
+          "first_hit_rank": 2,
+          "hit_at_1": false,
+          "hit_at_5": true,
+          "mrr": 0.5,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "293a08cfc07546ca",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 12.856010178988416
+          },
+          "top1_terms": [
+            {
+              "term": "how",
+              "tf": 2,
+              "idf": 2.331
+            },
+            {
+              "term": "delivered",
+              "tf": 1,
+              "idf": 2.331
+            },
+            {
+              "term": "inspection",
+              "tf": 1,
+              "idf": 2.079
+            },
+            {
+              "term": "window",
+              "tf": 5,
+              "idf": 1.712
+            },
+            {
+              "term": "goods",
+              "tf": 4,
+              "idf": 1.058
+            },
+            {
+              "term": "is",
+              "tf": 3,
+              "idf": 0.102
+            }
+          ],
+          "vocab_overlap_with_anchor": false
+        },
+        "Q05": {
+          "category": "synonym_poor",
+          "first_hit_rank": null,
+          "hit_at_1": false,
+          "hit_at_5": false,
+          "mrr": 0.0,
+          "anchors_matched": 0,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "9fbcb6b100734c3c",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 4.31592014301433
+          },
+          "top1_terms": [
+            {
+              "term": "vendor",
+              "tf": 1,
+              "idf": 3.178
+            },
+            {
+              "term": "agreement",
+              "tf": 2,
+              "idf": 0.613
+            },
+            {
+              "term": "to",
+              "tf": 5,
+              "idf": 0.134
+            },
+            {
+              "term": "a",
+              "tf": 6,
+              "idf": 0.043
+            },
+            {
+              "term": "the",
+              "tf": 13,
+              "idf": 0.014
+            }
+          ],
+          "vocab_overlap_with_anchor": false
+        },
+        "Q06": {
+          "category": "synonym_poor",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "16480830a9bc0541",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 6.759844127722225
+          },
+          "top1_terms": [
+            {
+              "term": "separate",
+              "tf": 1,
+              "idf": 3.178
+            },
+            {
+              "term": "it",
+              "tf": 5,
+              "idf": 0.843
+            },
+            {
+              "term": "order",
+              "tf": 4,
+              "idf": 0.843
+            },
+            {
+              "term": "an",
+              "tf": 1,
+              "idf": 0.385
+            },
+            {
+              "term": "is",
+              "tf": 5,
+              "idf": 0.102
+            }
+          ],
+          "vocab_overlap_with_anchor": false
+        },
+        "Q07": {
+          "category": "multi_chunk",
+          "first_hit_rank": 3,
+          "hit_at_1": false,
+          "hit_at_5": true,
+          "mrr": 0.3333333333333333,
+          "anchors_matched": 1,
+          "anchors_total": 2,
+          "multi_chunk_full_hit": false,
+          "top_result": {
+            "chunk_id": "293a08cfc07546ca",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 6.980840714754561
+          },
+          "top1_terms": [
+            {
+              "term": "how",
+              "tf": 2,
+              "idf": 2.331
+            },
+            {
+              "term": "required",
+              "tf": 1,
+              "idf": 1.058
+            },
+            {
+              "term": "it",
+              "tf": 4,
+              "idf": 0.843
+            },
+            {
+              "term": "before",
+              "tf": 1,
+              "idf": 0.613
+            },
+            {
+              "term": "is",
+              "tf": 3,
+              "idf": 0.102
+            },
+            {
+              "term": "supplier",
+              "tf": 3,
+              "idf": 0.072
+            }
+          ],
+          "vocab_overlap_with_anchor": false
+        },
+        "Q08": {
+          "category": "multi_chunk",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 2,
+          "anchors_total": 2,
+          "multi_chunk_full_hit": true,
+          "top_result": {
+            "chunk_id": "a9fd80b3341dfcfc",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 9.554978204973883
+          },
+          "top1_terms": [
+            {
+              "term": "place",
+              "tf": 1,
+              "idf": 2.079
+            },
+            {
+              "term": "first",
+              "tf": 1,
+              "idf": 1.879
+            },
+            {
+              "term": "invoice",
+              "tf": 1,
+              "idf": 1.141
+            },
+            {
+              "term": "s",
+              "tf": 4,
+              "idf": 1.058
+            },
+            {
+              "term": "before",
+              "tf": 2,
+              "idf": 0.613
+            },
+            {
+              "term": "must",
+              "tf": 3,
+              "idf": 0.345
+            }
+          ],
+          "vocab_overlap_with_anchor": false
+        },
+        "Q09": {
+          "category": "no_match",
+          "top_score": 10.801036868264658,
+          "phrase_support": false,
+          "matched_phrases": [],
+          "missing_phrases": [
+            "interest rate",
+            "late payment"
+          ],
+          "top_chunk": {
+            "chunk_id": "8f3a43267b698f4e",
+            "source_file": "DOC-003-pricing-payment.md"
+          },
+          "correctly_abstained": true
+        },
+        "Q10": {
+          "category": "no_match",
+          "top_score": 7.557917954886094,
+          "phrase_support": false,
+          "matched_phrases": [],
+          "missing_phrases": [
+            "fee applies",
+            "late delivery",
+            "penalty fee"
+          ],
+          "top_chunk": {
+            "chunk_id": "293a08cfc07546ca",
+            "source_file": "DOC-005-delivery-inspection.md"
+          },
+          "correctly_abstained": true
+        }
+      }
+    },
+    "400_80": {
+      "chunk_count": 16,
+      "overall": {
+        "hit_at_1": 0.5,
+        "hit_at_5": 1.0,
+        "mrr": 0.6916666666666667
+      },
+      "by_category": {
+        "exact_term": {
+          "count": 4,
+          "hit_at_1": 0.75,
+          "hit_at_5": 1.0,
+          "mrr": 0.875
+        },
+        "synonym_poor": {
+          "count": 2,
+          "hit_at_1": 0.5,
+          "hit_at_5": 1.0,
+          "mrr": 0.6
+        },
+        "multi_chunk": {
+          "count": 2,
+          "hit_at_1": 0.0,
+          "hit_at_5": 1.0,
+          "mrr": 0.41666666666666663,
+          "full_hit_rate": 0.5
+        }
+      },
+      "no_match": {
+        "Q09": {
+          "category": "no_match",
+          "top_score": 12.159031470264203,
+          "phrase_support": false,
+          "matched_phrases": [],
+          "missing_phrases": [
+            "interest rate",
+            "late payment"
+          ],
+          "top_chunk": {
+            "chunk_id": "a24d409b835258d0",
+            "source_file": "DOC-003-pricing-payment.md"
+          },
+          "correctly_abstained": true
+        },
+        "Q10": {
+          "category": "no_match",
+          "top_score": 5.927843420092339,
+          "phrase_support": false,
+          "matched_phrases": [
+            "late delivery"
+          ],
+          "missing_phrases": [
+            "fee applies",
+            "penalty fee"
+          ],
+          "top_chunk": {
+            "chunk_id": "6bbb732eee074408",
+            "source_file": "DOC-005-delivery-inspection.md"
+          },
+          "correctly_abstained": true
+        }
+      },
+      "per_query": {
+        "Q01": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "9269a7d690fb3c70",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 10.826603124337703
+          },
+          "top1_terms": [
+            {
+              "term": "public",
+              "tf": 1,
+              "idf": 2.428
+            },
+            {
+              "term": "liability",
+              "tf": 1,
+              "idf": 2.428
+            },
+            {
+              "term": "hold",
+              "tf": 2,
+              "idf": 1.917
+            },
+            {
+              "term": "insurance",
+              "tf": 1,
+              "idf": 1.58
+            },
+            {
+              "term": "minimum",
+              "tf": 1,
+              "idf": 1.329
+            },
+            {
+              "term": "must",
+              "tf": 4,
+              "idf": 0.159
+            }
+          ],
+          "vocab_overlap_with_anchor": true
+        },
+        "Q02": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "3a0d86bdd40b3147",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 8.642058001677583
+          },
+          "top1_terms": [
+            {
+              "term": "valid",
+              "tf": 4,
+              "idf": 1.58
+            },
+            {
+              "term": "standard",
+              "tf": 1,
+              "idf": 1.329
+            },
+            {
+              "term": "terms",
+              "tf": 3,
+              "idf": 0.818
+            },
+            {
+              "term": "invoice",
+              "tf": 11,
+              "idf": 0.818
+            },
+            {
+              "term": "payment",
+              "tf": 7,
+              "idf": 0.482
+            },
+            {
+              "term": "are",
+              "tf": 7,
+              "idf": 0.092
+            }
+          ],
+          "vocab_overlap_with_anchor": true
+        },
+        "Q03": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "eb4ac9cc4fd41122",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 5.759998450602988
+          },
+          "top1_terms": [
+            {
+              "term": "weighting",
+              "tf": 5,
+              "idf": 1.917
+            },
+            {
+              "term": "price",
+              "tf": 1,
+              "idf": 0.961
+            },
+            {
+              "term": "evaluation",
+              "tf": 3,
+              "idf": 0.482
+            },
+            {
+              "term": "is",
+              "tf": 7,
+              "idf": 0.092
+            },
+            {
+              "term": "in",
+              "tf": 1,
+              "idf": 0.092
+            },
+            {
+              "term": "to",
+              "tf": 7,
+              "idf": 0.03
+            }
+          ],
+          "vocab_overlap_with_anchor": true
+        },
+        "Q04": {
+          "category": "exact_term",
+          "first_hit_rank": 2,
+          "hit_at_1": false,
+          "hit_at_5": true,
+          "mrr": 0.5,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "94c2a9f52dc00890",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 11.72997646123438
+          },
+          "top1_terms": [
+            {
+              "term": "delivered",
+              "tf": 3,
+              "idf": 1.917
+            },
+            {
+              "term": "how",
+              "tf": 2,
+              "idf": 1.58
+            },
+            {
+              "term": "inspection",
+              "tf": 1,
+              "idf": 1.58
+            },
+            {
+              "term": "window",
+              "tf": 5,
+              "idf": 1.58
+            },
+            {
+              "term": "goods",
+              "tf": 4,
+              "idf": 0.818
+            },
+            {
+              "term": "is",
+              "tf": 8,
+              "idf": 0.092
+            }
+          ],
+          "vocab_overlap_with_anchor": false
+        },
+        "Q05": {
+          "category": "synonym_poor",
+          "first_hit_rank": 5,
+          "hit_at_1": false,
+          "hit_at_5": true,
+          "mrr": 0.2,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "eb4ac9cc4fd41122",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 4.408234387905178
+          },
+          "top1_terms": [
+            {
+              "term": "vendor",
+              "tf": 1,
+              "idf": 2.428
+            },
+            {
+              "term": "over",
+              "tf": 1,
+              "idf": 1.58
+            },
+            {
+              "term": "agreement",
+              "tf": 2,
+              "idf": 0.231
+            },
+            {
+              "term": "a",
+              "tf": 19,
+              "idf": 0.03
+            },
+            {
+              "term": "the",
+              "tf": 21,
+              "idf": 0.03
+            },
+            {
+              "term": "to",
+              "tf": 7,
+              "idf": 0.03
+            }
+          ],
+          "vocab_overlap_with_anchor": false
+        },
+        "Q06": {
+          "category": "synonym_poor",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "6bbb732eee074408",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 4.62266897855881
+          },
+          "top1_terms": [
+            {
+              "term": "separate",
+              "tf": 1,
+              "idf": 2.428
+            },
+            {
+              "term": "order",
+              "tf": 6,
+              "idf": 0.582
+            },
+            {
+              "term": "it",
+              "tf": 6,
+              "idf": 0.391
+            },
+            {
+              "term": "is",
+              "tf": 12,
+              "idf": 0.092
+            },
+            {
+              "term": "an",
+              "tf": 1,
+              "idf": 0.092
+            },
+            {
+              "term": "to",
+              "tf": 2,
+              "idf": 0.03
+            }
+          ],
+          "vocab_overlap_with_anchor": false
+        },
+        "Q07": {
+          "category": "multi_chunk",
+          "first_hit_rank": 3,
+          "hit_at_1": false,
+          "hit_at_5": true,
+          "mrr": 0.3333333333333333,
+          "anchors_matched": 1,
+          "anchors_total": 2,
+          "multi_chunk_full_hit": false,
+          "top_result": {
+            "chunk_id": "eb4ac9cc4fd41122",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 5.185937504920594
+          },
+          "top1_terms": [
+            {
+              "term": "how",
+              "tf": 1,
+              "idf": 1.58
+            },
+            {
+              "term": "contract",
+              "tf": 1,
+              "idf": 1.128
+            },
+            {
+              "term": "required",
+              "tf": 1,
+              "idf": 0.693
+            },
+            {
+              "term": "does",
+              "tf": 1,
+              "idf": 0.391
+            },
+            {
+              "term": "it",
+              "tf": 2,
+              "idf": 0.391
+            },
+            {
+              "term": "before",
+              "tf": 2,
+              "idf": 0.231
+            }
+          ],
+          "vocab_overlap_with_anchor": false
+        },
+        "Q08": {
+          "category": "multi_chunk",
+          "first_hit_rank": 2,
+          "hit_at_1": false,
+          "hit_at_5": true,
+          "mrr": 0.5,
+          "anchors_matched": 2,
+          "anchors_total": 2,
+          "multi_chunk_full_hit": true,
+          "top_result": {
+            "chunk_id": "e2cf717f8f376542",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 5.803716901837215
+          },
+          "top1_terms": [
+            {
+              "term": "paid",
+              "tf": 2,
+              "idf": 1.58
+            },
+            {
+              "term": "invoice",
+              "tf": 6,
+              "idf": 0.818
+            },
+            {
+              "term": "s",
+              "tf": 1,
+              "idf": 0.582
+            },
+            {
+              "term": "before",
+              "tf": 3,
+              "idf": 0.231
+            },
+            {
+              "term": "must",
+              "tf": 2,
+              "idf": 0.159
+            },
+            {
+              "term": "be",
+              "tf": 4,
+              "idf": 0.092
+            }
+          ],
+          "vocab_overlap_with_anchor": false
+        },
+        "Q09": {
+          "category": "no_match",
+          "top_score": 12.159031470264203,
+          "phrase_support": false,
+          "matched_phrases": [],
+          "missing_phrases": [
+            "interest rate",
+            "late payment"
+          ],
+          "top_chunk": {
+            "chunk_id": "a24d409b835258d0",
+            "source_file": "DOC-003-pricing-payment.md"
+          },
+          "correctly_abstained": true
+        },
+        "Q10": {
+          "category": "no_match",
+          "top_score": 5.927843420092339,
+          "phrase_support": false,
+          "matched_phrases": [
+            "late delivery"
+          ],
+          "missing_phrases": [
+            "fee applies",
+            "penalty fee"
+          ],
+          "top_chunk": {
+            "chunk_id": "6bbb732eee074408",
+            "source_file": "DOC-005-delivery-inspection.md"
+          },
+          "correctly_abstained": true
+        }
+      }
+    }
+  }
+}
