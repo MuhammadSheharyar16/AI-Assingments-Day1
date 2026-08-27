@@ -1,0 +1,211 @@
+{
+  "version": "1.0",
+  "dataset": "AICO Day 2 hybrid retrieval evaluation set",
+  "corpus": [
+    "DOC-001",
+    "DOC-002",
+    "DOC-003",
+    "DOC-004",
+    "DOC-005"
+  ],
+  "matching_rule": "A retrieved chunk matches an anchor when the normalised anchor string is a substring of the normalised chunk text. Normalisation: lowercase, replace every character that is not a letter, digit or space with a space, then collapse runs of whitespace to a single space and strip.",
+  "note": "Q01 to Q10 are carried over unchanged from the Day 1 set so the two days are directly comparable. Q11 to Q16 are new and are written so that no significant query term appears in the target text.",
+  "scoring": {
+    "hit_at_1": "Rank 1 chunk matches at least one anchor.",
+    "hit_at_5": "At least one chunk in ranks 1 to 5 matches at least one anchor.",
+    "mrr": "1 divided by the rank of the first matching chunk, 0 if no match in the top 5, averaged over the thirteen scored queries.",
+    "multi_chunk_full_hit": "All anchors for the query are matched by at least one chunk in the top 5.",
+    "no_match": "Scored separately and inverted. Correct behaviour is returning no result above the documented score floor for that mode.",
+    "scored_queries": [
+      "Q01",
+      "Q02",
+      "Q03",
+      "Q04",
+      "Q05",
+      "Q06",
+      "Q07",
+      "Q08",
+      "Q11",
+      "Q12",
+      "Q13",
+      "Q14",
+      "Q15"
+    ],
+    "separately_reported_queries": [
+      "Q09",
+      "Q10",
+      "Q16"
+    ]
+  },
+  "queries": [
+    {
+      "query_id": "Q01",
+      "text": "What is the minimum public liability insurance a supplier must hold?",
+      "category": "exact_term",
+      "relevant": [
+        {
+          "doc_id": "DOC-004",
+          "anchor": "public liability cover of at least five million pounds"
+        }
+      ]
+    },
+    {
+      "query_id": "Q02",
+      "text": "What are the standard payment terms for a valid invoice?",
+      "category": "exact_term",
+      "relevant": [
+        {
+          "doc_id": "DOC-003",
+          "anchor": "net thirty days from the date of a valid invoice"
+        }
+      ]
+    },
+    {
+      "query_id": "Q03",
+      "text": "What weighting is given to price in supplier evaluation?",
+      "category": "exact_term",
+      "relevant": [
+        {
+          "doc_id": "DOC-001",
+          "anchor": "price and total cost carries a weighting of thirty five percent"
+        }
+      ]
+    },
+    {
+      "query_id": "Q04",
+      "text": "How long is the inspection window for delivered goods?",
+      "category": "exact_term",
+      "relevant": [
+        {
+          "doc_id": "DOC-005",
+          "anchor": "inspection window of ten working days"
+        }
+      ]
+    },
+    {
+      "query_id": "Q05",
+      "text": "Can a vendor hand the agreement over to another company?",
+      "category": "synonym_poor",
+      "relevant": [
+        {
+          "doc_id": "DOC-002",
+          "anchor": "may not assign or novate the agreement"
+        }
+      ]
+    },
+    {
+      "query_id": "Q06",
+      "text": "Is it acceptable to split an order into several separate shipments?",
+      "category": "synonym_poor",
+      "relevant": [
+        {
+          "doc_id": "DOC-005",
+          "anchor": "partial delivery will only be accepted"
+        }
+      ]
+    },
+    {
+      "query_id": "Q07",
+      "text": "How much notice is required before a supplier is removed, and does the contract override it?",
+      "category": "multi_chunk",
+      "relevant": [
+        {
+          "doc_id": "DOC-001",
+          "anchor": "ninety days written notice of withdrawal"
+        },
+        {
+          "doc_id": "DOC-002",
+          "anchor": "supersedes any notice period stated in the sourcing policy"
+        }
+      ]
+    },
+    {
+      "query_id": "Q08",
+      "text": "What must be in place before a supplier's first invoice can be paid?",
+      "category": "multi_chunk",
+      "relevant": [
+        {
+          "doc_id": "DOC-004",
+          "anchor": "bank verification must be completed before the first payment"
+        },
+        {
+          "doc_id": "DOC-003",
+          "anchor": "a valid purchase order number must appear on every invoice"
+        }
+      ]
+    },
+    {
+      "query_id": "Q09",
+      "text": "What interest rate is charged on a late payment?",
+      "category": "no_match",
+      "relevant": []
+    },
+    {
+      "query_id": "Q10",
+      "text": "What penalty fee applies to a late delivery?",
+      "category": "no_match",
+      "relevant": []
+    },
+    {
+      "query_id": "Q11",
+      "text": "What happens if a company we buy from goes bust?",
+      "category": "semantic_only",
+      "relevant": [
+        {
+          "doc_id": "DOC-002",
+          "anchor": "becomes insolvent enters administration"
+        }
+      ]
+    },
+    {
+      "query_id": "Q12",
+      "text": "How quickly does a data leak have to be reported to us?",
+      "category": "semantic_only",
+      "relevant": [
+        {
+          "doc_id": "DOC-004",
+          "anchor": "within seventy two hours of becoming aware"
+        }
+      ]
+    },
+    {
+      "query_id": "Q13",
+      "text": "Do we get money off for paying a bill quickly?",
+      "category": "semantic_only",
+      "relevant": [
+        {
+          "doc_id": "DOC-003",
+          "anchor": "discount of two percent applies to invoices settled within ten days"
+        }
+      ]
+    },
+    {
+      "query_id": "Q14",
+      "text": "Who pays when a truck turns up at the wrong time and is turned away?",
+      "category": "semantic_only",
+      "relevant": [
+        {
+          "doc_id": "DOC-005",
+          "anchor": "the supplier bears the cost of the return and redelivery"
+        }
+      ]
+    },
+    {
+      "query_id": "Q15",
+      "text": "Is it ever allowed to pick one firm without asking others for prices?",
+      "category": "semantic_only",
+      "relevant": [
+        {
+          "doc_id": "DOC-001",
+          "anchor": "an award made without competition"
+        }
+      ]
+    },
+    {
+      "query_id": "Q16",
+      "text": "What is the maximum bulk order discount a supplier can offer?",
+      "category": "no_match",
+      "relevant": []
+    }
+  ]
+}
