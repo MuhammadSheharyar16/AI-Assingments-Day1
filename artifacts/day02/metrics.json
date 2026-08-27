@@ -1,0 +1,1073 @@
+{
+  "rrf_k": 60,
+  "score_floor": {
+    "bm25": 7.0,
+    "vector": 0.3,
+    "hybrid": 0.0305
+  },
+  "cache_evidence": {
+    "run1_cold": {
+      "embedded": 23,
+      "cached": 0,
+      "calls": 2
+    },
+    "run2_warm": {
+      "embedded": 0,
+      "cached": 23,
+      "calls": 0
+    },
+    "run3_after_edit": {
+      "embedded": 1,
+      "cached": 22,
+      "calls": 1
+    }
+  },
+  "modes": {
+    "bm25": {
+      "overall": {
+        "hit_at_1": 0.46153846153846156,
+        "hit_at_5": 0.6923076923076923,
+        "mrr": 0.5448717948717948
+      },
+      "by_category": {
+        "exact_term": {
+          "count": 4,
+          "hit_at_1": 0.75,
+          "hit_at_5": 1.0,
+          "mrr": 0.875
+        },
+        "synonym_poor": {
+          "count": 2,
+          "hit_at_1": 0.5,
+          "hit_at_5": 0.5,
+          "mrr": 0.5
+        },
+        "multi_chunk": {
+          "count": 2,
+          "hit_at_1": 0.5,
+          "hit_at_5": 1.0,
+          "mrr": 0.6666666666666666,
+          "full_hit_rate": 1.0
+        },
+        "semantic_only": {
+          "count": 5,
+          "hit_at_1": 0.2,
+          "hit_at_5": 0.4,
+          "mrr": 0.25
+        }
+      },
+      "no_match": {
+        "Q09": {
+          "category": "no_match",
+          "top_score": 11.795157569837066,
+          "floor": 7.0,
+          "top_chunk": {
+            "chunk_id": "4db92b55b4856d15",
+            "source_file": "DOC-003-pricing-payment.md"
+          },
+          "correctly_abstained": false
+        },
+        "Q10": {
+          "category": "no_match",
+          "top_score": 6.7799895834703765,
+          "floor": 7.0,
+          "top_chunk": {
+            "chunk_id": "332f7f2c5f004cb2",
+            "source_file": "DOC-005-delivery-inspection.md"
+          },
+          "correctly_abstained": true
+        },
+        "Q16": {
+          "category": "no_match",
+          "top_score": 6.632168889674032,
+          "floor": 7.0,
+          "top_chunk": {
+            "chunk_id": "00ee2218beffc6fe",
+            "source_file": "DOC-003-pricing-payment.md"
+          },
+          "correctly_abstained": true
+        }
+      },
+      "per_query": {
+        "Q01": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "17dc5f6ad3544bff",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 12.738585357865322
+          },
+          "first_hit_result": {
+            "chunk_id": "17dc5f6ad3544bff",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 12.738585357865322
+          }
+        },
+        "Q02": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "ad944a14068de1b4",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 10.821134627958504
+          },
+          "first_hit_result": {
+            "chunk_id": "ad944a14068de1b4",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 10.821134627958504
+          }
+        },
+        "Q03": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "f1ad4a18cdd994bd",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 8.731794198110325
+          },
+          "first_hit_result": {
+            "chunk_id": "f1ad4a18cdd994bd",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 8.731794198110325
+          }
+        },
+        "Q04": {
+          "category": "exact_term",
+          "first_hit_rank": 2,
+          "hit_at_1": false,
+          "hit_at_5": true,
+          "mrr": 0.5,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "332f7f2c5f004cb2",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 11.910370563913107
+          },
+          "first_hit_result": {
+            "chunk_id": "914a930fa4309230",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 8.17216283432426
+          }
+        },
+        "Q05": {
+          "category": "synonym_poor",
+          "first_hit_rank": null,
+          "hit_at_1": false,
+          "hit_at_5": false,
+          "mrr": 0.0,
+          "anchors_matched": 0,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "89009ac288495cf1",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 5.285207328228125
+          },
+          "first_hit_result": null
+        },
+        "Q06": {
+          "category": "synonym_poor",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "02b1692e01516110",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 6.006764912864884
+          },
+          "first_hit_result": {
+            "chunk_id": "02b1692e01516110",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 6.006764912864884
+          }
+        },
+        "Q07": {
+          "category": "multi_chunk",
+          "first_hit_rank": 3,
+          "hit_at_1": false,
+          "hit_at_5": true,
+          "mrr": 0.3333333333333333,
+          "anchors_matched": 2,
+          "anchors_total": 2,
+          "multi_chunk_full_hit": true,
+          "top_result": {
+            "chunk_id": "89009ac288495cf1",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 7.2042589732013225
+          },
+          "first_hit_result": {
+            "chunk_id": "573725facda3b479",
+            "source_file": "DOC-002-contract-terms.md",
+            "score": 6.108514124892572
+          }
+        },
+        "Q08": {
+          "category": "multi_chunk",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 2,
+          "anchors_total": 2,
+          "multi_chunk_full_hit": true,
+          "top_result": {
+            "chunk_id": "ad944a14068de1b4",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 7.917841945844879
+          },
+          "first_hit_result": {
+            "chunk_id": "ad944a14068de1b4",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 7.917841945844879
+          }
+        },
+        "Q09": {
+          "category": "no_match",
+          "top_score": 11.795157569837066,
+          "floor": 7.0,
+          "top_chunk": {
+            "chunk_id": "4db92b55b4856d15",
+            "source_file": "DOC-003-pricing-payment.md"
+          },
+          "correctly_abstained": false
+        },
+        "Q10": {
+          "category": "no_match",
+          "top_score": 6.7799895834703765,
+          "floor": 7.0,
+          "top_chunk": {
+            "chunk_id": "332f7f2c5f004cb2",
+            "source_file": "DOC-005-delivery-inspection.md"
+          },
+          "correctly_abstained": true
+        },
+        "Q11": {
+          "category": "semantic_only",
+          "first_hit_rank": null,
+          "hit_at_1": false,
+          "hit_at_5": false,
+          "mrr": 0.0,
+          "anchors_matched": 0,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "332f7f2c5f004cb2",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 5.1613828826453805
+          },
+          "first_hit_result": null
+        },
+        "Q12": {
+          "category": "semantic_only",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "5201e1383ae33257",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 5.219268620483591
+          },
+          "first_hit_result": {
+            "chunk_id": "5201e1383ae33257",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 5.219268620483591
+          }
+        },
+        "Q13": {
+          "category": "semantic_only",
+          "first_hit_rank": null,
+          "hit_at_1": false,
+          "hit_at_5": false,
+          "mrr": 0.0,
+          "anchors_matched": 0,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "332f7f2c5f004cb2",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 3.1073503657062442
+          },
+          "first_hit_result": null
+        },
+        "Q14": {
+          "category": "semantic_only",
+          "first_hit_rank": null,
+          "hit_at_1": false,
+          "hit_at_5": false,
+          "mrr": 0.0,
+          "anchors_matched": 0,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "3e776308ce9fdf3c",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 6.3809712854317695
+          },
+          "first_hit_result": null
+        },
+        "Q15": {
+          "category": "semantic_only",
+          "first_hit_rank": 4,
+          "hit_at_1": false,
+          "hit_at_5": true,
+          "mrr": 0.25,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "4db92b55b4856d15",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 4.08267112086493
+          },
+          "first_hit_result": {
+            "chunk_id": "e5767d37a85adae4",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 3.2722270396499598
+          }
+        },
+        "Q16": {
+          "category": "no_match",
+          "top_score": 6.632168889674032,
+          "floor": 7.0,
+          "top_chunk": {
+            "chunk_id": "00ee2218beffc6fe",
+            "source_file": "DOC-003-pricing-payment.md"
+          },
+          "correctly_abstained": true
+        }
+      }
+    },
+    "vector": {
+      "overall": {
+        "hit_at_1": 0.7692307692307693,
+        "hit_at_5": 0.9230769230769231,
+        "mrr": 0.8333333333333334
+      },
+      "by_category": {
+        "exact_term": {
+          "count": 4,
+          "hit_at_1": 1.0,
+          "hit_at_5": 1.0,
+          "mrr": 1.0
+        },
+        "synonym_poor": {
+          "count": 2,
+          "hit_at_1": 0.5,
+          "hit_at_5": 1.0,
+          "mrr": 0.6666666666666666
+        },
+        "multi_chunk": {
+          "count": 2,
+          "hit_at_1": 0.5,
+          "hit_at_5": 1.0,
+          "mrr": 0.75,
+          "full_hit_rate": 1.0
+        },
+        "semantic_only": {
+          "count": 5,
+          "hit_at_1": 0.8,
+          "hit_at_5": 0.8,
+          "mrr": 0.8
+        }
+      },
+      "no_match": {
+        "Q09": {
+          "category": "no_match",
+          "top_score": 0.38065742453305784,
+          "floor": 0.3,
+          "top_chunk": {
+            "chunk_id": "00ee2218beffc6fe",
+            "source_file": "DOC-003-pricing-payment.md"
+          },
+          "correctly_abstained": false
+        },
+        "Q10": {
+          "category": "no_match",
+          "top_score": 0.5179202719902782,
+          "floor": 0.3,
+          "top_chunk": {
+            "chunk_id": "02b1692e01516110",
+            "source_file": "DOC-005-delivery-inspection.md"
+          },
+          "correctly_abstained": false
+        },
+        "Q16": {
+          "category": "no_match",
+          "top_score": 0.3921262231204364,
+          "floor": 0.3,
+          "top_chunk": {
+            "chunk_id": "f1ad4a18cdd994bd",
+            "source_file": "DOC-001-sourcing-policy.md"
+          },
+          "correctly_abstained": false
+        }
+      },
+      "per_query": {
+        "Q01": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "17dc5f6ad3544bff",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 0.47305937053879726
+          },
+          "first_hit_result": {
+            "chunk_id": "17dc5f6ad3544bff",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 0.47305937053879726
+          }
+        },
+        "Q02": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "ad944a14068de1b4",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 0.644132487773089
+          },
+          "first_hit_result": {
+            "chunk_id": "ad944a14068de1b4",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 0.644132487773089
+          }
+        },
+        "Q03": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "f1ad4a18cdd994bd",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 0.5135677829019956
+          },
+          "first_hit_result": {
+            "chunk_id": "f1ad4a18cdd994bd",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 0.5135677829019956
+          }
+        },
+        "Q04": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "1ee240fc68ca0a33",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 0.5881304622605642
+          },
+          "first_hit_result": {
+            "chunk_id": "1ee240fc68ca0a33",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 0.5881304622605642
+          }
+        },
+        "Q05": {
+          "category": "synonym_poor",
+          "first_hit_rank": 3,
+          "hit_at_1": false,
+          "hit_at_5": true,
+          "mrr": 0.3333333333333333,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "dc10061a74f52b7d",
+            "source_file": "DOC-002-contract-terms.md",
+            "score": 0.4111000467777432
+          },
+          "first_hit_result": {
+            "chunk_id": "93f0cccdc29aade9",
+            "source_file": "DOC-002-contract-terms.md",
+            "score": 0.36835343507083834
+          }
+        },
+        "Q06": {
+          "category": "synonym_poor",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "02b1692e01516110",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 0.4053561671034298
+          },
+          "first_hit_result": {
+            "chunk_id": "02b1692e01516110",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 0.4053561671034298
+          }
+        },
+        "Q07": {
+          "category": "multi_chunk",
+          "first_hit_rank": 2,
+          "hit_at_1": false,
+          "hit_at_5": true,
+          "mrr": 0.5,
+          "anchors_matched": 2,
+          "anchors_total": 2,
+          "multi_chunk_full_hit": true,
+          "top_result": {
+            "chunk_id": "93f0cccdc29aade9",
+            "source_file": "DOC-002-contract-terms.md",
+            "score": 0.6371908904134245
+          },
+          "first_hit_result": {
+            "chunk_id": "573725facda3b479",
+            "source_file": "DOC-002-contract-terms.md",
+            "score": 0.6123726660290274
+          }
+        },
+        "Q08": {
+          "category": "multi_chunk",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 2,
+          "anchors_total": 2,
+          "multi_chunk_full_hit": true,
+          "top_result": {
+            "chunk_id": "ad944a14068de1b4",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 0.5963670774669282
+          },
+          "first_hit_result": {
+            "chunk_id": "ad944a14068de1b4",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 0.5963670774669282
+          }
+        },
+        "Q09": {
+          "category": "no_match",
+          "top_score": 0.38065742453305784,
+          "floor": 0.3,
+          "top_chunk": {
+            "chunk_id": "00ee2218beffc6fe",
+            "source_file": "DOC-003-pricing-payment.md"
+          },
+          "correctly_abstained": false
+        },
+        "Q10": {
+          "category": "no_match",
+          "top_score": 0.5179202719902782,
+          "floor": 0.3,
+          "top_chunk": {
+            "chunk_id": "02b1692e01516110",
+            "source_file": "DOC-005-delivery-inspection.md"
+          },
+          "correctly_abstained": false
+        },
+        "Q11": {
+          "category": "semantic_only",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "93f0cccdc29aade9",
+            "source_file": "DOC-002-contract-terms.md",
+            "score": 0.3541619585904891
+          },
+          "first_hit_result": {
+            "chunk_id": "93f0cccdc29aade9",
+            "source_file": "DOC-002-contract-terms.md",
+            "score": 0.3541619585904891
+          }
+        },
+        "Q12": {
+          "category": "semantic_only",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "5201e1383ae33257",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 0.37781011879229254
+          },
+          "first_hit_result": {
+            "chunk_id": "5201e1383ae33257",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 0.37781011879229254
+          }
+        },
+        "Q13": {
+          "category": "semantic_only",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "00ee2218beffc6fe",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 0.37921852824752295
+          },
+          "first_hit_result": {
+            "chunk_id": "00ee2218beffc6fe",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 0.37921852824752295
+          }
+        },
+        "Q14": {
+          "category": "semantic_only",
+          "first_hit_rank": null,
+          "hit_at_1": false,
+          "hit_at_5": false,
+          "mrr": 0.0,
+          "anchors_matched": 0,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "02b1692e01516110",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 0.30674745461804587
+          },
+          "first_hit_result": null
+        },
+        "Q15": {
+          "category": "semantic_only",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "e5767d37a85adae4",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 0.34837886086873227
+          },
+          "first_hit_result": {
+            "chunk_id": "e5767d37a85adae4",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 0.34837886086873227
+          }
+        },
+        "Q16": {
+          "category": "no_match",
+          "top_score": 0.3921262231204364,
+          "floor": 0.3,
+          "top_chunk": {
+            "chunk_id": "f1ad4a18cdd994bd",
+            "source_file": "DOC-001-sourcing-policy.md"
+          },
+          "correctly_abstained": false
+        }
+      }
+    },
+    "hybrid": {
+      "overall": {
+        "hit_at_1": 0.6153846153846154,
+        "hit_at_5": 0.8461538461538461,
+        "mrr": 0.6923076923076923
+      },
+      "by_category": {
+        "exact_term": {
+          "count": 4,
+          "hit_at_1": 1.0,
+          "hit_at_5": 1.0,
+          "mrr": 1.0
+        },
+        "synonym_poor": {
+          "count": 2,
+          "hit_at_1": 0.5,
+          "hit_at_5": 1.0,
+          "mrr": 0.625
+        },
+        "multi_chunk": {
+          "count": 2,
+          "hit_at_1": 1.0,
+          "hit_at_5": 1.0,
+          "mrr": 1.0,
+          "full_hit_rate": 1.0
+        },
+        "semantic_only": {
+          "count": 5,
+          "hit_at_1": 0.2,
+          "hit_at_5": 0.6,
+          "mrr": 0.35
+        }
+      },
+      "no_match": {
+        "Q09": {
+          "category": "no_match",
+          "top_score": 0.032266458495966696,
+          "floor": 0.0305,
+          "top_chunk": {
+            "chunk_id": "00ee2218beffc6fe",
+            "source_file": "DOC-003-pricing-payment.md"
+          },
+          "correctly_abstained": false
+        },
+        "Q10": {
+          "category": "no_match",
+          "top_score": 0.03252247488101534,
+          "floor": 0.0305,
+          "top_chunk": {
+            "chunk_id": "02b1692e01516110",
+            "source_file": "DOC-005-delivery-inspection.md"
+          },
+          "correctly_abstained": false
+        },
+        "Q16": {
+          "category": "no_match",
+          "top_score": 0.032018442622950824,
+          "floor": 0.0305,
+          "top_chunk": {
+            "chunk_id": "00ee2218beffc6fe",
+            "source_file": "DOC-003-pricing-payment.md"
+          },
+          "correctly_abstained": false
+        }
+      },
+      "per_query": {
+        "Q01": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "17dc5f6ad3544bff",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 0.03278688524590164
+          },
+          "first_hit_result": {
+            "chunk_id": "17dc5f6ad3544bff",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 0.03278688524590164
+          }
+        },
+        "Q02": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "ad944a14068de1b4",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 0.03278688524590164
+          },
+          "first_hit_result": {
+            "chunk_id": "ad944a14068de1b4",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 0.03278688524590164
+          }
+        },
+        "Q03": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "f1ad4a18cdd994bd",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 0.03278688524590164
+          },
+          "first_hit_result": {
+            "chunk_id": "f1ad4a18cdd994bd",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 0.03278688524590164
+          }
+        },
+        "Q04": {
+          "category": "exact_term",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "1ee240fc68ca0a33",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 0.032266458495966696
+          },
+          "first_hit_result": {
+            "chunk_id": "1ee240fc68ca0a33",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 0.032266458495966696
+          }
+        },
+        "Q05": {
+          "category": "synonym_poor",
+          "first_hit_rank": 4,
+          "hit_at_1": false,
+          "hit_at_5": true,
+          "mrr": 0.25,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "17dc5f6ad3544bff",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 0.0315136476426799
+          },
+          "first_hit_result": {
+            "chunk_id": "93f0cccdc29aade9",
+            "source_file": "DOC-002-contract-terms.md",
+            "score": 0.030798389007344232
+          }
+        },
+        "Q06": {
+          "category": "synonym_poor",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "02b1692e01516110",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 0.03278688524590164
+          },
+          "first_hit_result": {
+            "chunk_id": "02b1692e01516110",
+            "source_file": "DOC-005-delivery-inspection.md",
+            "score": 0.03278688524590164
+          }
+        },
+        "Q07": {
+          "category": "multi_chunk",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 2,
+          "anchors_total": 2,
+          "multi_chunk_full_hit": true,
+          "top_result": {
+            "chunk_id": "573725facda3b479",
+            "source_file": "DOC-002-contract-terms.md",
+            "score": 0.03200204813108039
+          },
+          "first_hit_result": {
+            "chunk_id": "573725facda3b479",
+            "source_file": "DOC-002-contract-terms.md",
+            "score": 0.03200204813108039
+          }
+        },
+        "Q08": {
+          "category": "multi_chunk",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 2,
+          "anchors_total": 2,
+          "multi_chunk_full_hit": true,
+          "top_result": {
+            "chunk_id": "ad944a14068de1b4",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 0.03278688524590164
+          },
+          "first_hit_result": {
+            "chunk_id": "ad944a14068de1b4",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 0.03278688524590164
+          }
+        },
+        "Q09": {
+          "category": "no_match",
+          "top_score": 0.032266458495966696,
+          "floor": 0.0305,
+          "top_chunk": {
+            "chunk_id": "00ee2218beffc6fe",
+            "source_file": "DOC-003-pricing-payment.md"
+          },
+          "correctly_abstained": false
+        },
+        "Q10": {
+          "category": "no_match",
+          "top_score": 0.03252247488101534,
+          "floor": 0.0305,
+          "top_chunk": {
+            "chunk_id": "02b1692e01516110",
+            "source_file": "DOC-005-delivery-inspection.md"
+          },
+          "correctly_abstained": false
+        },
+        "Q11": {
+          "category": "semantic_only",
+          "first_hit_rank": 4,
+          "hit_at_1": false,
+          "hit_at_5": true,
+          "mrr": 0.25,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "5201e1383ae33257",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 0.0315136476426799
+          },
+          "first_hit_result": {
+            "chunk_id": "93f0cccdc29aade9",
+            "source_file": "DOC-002-contract-terms.md",
+            "score": 0.030886196246139225
+          }
+        },
+        "Q12": {
+          "category": "semantic_only",
+          "first_hit_rank": 1,
+          "hit_at_1": true,
+          "hit_at_5": true,
+          "mrr": 1.0,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "5201e1383ae33257",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 0.03278688524590164
+          },
+          "first_hit_result": {
+            "chunk_id": "5201e1383ae33257",
+            "source_file": "DOC-004-onboarding-screening.md",
+            "score": 0.03278688524590164
+          }
+        },
+        "Q13": {
+          "category": "semantic_only",
+          "first_hit_rank": null,
+          "hit_at_1": false,
+          "hit_at_5": false,
+          "mrr": 0.0,
+          "anchors_matched": 0,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "93f0cccdc29aade9",
+            "source_file": "DOC-002-contract-terms.md",
+            "score": 0.030834914611005692
+          },
+          "first_hit_result": null
+        },
+        "Q14": {
+          "category": "semantic_only",
+          "first_hit_rank": null,
+          "hit_at_1": false,
+          "hit_at_5": false,
+          "mrr": 0.0,
+          "anchors_matched": 0,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "ad944a14068de1b4",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 0.03149801587301587
+          },
+          "first_hit_result": null
+        },
+        "Q15": {
+          "category": "semantic_only",
+          "first_hit_rank": 2,
+          "hit_at_1": false,
+          "hit_at_5": true,
+          "mrr": 0.5,
+          "anchors_matched": 1,
+          "anchors_total": 1,
+          "multi_chunk_full_hit": null,
+          "top_result": {
+            "chunk_id": "4db92b55b4856d15",
+            "source_file": "DOC-003-pricing-payment.md",
+            "score": 0.032018442622950824
+          },
+          "first_hit_result": {
+            "chunk_id": "e5767d37a85adae4",
+            "source_file": "DOC-001-sourcing-policy.md",
+            "score": 0.032018442622950824
+          }
+        },
+        "Q16": {
+          "category": "no_match",
+          "top_score": 0.032018442622950824,
+          "floor": 0.0305,
+          "top_chunk": {
+            "chunk_id": "00ee2218beffc6fe",
+            "source_file": "DOC-003-pricing-payment.md"
+          },
+          "correctly_abstained": false
+        }
+      }
+    }
+  }
+}
