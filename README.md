@@ -1,29 +1,67 @@
-# AICO Day 1 — Document Chunking and Lexical Retrieval
+# AICO — Retrieval Engineering (Day 1: Lexical Baseline · Day 2: Embeddings & Hybrid)
 
-A from-scratch chunker and BM25 lexical search baseline, built against
-Meridian Procurement's synthetic supplier policy documents. No
-embeddings, vector store, LLM or retrieval framework is used — this is a
-measurable baseline that Day 2's semantic/hybrid retrieval will be
-compared against.
+Day 1 is a from-scratch chunker and BM25 lexical search baseline. Day 2 adds
+semantic retrieval on top of it: a real embedding provider behind one
+interface, a persistent content-hash-keyed vector cache, cosine similarity
+search, and a hybrid mode that fuses BM25 and vector rankings with
+reciprocal-rank fusion — measured against the same corpus and queries so the
+two days are directly comparable. No vector database, no retrieval
+framework, no LLM.
 
-All data in `data/` is synthetic. No production, MOD, customer, personal
-or classified data is used.
+All data in `data/` is synthetic. No production, MOD, customer, personal or
+classified data is used.
 
 ## Setup
 
-```
+**PowerShell** (`(.venv) PS ...>` prompt — this is the default on Windows
+when you activate via `.venv\Scripts\Activate.ps1` or the VS Code/Windows
+Terminal PowerShell profile):
+```powershell
 python -m venv .venv
-.venv\Scripts\activate
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+$env:PYTHONPATH = "src"
+```
+
+**cmd.exe** (`(.venv) C:\...>` prompt, no `PS`):
+```cmd
+python -m venv .venv
+.venv\Scripts\activate.bat
 pip install -r requirements.txt
 set PYTHONPATH=src
 ```
 
-(macOS/Linux/git-bash: `python3 -m venv .venv`, `source .venv/bin/activate`,
-`export PYTHONPATH=src`)
+**macOS/Linux/git-bash**:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+export PYTHONPATH=src
+```
+
+⚠️ **PowerShell vs cmd.exe `set` is a common trap**: in PowerShell, `set` is
+an alias for `Set-Variable`, which creates a PowerShell variable, not an
+environment variable — running the cmd.exe-style `set PYTHONPATH=src` in a
+PowerShell prompt silently does nothing useful, and every `python -m aico...`
+command then fails with `ModuleNotFoundError: No module named 'aico'`. Check
+your prompt: `(.venv) PS C:\...>` needs `$env:PYTHONPATH = "src"`;
+`(.venv) C:\...>` (no `PS`) needs `set PYTHONPATH=src`.
 
 `PYTHONPATH=src` is only needed to invoke the `aico.*` modules directly with
-`python -m`. `pytest` doesn't need it — `pytest.ini` sets `pythonpath = src`
-for you.
+`python -m`. `pytest` doesn't need it.
+
+**Day 2 only** — embedding calls need provider credentials. Create a `.env`
+file at the repo root (gitignored, never committed) with:
+
+```
+AICO_EMBEDDING_ENDPOINT=<team-shared Foundry endpoint>
+AICO_EMBEDDING_API_KEY=<team-shared key>
+AICO_EMBEDDING_MODEL=text-embedding-3-small
+AICO_EMBEDDING_API_VERSION=2024-05-01-preview
+```
+
+Get the actual values from the team channel — they are never written to this
+README or to any other committed file. `bm25`-mode search and every test use
+`FakeEmbeddingProvider` instead and need no `.env` at all.
 
 ## Run the tests
 
@@ -31,27 +69,41 @@ for you.
 pytest -q
 ```
 
-35 tests pass, across four files (consolidated from individual
-single-assertion tests into one test per behaviour where several cases were
-exercising the same code path — e.g. all five invalid-chunker-config cases
-run as one test with a loop over bad inputs, rather than five near-identical
-functions):
+71 tests pass, across nine files. Every test is deterministic and offline —
+Day 2's tests use `FakeEmbeddingProvider` exclusively; none makes a network
+call.
+
 - `tests/test_chunker.py` (11) — offset reconstruction, overlap, unicode
-  survival, empty input, invalid configuration (all 5 bad-input cases in
-  one test), determinism
+  survival, empty input, invalid configuration, determinism
 - `tests/test_bm25.py` (6) — tokenisation, ranking behaviour, IDF
   weighting, tie-breaking
-- `tests/test_ingest.py` (4) — end-to-end field completeness + offsets
-  against the real source files (one test), tokens/overlap actually
-  change output, invalid config rejected, determinism across runs
-- `tests/test_day01_eval.py` (14) — anchor normalisation/matching,
-  hit/MRR scoring, category breakdown, no-match handling, phrase-support
-  gate for no_match abstention (requiring every query phrase, not just
-  one), the dominant-scoring-term vocabulary check, winning-config /
-  worst-query selection, and that `render_report()` produces every
-  required report section
+- `tests/test_ingest.py` (4) — end-to-end field completeness + offsets,
+  tokens/overlap actually change output, invalid config rejected,
+  determinism
+- `tests/test_day01_eval.py` (14) — anchor matching, hit/MRR scoring,
+  category breakdown, no-match handling, phrase-support gate, report
+  rendering
+- `tests/test_embedding_provider.py` (7) — fake provider determinism
+  (same text → same vector, across instances), distinct text → distinct
+  vectors, batch order preserved, dimensions/alias
+- `tests/test_vector_index.py` (10) — cosine correctness (identical,
+  orthogonal, opposite, hand-worked, zero-vector), dimension mismatch
+  raises (direct and via cache search), cache hit/miss rules, save/load
+  round-trip
+- `tests/test_embed.py` (6) — cache hit (zero calls on an unchanged run),
+  cache invalidation (editing one chunk re-embeds only that chunk, proven
+  content-hash-keyed not chunk-id-keyed), model-alias change invalidates,
+  provider dimension mismatch is a hard error
+- `tests/test_hybrid.py` (4) — hand-worked RRF example with exact expected
+  scores, a chunk retrieved by only one mode, determinism, the `k` tuning
+  knob
+- `tests/test_search.py` (9) — identical record shape across all three
+  modes, modes don't interfere with each other, determinism parametrized
+  across bm25/vector/hybrid, dimension-mismatch and missing-cache errors
 
-## Task 1 — Ingest and chunk
+## Day 1 — Chunking and lexical retrieval
+
+### Task 1 — Ingest and chunk
 
 ```
 python -m aico.retrieval.ingest --input data/documents --out data/index --tokens 300 --overlap 50
@@ -61,9 +113,11 @@ Reads every `.md` file in `--input`, splits each into overlapping,
 offset-exact chunks, and writes a single `index.json` (manifest + chunk
 records) to `--out`. Token size and overlap are required arguments — no
 hardcoded default. All four flags (`--input`, `--out`, `--tokens`,
-`--overlap`) are mandatory.
+`--overlap`) are mandatory. **This is the chunk index Day 2 also reads from
+— do not re-ingest with different `--tokens`/`--overlap` unless you intend
+to invalidate the whole vector cache.**
 
-## Task 2 — Lexical retrieval
+### Task 2 — Lexical retrieval
 
 ```
 python -m aico.retrieval.search --query "termination notice period" --top-k 5 --index data/index
@@ -80,9 +134,10 @@ Ranks every chunk in the index against the query using a from-scratch
 BM25 implementation (`src/aico/retrieval/bm25.py` — no ranking library).
 Prints rank, score, chunk ID, source file, character span, and a text
 snippet for each result. Prints "No matching chunks" instead if the top
-score is 0.
+score is 0. (This is the same command Day 2 extended with `--mode` — see
+below; omitting `--mode` still runs plain BM25, unchanged.)
 
-## Task 3 — Measure and report
+### Task 3 — Measure and report
 
 ```
 python -m aico.evals.day01 --queries data/evals/day01_queries.json --index data/index
@@ -119,7 +174,7 @@ phrase-support gate — see `artifacts/day01/retrieval_report.md` for why
 sufficient condition for abstention on its own, it's just no longer the
 only one.
 
-### Last verified run (2026-08-26)
+#### Last verified run (2026-08-26)
 ```
 config 200_40 (35 chunks): Hit@1=0.62  Hit@5=0.88  MRR=0.729
   exact_term:    Hit@1=0.75 Hit@5=1.00 MRR=0.875
@@ -138,7 +193,7 @@ config 400_80 (16 chunks): Hit@1=0.50  Hit@5=1.00  MRR=0.692
 pytest -q: 35 passed
 ```
 
-## Evaluation queries
+### Evaluation queries
 
 The 10 labelled queries in `data/evals/day01_queries.json`, in order. Each
 is checked against a normalised chunk text (lowercase, punctuation
@@ -198,8 +253,155 @@ documents) to both surface in the top 5; `no_match` (Q09–Q10) has no
 correct answer in the corpus at all, testing that the system doesn't
 confidently return an irrelevant chunk.
 
+## Day 2 — Embeddings and hybrid retrieval
+
+Builds on Day 1 without touching it: same corpus, same chunker, same
+`data/index`. Adds a real embedding provider, a persistent vector cache,
+cosine-similarity search, and reciprocal-rank fusion — then measures all
+three modes (bm25, vector, hybrid) against one query set so the report can
+say plainly where semantic retrieval helped and where it didn't.
+
+### Task 1 — Embed and cache
+
+```
+python -m aico.retrieval.embed --index data/index --out data/vectors
+```
+
+Reads the chunk records Day 1's `ingest` produced, embeds every chunk
+through `AzureEmbeddingProvider` (`src/aico/retrieval/embedding_provider.py`
+— the only file in the repo that imports the HTTP client used to call the
+embedding API), and writes/updates the cache at `--out`. Reports how many
+chunks were embedded, how many were served from cache, and how many
+provider calls were made:
+
+```
+Embedded 23 chunk(s), served 0 from cache, made 2 provider call(s) -> data\vectors   # first (cold) run
+Embedded 0 chunk(s), served 23 from cache, made 0 provider call(s) -> data\vectors   # second (warm) run
+Embedded 1 chunk(s), served 22 from cache, made 1 provider call(s) -> data\vectors   # after editing one chunk
+```
+
+Each cache entry (`data/vectors/vectors.json`, gitignored — a build output,
+regenerated by this command, same treatment as `data/index/`) stores the
+vector plus `chunk_id`, `content_hash`, `model_alias`, `dimensions`,
+`dataset_version` and `created_at`. **`content_hash`, not `chunk_id`, is
+the invalidation key** — `chunk_id` is stable by design, so a cache keyed
+on it alone would survive a text edit underneath it and every later search
+would rank against a vector for text that no longer exists. A different
+`model_alias` invalidates an entry too, even when `content_hash` still
+matches — a vector from one model is never valid for another.
+
+`FakeEmbeddingProvider` (same file) is a deterministic, offline stand-in
+used by every test — a vector is derived from a SHA-256 hash of the input
+text, so the same text always produces the same vector and no test ever
+makes a network call.
+
+*Known live-endpoint quirk:* the shared dev Foundry endpoint returns a
+transient `404 DeploymentNotFound` on roughly 1 in 5–10 otherwise-valid
+calls (confirmed by re-sending identical requests). This is server-side
+flakiness, not a bug here — Day 2's rules explicitly defer
+timeouts/retries/routing policy to Day 3, so `embed`/`search` don't retry;
+if a command fails with `DeploymentNotFound`, just run it again. (The
+`day02` eval command below *does* wrap calls in a small retry local to
+that script only — seeded ~19 calls per run otherwise fails more often
+than not by chance alone — see its section for why that's scoped
+differently.)
+
+### Task 2 — Three retrieval modes
+
+```
+python -m aico.retrieval.search --query "..." --mode bm25   --top-k 5
+python -m aico.retrieval.search --query "..." --mode vector --top-k 5
+python -m aico.retrieval.search --query "..." --mode hybrid --top-k 5
+```
+
+`--mode` defaults to `bm25`, so every Day 1 `search` invocation still works
+unchanged. `--index` defaults to `data/index`, `--vectors` to
+`data/vectors`, `--top-k` to 5. All three modes print the identical record
+shape: rank, score, chunk ID, source file, character span, matched text.
+
+- **`vector`** embeds the query through the same provider/model alias used
+  for the chunks, then ranks every cached vector by cosine similarity
+  (`src/aico/retrieval/vector_index.py`). A dimension mismatch between the
+  query vector and a cached vector raises — never padded or truncated.
+- **`hybrid`** fuses the bm25 and vector rankings with reciprocal-rank
+  fusion only (`src/aico/retrieval/hybrid.py`) —
+  `score(chunk) = Σ over modes of 1/(k + rank_in_that_mode)`, `k = 60`
+  (`RRF_K`). Fusion operates on **ranks**, never raw scores: a BM25 score
+  is unbounded and corpus-dependent, a cosine score sits in `[-1, 1]`, and
+  averaging the two just lets whichever number is numerically larger win.
+- Ranking is stable across runs; ties break on `chunk_id` ascending in
+  every mode.
+- `vector`/`hybrid` require `data/vectors` to already exist (run Task 1
+  first) and, for the real provider, a working `.env`.
+
+### Task 3 — Measure all three modes
+
+```
+python -m aico.evals.day02 --queries data/evals/day02_queries.json --mode all
+```
+
+Runs all sixteen queries (`data/evals/day02_queries.json` — Q01–Q10 carried
+over unchanged from Day 1, Q11–Q15 new `semantic_only` queries, Q16 a new
+`no_match` query) against all three modes in one pass. Bm25 and vector are
+each computed once per query over the full ranking; hybrid is derived from
+those two via RRF rather than independently re-embedding every query again
+— halves the live embedding calls the command needs (~16 instead of ~32).
+A small retry wrapper local to this script (not a change to
+`embedding_provider.py`, not a Day 3 gateway) absorbs the live endpoint's
+known transient failures — a full run makes ~19 calls, so a bare
+1-in-5-to-10 failure rate would make a clean run unlikely by chance alone.
+
+Reports Hit@1, Hit@5 and MRR per mode overall and per category. The three
+`no_match` queries (Q09, Q10, Q16) are scored inverted and reported
+separately, each mode against **its own** documented score floor
+(`BM25_SCORE_FLOOR = 7.0`, `VECTOR_SCORE_FLOOR = 0.30`,
+`HYBRID_SCORE_FLOOR = 0.0305` in `src/aico/evals/day02.py`) — a shared
+floor across modes would be meaningless, since the three score scales
+don't mean the same thing.
+
+Also demonstrates the cache live (cold run → warm run → one-chunk-edit
+run) against a throwaway in-memory cache, so the report's cache-evidence
+section is real evidence from that run, not a hand-transcribed number —
+the persisted `data/vectors` cache used for the mode evaluation itself is
+never touched by this demonstration.
+
+Writes `artifacts/day02/metrics.json` (full per-mode, per-query metrics)
+and `artifacts/day02/mode_comparison.md`, both from the same evaluation
+pass — the mode_comparison.md tables, the vector-beat-bm25 and
+bm25-beat-vector examples, the hybrid-vs-both-modes verdict and the
+no_match floor table are generated from the metrics, not hand-transcribed,
+so neither file can drift from the other.
+
+A single-mode form is also available for a quick check without a full
+report: `--mode bm25|vector|hybrid` writes `metrics.json` for that mode
+alone.
+
+#### Last verified run (2026-08-27)
+```
+mode       Hit@1   Hit@5     MRR  no_match(abstained/3)
+bm25       0.462   0.692   0.545  2/3
+vector     0.769   0.923   0.833  0/3
+hybrid     0.615   0.846   0.692  0/3
+
+pytest -q: 71 passed
+```
+
+Full per-category breakdown, the cache-evidence table, the vector-beat-bm25
+and bm25-vs-vector examples (both investigated, not asserted — see
+`mode_comparison.md`), the hybrid-loses-on-`semantic_only` finding, and the
+full no_match reasoning per mode are in
+`artifacts/day02/mode_comparison.md`.
+
+*Note on reproducing this exactly:* `FakeEmbeddingProvider` is bit-for-bit
+deterministic; the live Azure endpoint is not — identical requests can
+return vectors that differ in the 5th–6th decimal place between calls.
+Hit@1/Hit@5/MRR won't change from that (the differences are far too small
+to flip a ranking), but a byte-diff of `metrics.json`'s vector/hybrid
+scores against a previous run may show tiny drift. This is normal.
+
 ## Key design decisions
 
+**Day 1**
 - **Two distinct notions of "token"**: the chunker sizes chunks by
   whitespace-separated words (regex `\S+` — a word-based approximation,
   not a real tokenizer/BPE count), tracked as `token_count` per chunk.
@@ -226,34 +428,86 @@ confidently return an irrelevant chunk.
   markdown heading as `section` (`null` if the chunk starts before the
   first heading in the document).
 
+**Day 2**
+- **Provider call surface**: one interface (`EmbeddingProvider`), one real
+  implementation (`AzureEmbeddingProvider`), one fake
+  (`FakeEmbeddingProvider`) — all in `embedding_provider.py`. Everything
+  else (cache, search, eval) depends only on the interface.
+- **API route**: the real provider calls Foundry's unified Model Inference
+  API (`{endpoint}/models/embeddings`, `model` in the JSON body,
+  `api-version=2024-05-01-preview`) rather than the older per-deployment
+  REST path some Azure resources expose — provider-agnostic, and the more
+  idiomatic route for a `*.services.ai.azure.com` Foundry resource
+  specifically.
+- **`data/vectors/` is gitignored**, the same treatment as `data/index/` —
+  it's a build output, fully reproducible by `embed`, and keeping it out
+  of the repo is what makes the "second run makes zero calls" review demo
+  meaningful on a fresh clone (a committed cache would start warm).
+- **RRF k = 60**: the standard starting point. Raising `k` flattens the
+  fused-score curve (rank 1 and rank 50 end up closer together — fusion
+  behaves more like a broad rank-sum vote); lowering it sharpens the curve
+  (a top rank in either mode dominates — fusion behaves closer to "trust
+  whichever mode ranked it highest").
+- **No_match score floors are per-mode and independently justified**, not
+  copied from Day 1's `NO_MATCH_SCORE_FLOOR`: a BM25 score, a cosine score
+  and an RRF score don't live on the same scale, so one shared number
+  would be meaningless. See `SCORE_FLOOR_NOTE` in `day02.py` and the
+  no_match section of `mode_comparison.md` for the reasoning and honestly
+  reported outcome per mode (bm25 abstains 2/3 in the last run; vector and
+  hybrid abstain 0/3 — a real, investigated finding, not a bug: see the
+  report for why).
+- **Retry scope**: `AzureEmbeddingProvider` itself never retries (Day 3
+  scope, per the assignment's own working rules). `day02.py`'s
+  `_RetryingProvider` is a thin wrapper local to that one measurement
+  script only, so a ~19-call evaluation run against a flaky shared dev
+  endpoint can actually complete — it does not change the provider
+  interface or any other caller's behaviour.
+
 ## Folder structure
 
 ```
-aico-day01-assignment/
-  README.md                       this file
+AI-Assingments-Day2/
+  README.md                        this file
   requirements.txt
-  pytest.ini                       points pytest at src/ (src-layout, not pip-installed)
+  .gitignore
+  .env                              Day 2 provider credentials (gitignored, never committed)
   src/aico/
     retrieval/
-      chunker.py                   offset-exact chunking
-      ingest.py                    CLI: documents -> index.json
-      bm25.py                      from-scratch BM25 ranking
-      search.py                    CLI: query -> ranked chunks
+      chunker.py                    Day 1 — offset-exact chunking
+      ingest.py                     Day 1 — CLI: documents -> index.json
+      bm25.py                       Day 1 — from-scratch BM25 ranking
+      search.py                     CLI: query -> ranked chunks (bm25 / vector / hybrid)
+      embedding_provider.py         Day 2 — provider interface + real (Azure/Foundry) + fake
+      vector_index.py               Day 2 — vector cache, cosine similarity search
+      embed.py                      Day 2 — CLI: chunks -> vector cache
+      hybrid.py                     Day 2 — reciprocal-rank fusion
     evals/
-      day01.py                     CLI: Hit@1 / Hit@5 / MRR scorer
+      day01.py                      CLI: Hit@1 / Hit@5 / MRR scorer (bm25, two chunk configs)
+      day02.py                      CLI: three-mode scorer (bm25 / vector / hybrid)
   data/
-    documents/                     DOC-001 .. DOC-005 (synthetic)
-    evals/day01_queries.json       10 labelled queries + scoring rules
-    index/                         build output (not yet git-ignored, see Known gaps)
-  artifacts/day01/
-    chunks_200_40.json             committed chunk set, config A
-    chunks_400_80.json             committed chunk set, config B
-    metrics.json                   full metrics, both configs
-    retrieval_report.md            auto-generated by day01.py from the same eval pass as metrics.json
+    documents/                      DOC-001 .. DOC-005 (synthetic, unchanged both days)
+    evals/
+      day01_queries.json            10 labelled queries
+      day02_queries.json            16 labelled queries (Q01-10 shared with Day 1, Q11-16 new)
+    index/                          build output (gitignored) - python -m aico.retrieval.ingest
+    vectors/                        build output (gitignored) - python -m aico.retrieval.embed
+  artifacts/
+    day01/
+      chunks_200_40.json            committed chunk set, config A
+      chunks_400_80.json            committed chunk set, config B
+      metrics.json                  full metrics, both configs
+      retrieval_report.md           auto-generated by day01.py
+    day02/
+      metrics.json                  full per-mode, per-query metrics
+      mode_comparison.md            auto-generated three-way comparison report
   tests/
-    test_chunker.py                15 tests
-    test_bm25.py                   6 tests
-    test_ingest.py                 5 tests
-    test_day01_eval.py             11 tests
+    test_chunker.py                 (11)
+    test_bm25.py                    (6)
+    test_ingest.py                  (4)
+    test_day01_eval.py              (14)
+    test_embedding_provider.py      (7)
+    test_vector_index.py            (10)
+    test_embed.py                   (6)
+    test_hybrid.py                  (4)
+    test_search.py                  (9)
 ```
-
