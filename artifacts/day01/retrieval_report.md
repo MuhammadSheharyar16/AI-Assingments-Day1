@@ -50,34 +50,40 @@ Overlap is fixed at the ratio given on the command line for every config, so the
 
 ## no_match — reported separately
 
-Score floor: `NO_MATCH_SCORE_FLOOR = 4.0`. A raw top score is not on its own trustworthy evidence of a real no_match
-hit: in a five-document corpus even one coincidentally rare, high-tf shared
-word (e.g. "rate" meaning a day rate, not an interest rate) can clear a
-generous floor. Before trusting a no_match query's top score, the scorer
-extracts the query's own adjacent content-word pairs (stopwords excluded
-from pairing) and requires **every one of them**, not just one, to appear
-as an adjacent pair in the retrieved chunk. Requiring every phrase rather
-than any one phrase mirrors a rule this eval already applies elsewhere:
-`multi_chunk_full_hit` requires every anchor of a multi-chunk query to be
-matched, not just one, before the query counts as fully answered - a
-no_match query with two distinct required phrases is exactly analogous,
-and a chunk that only echoes one of them back has partially matched the
-question, not answered it. This closes the *coincidental-word* and
-*partial-phrase-echo* failure modes cleanly; it cannot, and structurally
-should not be expected to, close a case where a chunk contains every
-required phrase yet still doesn't state the specific fact asked for -
-that distinction needs reading comprehension of what a passage asserts,
-which is beyond lexical matching and is reported as such below rather than
+Score floor: `NO_MATCH_SCORE_FLOOR = 4.0`. `correctly_abstained` is decided by `NO_MATCH_SCORE_FLOOR` alone - a top
+score below the floor abstains, at or above it does not - so the verdict
+in the table below is auditable against that one constant with no hidden
+override. Phrase-adjacency evidence is computed for every no_match query
+regardless, purely as *diagnosis* of an above-floor score, never as a
+second way to earn "correct": the scorer extracts the query's own adjacent
+content-word pairs (stopwords excluded from pairing) and checks whether
+**every one of them**, not just one, appears as an adjacent pair in the
+retrieved chunk (mirroring `multi_chunk_full_hit`, which likewise requires
+every anchor, not just one). When an above-floor score's chunk is missing
+one or more required phrases, that points to *coincidental* term overlap -
+a rare, high-tf shared word (e.g. "rate" meaning a day rate, not an
+interest rate) inflating the score in a five-document corpus without the
+chunk actually being about the question. When every required phrase *is*
+present and the score is still above the floor, that is a harder, genuinely
+topical near-miss: the chunk really is the most relevant passage available,
+it just doesn't state the specific fact asked for - a reading-comprehension
+gap beyond what lexical matching can close, reported as such rather than
 chased with a further heuristic.
 
 | Query | Config | Top score | Phrase support | Verdict |
 |---|---|---|---|---|
-| Q09 | 200_40 | 10.80 | False | abstained (correct) |
-| Q09 | 400_80 | 12.16 | False | abstained (correct) |
-| Q10 | 200_40 | 7.56 | False | abstained (correct) |
-| Q10 | 400_80 | 5.93 | False | abstained (correct) |
+| Q09 | 200_40 | 10.80 | False | **FALSE POSITIVE** |
+| Q09 | 400_80 | 12.16 | False | **FALSE POSITIVE** |
+| Q10 | 200_40 | 7.56 | False | **FALSE POSITIVE** |
+| Q10 | 400_80 | 5.93 | False | **FALSE POSITIVE** |
 
-All no_match cases across all configs are correctly abstained - no false positives to report.
+**Q09 in config 200_40 is a false positive.** "What interest rate is charged on a late payment?" top-ranks chunk `8f3a43267b698f4e` from `DOC-003-pricing-payment.md` (score 10.80, floor 4.0). But the required phrase(s) (interest rate, late payment) never appear adjacently in that chunk, so this reads as coincidental term overlap - a rare, high-tf shared word inflating the score in a five-document corpus - rather than genuine topical relevance. This is exactly the shallow-match failure mode a pure score floor can't distinguish from a real one.
+
+**Q09 in config 400_80 is a false positive.** "What interest rate is charged on a late payment?" top-ranks chunk `a24d409b835258d0` from `DOC-003-pricing-payment.md` (score 12.16, floor 4.0). But the required phrase(s) (interest rate, late payment) never appear adjacently in that chunk, so this reads as coincidental term overlap - a rare, high-tf shared word inflating the score in a five-document corpus - rather than genuine topical relevance. This is exactly the shallow-match failure mode a pure score floor can't distinguish from a real one.
+
+**Q10 in config 200_40 is a false positive.** "What penalty fee applies to a late delivery?" top-ranks chunk `293a08cfc07546ca` from `DOC-005-delivery-inspection.md` (score 7.56, floor 4.0). But the required phrase(s) (fee applies, late delivery, penalty fee) never appear adjacently in that chunk, so this reads as coincidental term overlap - a rare, high-tf shared word inflating the score in a five-document corpus - rather than genuine topical relevance. This is exactly the shallow-match failure mode a pure score floor can't distinguish from a real one.
+
+**Q10 in config 400_80 is a false positive.** "What penalty fee applies to a late delivery?" top-ranks chunk `6bbb732eee074408` from `DOC-005-delivery-inspection.md` (score 5.93, floor 4.0). But the required phrase(s) (fee applies, penalty fee) never appear adjacently in that chunk, so this reads as coincidental term overlap - a rare, high-tf shared word inflating the score in a five-document corpus - rather than genuine topical relevance. This is exactly the shallow-match failure mode a pure score floor can't distinguish from a real one.
 
 ## Winning configuration: **200_40**
 
@@ -101,7 +107,7 @@ In config 200_40, the terms that scored the top-ranked chunk were: `vendor` (tf=
 
 ```
 pytest -q
-python -m aico.evals.day01 --queries data/evals/day01_queries.json --index data/index --configs 200:40,400:80
+python -m aico.evals.day01 --queries data/evals/day01_queries.json --documents data/documents --configs 200:40,400:80
 ```
 
 This single command rebuilds every chunk set from `data/documents`, writes `artifacts/day01/chunks_200_40.json`, `artifacts/day01/chunks_400_80.json`, `artifacts/day01/metrics.json`, and this file - all from one evaluation pass.

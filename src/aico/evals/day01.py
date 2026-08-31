@@ -1,5 +1,10 @@
 """
-CLI: python -m aico.evals.day01 --queries data/evals/day01_queries.json --index data/index
+CLI: python -m aico.evals.day01 --queries data/evals/day01_queries.json --documents data/documents
+
+This eval always rebuilds chunks itself, once per `--configs` entry, via
+build_chunks() - it needs several differently-sized chunk sets from the raw
+documents to compare configurations, which a single pre-built index (one
+fixed size) can't provide. There is deliberately no `--index` argument.
 
 Responsibilities:
 - Load the ten labelled queries
@@ -7,8 +12,13 @@ Responsibilities:
 - Match anchors against normalised chunk text to determine hit rank
 - Compute Hit@1, Hit@5, MRR overall and per category
 - Score and report the two no_match queries separately (inverted: correct
-  behaviour is returning nothing above the documented score floor AND
-  requiring genuine phrase support - see has_phrase_support)
+  behaviour is a top score below the documented score floor,
+  `NO_MATCH_SCORE_FLOOR` - the floor alone decides `correctly_abstained`, so
+  the verdict is auditable against that one constant. Phrase-adjacency
+  evidence - see has_phrase_support - is computed and reported alongside
+  every verdict but never overrides it; it only explains *why* an
+  above-floor score happened, e.g. coincidental single-word overlap vs a
+  genuinely topical near-miss)
 - Compute multi-chunk full-hit (all anchors matched within top 5)
 - Write artifacts/day01/metrics.json and retrieval_report.md
 
@@ -65,24 +75,24 @@ is a second, separate, and deliberately different tokenization used only for
 term matching - chunk sizing and ranking have different jobs and are not
 unified."""
 
-PHRASE_GATE_NOTE = """A raw top score is not on its own trustworthy evidence of a real no_match
-hit: in a five-document corpus even one coincidentally rare, high-tf shared
-word (e.g. "rate" meaning a day rate, not an interest rate) can clear a
-generous floor. Before trusting a no_match query's top score, the scorer
-extracts the query's own adjacent content-word pairs (stopwords excluded
-from pairing) and requires **every one of them**, not just one, to appear
-as an adjacent pair in the retrieved chunk. Requiring every phrase rather
-than any one phrase mirrors a rule this eval already applies elsewhere:
-`multi_chunk_full_hit` requires every anchor of a multi-chunk query to be
-matched, not just one, before the query counts as fully answered - a
-no_match query with two distinct required phrases is exactly analogous,
-and a chunk that only echoes one of them back has partially matched the
-question, not answered it. This closes the *coincidental-word* and
-*partial-phrase-echo* failure modes cleanly; it cannot, and structurally
-should not be expected to, close a case where a chunk contains every
-required phrase yet still doesn't state the specific fact asked for -
-that distinction needs reading comprehension of what a passage asserts,
-which is beyond lexical matching and is reported as such below rather than
+PHRASE_GATE_NOTE = """`correctly_abstained` is decided by `NO_MATCH_SCORE_FLOOR` alone - a top
+score below the floor abstains, at or above it does not - so the verdict
+in the table below is auditable against that one constant with no hidden
+override. Phrase-adjacency evidence is computed for every no_match query
+regardless, purely as *diagnosis* of an above-floor score, never as a
+second way to earn "correct": the scorer extracts the query's own adjacent
+content-word pairs (stopwords excluded from pairing) and checks whether
+**every one of them**, not just one, appears as an adjacent pair in the
+retrieved chunk (mirroring `multi_chunk_full_hit`, which likewise requires
+every anchor, not just one). When an above-floor score's chunk is missing
+one or more required phrases, that points to *coincidental* term overlap -
+a rare, high-tf shared word (e.g. "rate" meaning a day rate, not an
+interest rate) inflating the score in a five-document corpus without the
+chunk actually being about the question. When every required phrase *is*
+present and the score is still above the floor, that is a harder, genuinely
+topical near-miss: the chunk really is the most relevant passage available,
+it just doesn't state the specific fact asked for - a reading-comprehension
+gap beyond what lexical matching can close, reported as such rather than
 chased with a further heuristic."""
 
 
@@ -185,7 +195,11 @@ def evaluate_config(chunks: list[dict], queries: list[dict], top_k: int = 5) -> 
             else:
                 matched_phrases, missing_phrases, phrase_support = [], sorted(" ".join(b) for b in bigrams), False
 
-            correctly_abstained = (top_score < NO_MATCH_SCORE_FLOOR) or not phrase_support
+            # Sole decisive rule: the documented score floor. Phrase evidence
+            # above (matched_phrases/missing_phrases/phrase_support) is
+            # reported alongside this verdict as diagnosis of *why* an
+            # above-floor score happened - it never overrides the floor.
+            correctly_abstained = top_score < NO_MATCH_SCORE_FLOOR
             per_query[q["query_id"]] = {
                 "category": q["category"],
                 "top_score": top_score,
@@ -380,16 +394,22 @@ def render_report(
             chunk = nm["top_chunk"]
             lines.append(
                 f"**{qid} in config {label} is a false positive.** \"{q['text']}\" top-ranks "
-                f"chunk `{chunk['chunk_id']}` from `{chunk['source_file']}` (score {nm['top_score']:.2f}). "
+                f"chunk `{chunk['chunk_id']}` from `{chunk['source_file']}` (score {nm['top_score']:.2f}, "
+                f"floor {floor}). "
                 + (
                     f"Every one of the query's required phrases ({', '.join(nm['matched_phrases'])}) "
-                    "appears adjacently in that chunk, so the phrase gate correctly does not override "
-                    "the score - this is the harder failure mode: the chunk is genuinely the most "
-                    "topically relevant passage available, it just doesn't state the specific fact the "
-                    "query asked for. No lexical technique can close that gap; it needs reading "
-                    "comprehension of what the passage asserts, not just which words it contains."
+                    "appears adjacently in that chunk - this is the harder failure mode: the chunk is "
+                    "genuinely the most topically relevant passage available, it just doesn't state the "
+                    "specific fact the query asked for. No lexical technique can close that gap; it needs "
+                    "reading comprehension of what the passage asserts, not just which words it contains."
                     if nm["phrase_support"]
-                    else "The phrase gate should have caught this - investigate before trusting this run."
+                    else (
+                        f"But the required phrase(s) ({', '.join(nm['missing_phrases'])}) never appear "
+                        "adjacently in that chunk, so this reads as coincidental term overlap - a rare, "
+                        "high-tf shared word inflating the score in a five-document corpus - rather than "
+                        "genuine topical relevance. This is exactly the shallow-match failure mode a pure "
+                        "score floor can't distinguish from a real one."
+                    )
                 )
             )
             lines.append("")
@@ -487,7 +507,7 @@ def render_report(
     lines.append("```")
     lines.append("pytest -q")
     lines.append(
-        "python -m aico.evals.day01 --queries data/evals/day01_queries.json --index data/index "
+        "python -m aico.evals.day01 --queries data/evals/day01_queries.json --documents data/documents "
         + "--configs " + ",".join(f"{t}:{o}" for _, t, o in configs_meta)
     )
     lines.append("```")
@@ -505,7 +525,6 @@ def render_report(
 def main():
     parser = argparse.ArgumentParser(description="Run the Day 1 retrieval evaluation.")
     parser.add_argument("--queries", required=True, type=pathlib.Path)
-    parser.add_argument("--index", type=pathlib.Path, default=pathlib.Path("data/index"))
     parser.add_argument("--documents", type=pathlib.Path, default=pathlib.Path("data/documents"))
     parser.add_argument("--artifacts-dir", type=pathlib.Path, default=pathlib.Path("artifacts/day01"))
     parser.add_argument(

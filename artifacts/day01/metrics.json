@@ -43,7 +43,7 @@
             "chunk_id": "8f3a43267b698f4e",
             "source_file": "DOC-003-pricing-payment.md"
           },
-          "correctly_abstained": true
+          "correctly_abstained": false
         },
         "Q10": {
           "category": "no_match",
@@ -59,7 +59,7 @@
             "chunk_id": "293a08cfc07546ca",
             "source_file": "DOC-005-delivery-inspection.md"
           },
-          "correctly_abstained": true
+          "correctly_abstained": false
         }
       },
       "per_query": {
@@ -450,7 +450,7 @@
             "chunk_id": "8f3a43267b698f4e",
             "source_file": "DOC-003-pricing-payment.md"
           },
-          "correctly_abstained": true
+          "correctly_abstained": false
         },
         "Q10": {
           "category": "no_match",
@@ -466,7 +466,7 @@
             "chunk_id": "293a08cfc07546ca",
             "source_file": "DOC-005-delivery-inspection.md"
           },
-          "correctly_abstained": true
+          "correctly_abstained": false
         }
       }
     },
@@ -512,7 +512,7 @@
             "chunk_id": "a24d409b835258d0",
             "source_file": "DOC-003-pricing-payment.md"
           },
-          "correctly_abstained": true
+          "correctly_abstained": false
         },
         "Q10": {
           "category": "no_match",
@@ -529,7 +529,7 @@
             "chunk_id": "6bbb732eee074408",
             "source_file": "DOC-005-delivery-inspection.md"
           },
-          "correctly_abstained": true
+          "correctly_abstained": false
         }
       },
       "per_query": {
@@ -930,7 +930,7 @@
             "chunk_id": "a24d409b835258d0",
             "source_file": "DOC-003-pricing-payment.md"
           },
-          "correctly_abstained": true
+          "correctly_abstained": false
         },
         "Q10": {
           "category": "no_match",
@@ -947,7 +947,7 @@
             "chunk_id": "6bbb732eee074408",
             "source_file": "DOC-005-delivery-inspection.md"
           },
-          "correctly_abstained": true
+          "correctly_abstained": false
         }
       }
     }

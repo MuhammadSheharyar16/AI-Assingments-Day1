@@ -140,8 +140,13 @@ below; omitting `--mode` still runs plain BM25, unchanged.)
 ### Task 3 — Measure and report
 
 ```
-python -m aico.evals.day01 --queries data/evals/day01_queries.json --index data/index
+python -m aico.evals.day01 --queries data/evals/day01_queries.json --documents data/documents
 ```
+
+There is deliberately no `--index` flag: this eval needs several
+differently-sized chunk sets to compare configurations, so it always
+rebuilds chunks itself from `--documents` for every entry in `--configs`
+rather than reading one fixed pre-built index.
 
 Runs the ten labelled queries in `data/evals/day01_queries.json` against
 **both** required chunk configurations in one pass (`--configs` defaults
@@ -165,33 +170,43 @@ worst-scored-query diagnosis are all built in `render_report()` in
 command after any code, corpus or query-set change regenerates a report
 that can't drift out of sync with the numbers behind it.
 
-A no_match top score alone isn't trusted as evidence of a real match: the
-scorer also requires the top chunk to contain **every one** of the query's
-adjacent content-word pairs verbatim, not just one of them (a
-phrase-support gate — see `artifacts/day01/retrieval_report.md` for why
-"every", not "any", was needed), and not just an absolute score floor.
-`NO_MATCH_SCORE_FLOOR = 4.0` in `src/aico/evals/day01.py` is still a
-sufficient condition for abstention on its own, it's just no longer the
-only one.
+`correctly_abstained` is decided by `NO_MATCH_SCORE_FLOOR = 4.0` in
+`src/aico/evals/day01.py` **alone** — a top score below the floor abstains,
+at or above it does not, with no override, so the verdict is auditable
+against that one constant. The scorer also checks whether the top chunk
+contains **every one** of the query's adjacent content-word pairs verbatim
+(a phrase-adjacency check — see `artifacts/day01/retrieval_report.md` for
+why "every", not "any"), but that check is diagnostic only: it explains
+*why* an above-floor score happened (coincidental single-word overlap vs a
+genuinely topical near-miss) and is reported alongside every verdict — it
+never changes the verdict itself.
 
-#### Last verified run (2026-08-26)
+#### Last verified run (2026-08-31)
 ```
 config 200_40 (35 chunks): Hit@1=0.62  Hit@5=0.88  MRR=0.729
   exact_term:    Hit@1=0.75 Hit@5=1.00 MRR=0.875
   synonym_poor:  Hit@1=0.50 Hit@5=0.50 MRR=0.500
   multi_chunk:   Hit@1=0.50 Hit@5=1.00 MRR=0.667
-  Q09 (no_match): top_score=10.801 phrase_support=False -> ok (abstained)
-  Q10 (no_match): top_score=7.558  phrase_support=False -> ok (abstained)
+  Q09 (no_match): top_score=10.801 phrase_support=False -> FALSE POSITIVE
+  Q10 (no_match): top_score=7.558  phrase_support=False -> FALSE POSITIVE
 
 config 400_80 (16 chunks): Hit@1=0.50  Hit@5=1.00  MRR=0.692
   exact_term:    Hit@1=0.75 Hit@5=1.00 MRR=0.875
   synonym_poor:  Hit@1=0.50 Hit@5=1.00 MRR=0.600
   multi_chunk:   Hit@1=0.00 Hit@5=1.00 MRR=0.417
-  Q09 (no_match): top_score=12.159 phrase_support=False -> ok (abstained)
-  Q10 (no_match): top_score=5.928  phrase_support=False -> ok (abstained)
+  Q09 (no_match): top_score=12.159 phrase_support=False -> FALSE POSITIVE
+  Q10 (no_match): top_score=5.928  phrase_support=False -> FALSE POSITIVE
 
-pytest -q: 35 passed
+pytest -q: 50 passed (day01 eval: 14 passed)
 ```
+
+All four no_match cases score above the floor in both configs, and in
+every case the missing-phrase diagnosis shows why: BM25 latches onto a
+coincidentally shared, high-tf word (e.g. "rate" as in a day rate, not an
+interest rate) rather than genuine topical relevance. This is now reported
+honestly as four false positives rather than folded into "correct" by a
+hidden override — see the BM25 failure diagnosis in
+`artifacts/day01/retrieval_report.md` for the per-query detail.
 
 ### Evaluation queries
 
@@ -469,6 +484,7 @@ scores against a previous run may show tiny drift. This is normal.
 AI-Assingments-Day2/
   README.md                        this file
   requirements.txt
+  pytest.ini                        pythonpath=src, so `pytest` runs standalone
   .gitignore
   .env                              Day 2 provider credentials (gitignored, never committed)
   src/aico/

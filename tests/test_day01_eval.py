@@ -113,36 +113,34 @@ def test_no_match_queries_are_reported_separately_with_a_named_floor():
         assert isinstance(nm["top_score"], float)
         assert isinstance(nm["phrase_support"], bool)
         assert isinstance(nm["correctly_abstained"], bool)
-        # the floor is still a real, sufficient condition for abstention on
-        # its own - a top score below it always abstains - it just isn't
-        # the only one any more (see the phrase-gate test below)
-        if nm["top_score"] < NO_MATCH_SCORE_FLOOR:
-            assert nm["correctly_abstained"] is True
+        # the floor is the *sole* decisive rule, so this must hold exactly,
+        # not just as a one-directional sufficient condition
+        assert nm["correctly_abstained"] == (nm["top_score"] < NO_MATCH_SCORE_FLOOR)
 
 
-def test_no_match_phrase_gate_catches_scattered_words_and_partial_phrase_echoes():
+def test_no_match_phrase_evidence_diagnoses_but_never_overrides_the_floor():
     # Q09 ("what interest rate is charged on a late payment?") top-ranks
     # DOC-003's Rate Cards section in 200/40: it shares "rate" and "charged"
     # with the query at high term frequency, but only in the unrelated sense
-    # of a billed day-rate, not an interest rate - the raw score alone (well
-    # above the floor) would call this a match. Neither "interest rate" nor
-    # "late payment" appears as an adjacent phrase in that chunk, so the
-    # phrase gate correctly overrides the raw score.
+    # of a billed day-rate, not an interest rate. Neither "interest rate" nor
+    # "late payment" appears as an adjacent phrase in that chunk, so
+    # phrase_support is False - but that's diagnosis, not a verdict: the
+    # score is above the floor, so this is correctly reported as a false
+    # positive, not silently waved through.
     q9 = RESULT["no_match"]["Q09"]
     assert q9["top_score"] >= NO_MATCH_SCORE_FLOOR
     assert q9["phrase_support"] is False
-    assert q9["correctly_abstained"] is True
+    assert q9["correctly_abstained"] is False
 
     # Q10 ("what penalty fee applies to a late delivery?") in 400/80 top-ranks
     # a chunk that genuinely contains DOC-005's whole "Late Delivery" section
     # - the query's own phrase "late delivery" really does appear adjacently
-    # in it. But the query also requires "penalty fee", which the chunk
-    # never mentions: matching one of two required phrases is a partial echo
-    # of the question, not an answer to it, so the gate must still reject it.
+    # in it, but "penalty fee" never does, so phrase_support is still False.
+    # Same rule applies: the floor alone decides, and the score is above it.
     q10 = RESULT_400_80["no_match"]["Q10"]
     assert q10["top_score"] >= NO_MATCH_SCORE_FLOOR
     assert q10["phrase_support"] is False
-    assert q10["correctly_abstained"] is True
+    assert q10["correctly_abstained"] is False
 
 
 def test_query_content_bigrams_drops_pairs_touching_a_stopword():
@@ -206,8 +204,12 @@ def test_render_report_includes_every_required_section_and_reflects_no_match_ver
     ]:
         assert expected in report
 
-    # both no_match queries currently abstain correctly in both configs
+    # both no_match queries currently score above the floor in both configs,
+    # so - now that the floor alone decides - both are correctly reported
+    # as false positives, with phrase evidence explaining why (coincidental
+    # term overlap, not genuine topical relevance)
     for qid in ["Q09", "Q10"]:
         for label in ["200_40", "400_80"]:
-            assert ALL_RESULTS[label]["no_match"][qid]["correctly_abstained"] is True
-    assert "All no_match cases across all configs are correctly abstained" in report
+            nm = ALL_RESULTS[label]["no_match"][qid]
+            assert nm["correctly_abstained"] == (nm["top_score"] < NO_MATCH_SCORE_FLOOR)
+    assert "is a false positive" in report
