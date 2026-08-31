@@ -1,16 +1,17 @@
 """
-Embedding provider interface: the one seam between the codebase and the
-embedding API. Nothing outside this module talks to the provider SDK/API
-directly - a repository search for the request import must return this
-file only.
+Embedding provider interface: the one seam between retrieval code and the
+embedding API. As of Day 3, no file in this module (or anywhere outside
+aico.platform) imports the HTTP client used to call the embedding API -
+that lives solely in aico.platform.foundry_adapter, reached through the
+Model Gateway (aico.platform.model_gateway).
 
 Responsibilities:
 - EmbeddingProvider: the interface every caller (embed CLI, vector_index,
   search) depends on - never the concrete provider class.
-- AzureEmbeddingProvider: the one real implementation, calling the approved
-  Azure AI Foundry embeddings endpoint over the model/endpoint/key supplied
-  by the team. Configuration comes from environment variables (see .env),
-  never hardcoded, and is never logged.
+- AzureEmbeddingProvider: the one real implementation. Delegates every
+  embed() call to a aico.platform.model_gateway.ModelGateway instead of
+  calling the provider directly - see ADR-003 for why chat and embedding
+  traffic share one platform boundary.
 - FakeEmbeddingProvider: deterministic, offline, no network. Every test uses
   this - a vector is derived purely from the input text, so the same text
   always produces the same vector and no test ever calls out.
@@ -22,20 +23,13 @@ from __future__ import annotations
 
 import hashlib
 import math
-import os
 from abc import ABC, abstractmethod
-from urllib.parse import urlencode
+from typing import TYPE_CHECKING
 
-import requests
+if TYPE_CHECKING:
+    from aico.platform.model_gateway import ModelGateway
 
-DEFAULT_API_VERSION = "2024-05-01-preview"
-DEFAULT_AZURE_DIMENSIONS = 1536  # text-embedding-3-small's native dimensionality
-
-# Observed against the shared dev Foundry endpoint: roughly 1 in 10 calls
-# comes back 404 DeploymentNotFound for no client-side reason - identical
-# requests, immediately retried by hand, succeed. Timeouts, retries and
-# routing policy are explicitly Day 3 scope, so this is not retried here;
-# a failure here just means "run the embed command again."
+DEFAULT_FOUNDRY_EMBEDDING_DIMENSIONS = 1536  # text-embedding-3-small's native dimensionality
 
 FAKE_MODEL_ALIAS = "fake-embed-v1"
 FAKE_DIMENSIONS = 32
@@ -64,37 +58,26 @@ class EmbeddingProvider(ABC):
 
 
 class AzureEmbeddingProvider(EmbeddingProvider):
-    """Real provider. Calls the Azure AI Foundry embeddings REST endpoint.
-
-    This is the only file in the repository allowed to make that call -
-    everything else goes through the EmbeddingProvider interface.
+    """Real provider. Delegates to a aico.platform.model_gateway.ModelGateway
+    instead of calling the provider API directly - this file has no HTTP
+    client import at all. `ModelGateway.from_config()` (used when no
+    gateway is passed in) reads config/model-routing.yaml and the
+    provider-credential environment variable; see aico.platform.config and
+    aico.platform.foundry_adapter.
     """
 
-    def __init__(
-        self,
-        endpoint: str | None = None,
-        api_key: str | None = None,
-        model: str | None = None,
-        api_version: str | None = None,
-        dimensions: int = DEFAULT_AZURE_DIMENSIONS,
-    ):
-        self._endpoint = (endpoint or os.environ.get("AICO_EMBEDDING_ENDPOINT", "")).rstrip("/")
-        self._api_key = api_key or os.environ.get("AICO_EMBEDDING_API_KEY", "")
-        self._model = model or os.environ.get("AICO_EMBEDDING_MODEL", "text-embedding-3-small")
-        self._api_version = api_version or os.environ.get(
-            "AICO_EMBEDDING_API_VERSION", DEFAULT_API_VERSION
-        )
-        self._dimensions = dimensions
+    def __init__(self, gateway: "ModelGateway | None" = None, dimensions: int | None = None):
+        if gateway is None:
+            from aico.platform.model_gateway import ModelGateway  # local: avoid import at module load time
 
-        if not self._endpoint or not self._api_key:
-            raise RuntimeError(
-                "AICO_EMBEDDING_ENDPOINT and AICO_EMBEDDING_API_KEY must be set "
-                "(see .env, gitignored) to use the real embedding provider."
-            )
+            gateway = ModelGateway.from_config()
+        self._gateway = gateway
+        self._model_alias = gateway.config.models.embedding
+        self._dimensions = dimensions or DEFAULT_FOUNDRY_EMBEDDING_DIMENSIONS
 
     @property
     def model_alias(self) -> str:
-        return self._model
+        return self._model_alias
 
     @property
     def dimensions(self) -> int:
@@ -104,23 +87,10 @@ class AzureEmbeddingProvider(EmbeddingProvider):
         if not texts:
             return []
 
-        # Foundry's unified Model Inference API (provider-agnostic, works the
-        # same way regardless of which vendor's model is behind the
-        # deployment) - the model goes in the request body, not the URL path.
-        query = urlencode({"api-version": self._api_version})
-        url = f"{self._endpoint}/models/embeddings?{query}"
-        headers = {"api-key": self._api_key, "Content-Type": "application/json"}
-        body = {"input": texts, "model": self._model}
+        from aico.platform.model_gateway import EmbedRequest
 
-        # Never log headers, the request body or the response - both the key
-        # and the vectors themselves must stay out of normal application logs.
-        response = requests.post(url, headers=headers, json=body, timeout=30)
-        response.raise_for_status()
-        payload = response.json()
-
-        # Azure is not guaranteed to return items in input order - restore it.
-        items = sorted(payload["data"], key=lambda item: item["index"])
-        return [item["embedding"] for item in items]
+        result = self._gateway.embed(EmbedRequest(texts=texts, model_alias=self._model_alias))
+        return result.vectors
 
 
 class FakeEmbeddingProvider(EmbeddingProvider):

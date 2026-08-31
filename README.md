@@ -283,11 +283,13 @@ python -m aico.retrieval.embed --index data/index --out data/vectors
 ```
 
 Reads the chunk records Day 1's `ingest` produced, embeds every chunk
-through `AzureEmbeddingProvider` (`src/aico/retrieval/embedding_provider.py`
+through `AzureEmbeddingProvider` (`src/aico/retrieval/embedding_provider.py`),
+which delegates to the Day 3 Model Gateway (`src/aico/platform/model_gateway.py`)
 — the only file in the repo that imports the HTTP client used to call the
-embedding API), and writes/updates the cache at `--out`. Reports how many
-chunks were embedded, how many were served from cache, and how many
-provider calls were made:
+embedding API is `src/aico/platform/foundry_adapter.py`, reached through
+that gateway. See "Day 3 — Microsoft Foundry Model Gateway" below. Writes/
+updates the cache at `--out`. Reports how many chunks were embedded, how
+many were served from cache, and how many provider calls were made:
 
 ```
 Embedded 23 chunk(s), served 0 from cache, made 2 provider call(s) -> data\vectors   # first (cold) run
@@ -445,7 +447,8 @@ scores against a previous run may show tiny drift. This is normal.
 
 **Day 2**
 - **Provider call surface**: one interface (`EmbeddingProvider`), one real
-  implementation (`AzureEmbeddingProvider`), one fake
+  implementation (`AzureEmbeddingProvider`, Day 3 — delegates to the
+  Model Gateway instead of calling the provider directly), one fake
   (`FakeEmbeddingProvider`) — all in `embedding_provider.py`. Everything
   else (cache, search, eval) depends only on the interface.
 - **API route**: the real provider calls Foundry's unified Model Inference
@@ -471,8 +474,8 @@ scores against a previous run may show tiny drift. This is normal.
   reported outcome per mode (bm25 abstains 2/3 in the last run; vector and
   hybrid abstain 0/3 — a real, investigated finding, not a bug: see the
   report for why).
-- **Retry scope**: `AzureEmbeddingProvider` itself never retries (Day 3
-  scope, per the assignment's own working rules). `day02.py`'s
+- **Retry scope**: `AzureEmbeddingProvider` itself never retries — bounded
+  retry is Task 3 of Day 3's Model Gateway, not this file. `day02.py`'s
   `_RetryingProvider` is a thin wrapper local to that one measurement
   script only, so a ~19-call evaluation run against a flaky shared dev
   endpoint can actually complete — it does not change the provider
@@ -488,12 +491,17 @@ AI-Assingments-Day2/
   .gitignore
   .env                              Day 2 provider credentials (gitignored, never committed)
   src/aico/
+    platform/
+      model_gateway.py              Day 3 — typed chat/embed boundary (ModelGateway)
+      config.py                     Day 3 — validated config/model-routing.yaml loading
+      errors.py                     Day 3 — normalized ModelGatewayError hierarchy
+      foundry_adapter.py            Day 3 — the only file that calls the provider over HTTP
     retrieval/
       chunker.py                    Day 1 — offset-exact chunking
       ingest.py                     Day 1 — CLI: documents -> index.json
       bm25.py                       Day 1 — from-scratch BM25 ranking
       search.py                     CLI: query -> ranked chunks (bm25 / vector / hybrid)
-      embedding_provider.py         Day 2 — provider interface + real (Azure/Foundry) + fake
+      embedding_provider.py         provider interface + real (Day 3: gateway-backed) + fake
       vector_index.py               Day 2 — vector cache, cosine similarity search
       embed.py                      Day 2 — CLI: chunks -> vector cache
       hybrid.py                     Day 2 — reciprocal-rank fusion

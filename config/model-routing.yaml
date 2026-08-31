@@ -1,0 +1,50 @@
+# AICO Day 3 model routing example
+# NO SECRETS belong in this file.
+#
+# Replace lead-provided placeholders through your approved configuration process.
+# The actual Foundry endpoint/aliases are environment/setup inputs.
+
+version: "1.0"
+
+foundry:
+  endpoint_env: "AICO_FOUNDRY_ENDPOINT"
+
+models:
+  chat:
+    alias: "__LEAD_PROVIDED_CHAT_ALIAS__"
+  embedding:
+    alias: "__LEAD_PROVIDED_EMBEDDING_ALIAS__"
+
+resilience:
+  timeout_seconds: 20
+  retry:
+    max_attempts: 3
+    base_delay_ms: 250
+    max_delay_ms: 2000
+    jitter: true
+
+budgets:
+  chat:
+    max_input_tokens: 8000
+    max_output_tokens: 1000
+  embedding:
+    max_items_per_call: 32
+
+routing:
+  primary:
+    provider: "microsoft-foundry"
+    region: "__LEAD_PROVIDED_REGION__"
+    data_boundary: "__LEAD_PROVIDED_DATA_BOUNDARY__"
+    risk_class: "standard"
+  fallback:
+    enabled: false
+    provider: "__OPTIONAL_APPROVED_PROVIDER__"
+    region: "__OPTIONAL_APPROVED_REGION__"
+    data_boundary: "__OPTIONAL_APPROVED_DATA_BOUNDARY__"
+    risk_class: "standard"
+    require_compatibility:
+      provider: true
+      region: true
+      data_boundary: true
+      risk: true
+      budget: true

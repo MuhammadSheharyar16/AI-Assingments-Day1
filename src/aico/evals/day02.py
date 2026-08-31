@@ -97,13 +97,17 @@ SCORE_FLOOR_NOTE = {
     ),
 }
 
-# Small, explicitly-scoped retry for THIS measurement script only - not a
-# change to the interface or a Day 3 gateway/routing policy. The shared dev
-# Foundry endpoint has a documented ~1-in-5 to 1-in-10 transient
-# DeploymentNotFound 404 on an otherwise-valid request (see
-# embedding_provider.py); a full `--mode all` run makes roughly twenty calls,
-# so without this a clean run is unlikely by chance alone, not because of
-# anything wrong with the request.
+# Small, explicitly-scoped retry for THIS measurement script only - predates
+# the Day 3 Model Gateway's own bounded retry (aico.platform.model_gateway,
+# Task 3) and wraps AzureEmbeddingProvider from the outside rather than
+# changing the EmbeddingProvider interface. The shared dev Foundry endpoint
+# has a documented ~1-in-5 to 1-in-10 transient DeploymentNotFound 404 on an
+# otherwise-valid request; a full `--mode all` run makes roughly twenty
+# calls, so without this a clean run is unlikely by chance alone, not
+# because of anything wrong with the request. Once Task 3's gateway-level
+# retry ceiling/backoff/jitter is in place this wrapper is likely redundant
+# and can be retired - left in place for now to avoid changing two things
+# (the gateway's resilience behavior and this eval script) at once.
 RETRY_ATTEMPTS = 4
 RETRY_DELAY_SECONDS = 0.5
 
