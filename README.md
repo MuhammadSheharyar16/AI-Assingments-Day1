@@ -86,10 +86,13 @@ and need neither of the above.
 pytest -q
 ```
 
-93 tests pass, across eleven files. Every test is deterministic and offline
-— none makes a real network call; Day 2's tests use `FakeEmbeddingProvider`
-exclusively, and Day 3's inject a fake transport/credential directly into
-the gateway/adapter.
+109 tests pass, across thirteen files. Every test is deterministic and
+offline — none makes a real network call; Day 2's tests use
+`FakeEmbeddingProvider` exclusively, and Day 3's inject a fake
+transport/credential directly into the gateway/adapter (and, for retry
+tests, a no-delay `sleep` and a fixed `random_factor` so bounded-retry
+tests run instantly and assert exact backoff/jitter values instead of
+just "eventually retries").
 
 - `tests/test_chunker.py` (11) — offset reconstruction, overlap, unicode
   survival, empty input, invalid configuration, determinism
@@ -121,9 +124,20 @@ the gateway/adapter.
 - `tests/test_model_gateway.py` (15) — Day 3 typed gateway contract:
   the required SDK-isolation repository check, typed chat/embed round-trips
   against a fake transport, sanitized metadata (never prompt/completion
-  text), cancellation, transport failures normalized not leaked,
-  `AzureEmbeddingProvider` satisfying `EmbeddingProvider` via the gateway,
-  and config validation (missing file, placeholder alias, fully-filled file)
+  text), cancellation before a call starts, non-retryable transport
+  failures normalized not leaked, `AzureEmbeddingProvider` satisfying
+  `EmbeddingProvider` via the gateway, and config validation (missing
+  file, placeholder alias, fully-filled file)
+- `tests/test_model_gateway_retry.py` (16) — Day 3 bounded exponential
+  retry with jitter: required error categories map to the right
+  retryable/non-retryable typed error, a retryable failure retries and
+  reports an accurate `retry_count` on success, a retryable failure that
+  keeps failing stops at the configured attempt ceiling
+  (`GatewayRetryCeilingExceededError`, never an infinite loop), a
+  non-retryable failure fails immediately with zero sleep calls,
+  cancellation set during the backoff wait stops the loop before the next
+  attempt, and backoff grows exponentially, caps at `max_delay_ms`, and
+  jitter scales the delay by the configured random factor
 - `tests/test_foundry_adapter_identity.py` (7) — Day 3 identity
   authentication: bearer token from an injected `TokenCredential` (never
   an API key), token caching across calls, refresh once close to expiry,

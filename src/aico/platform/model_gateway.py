@@ -12,8 +12,16 @@ Responsibilities:
   token usage (where available), latency, retry count, budget status.
   Prompt/completion text is never put inside metadata.
 - A cancellation/timeout seam every call goes through (`CancellationToken`,
-  `timeout_seconds`) - see Task 3 for the full bounded-retry policy built
-  on top of it.
+  `timeout_seconds`).
+- Bounded exponential retry with jitter (Task 3): a retryable failure
+  (`ModelGatewayError.retryable`) is retried up to
+  `config.resilience.retry.max_attempts` times, waiting
+  `min(base_delay_ms * 2**attempt, max_delay_ms)` between attempts (full
+  jitter - a random point between 0 and that cap - when
+  `retry.jitter` is true). A non-retryable failure fails immediately.
+  Retry always stops: at the ceiling (raising
+  `GatewayRetryCeilingExceededError`) or the moment `CancellationToken` is
+  set, whichever comes first - there is no infinite loop.
 - Normalizing every failure into aico.platform.errors.ModelGatewayError -
   a caller of this module never needs to know what raised the underlying
   exception.
@@ -29,13 +37,14 @@ endpoint to exist.
 """
 from __future__ import annotations
 
+import random
 import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-from aico.platform.config import GatewayConfig, load_gateway_config
-from aico.platform.errors import ModelGatewayError
+from aico.platform.config import GatewayConfig, RetryConfig, load_gateway_config
+from aico.platform.errors import GatewayCancelledError, GatewayRetryCeilingExceededError, ModelGatewayError
 
 
 class CancellationToken:
@@ -43,10 +52,12 @@ class CancellationToken:
     into a request, and calls `.cancel()` (from another thread, or on its
     own deadline) to ask an in-flight or not-yet-started call to stop
     instead of running to completion. The gateway checks it before
-    dispatching a call and, in the bounded-retry loop (Task 3), between
-    attempts - it cannot interrupt a single HTTP call already in flight
-    against a transport that does not support that itself, but it does
-    stop the operation from retrying or from ever starting."""
+    dispatching a call and, in the bounded-retry loop, before every retry
+    attempt (including while waiting out the backoff delay, in effect,
+    since the check happens the moment that wait returns) - it cannot
+    interrupt a single HTTP call already in flight against a transport
+    that does not support that itself, but it does stop the operation
+    from retrying or from ever starting."""
 
     def __init__(self) -> None:
         self._event = threading.Event()
@@ -153,10 +164,17 @@ class ModelGateway:
         transport: Transport,
         *,
         clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+        random_factor: Callable[[], float] = random.random,
     ):
         self._config = config
         self._transport = transport
         self._clock = clock
+        # Injectable so tests can prove backoff/jitter math and retry
+        # sequencing without an actual test run taking as long as the real
+        # delays would, and without depending on real randomness.
+        self._sleep = sleep
+        self._random_factor = random_factor
 
     @classmethod
     def from_config(cls, path: str | None = None) -> "ModelGateway":
@@ -176,13 +194,14 @@ class ModelGateway:
     def embed(self, request: EmbedRequest) -> EmbedResult:
         model_alias = request.model_alias or self._config.models.embedding
         timeout_seconds = request.timeout_seconds or self._config.resilience.timeout_seconds
-        self._check_cancellation(request.cancellation, "embed")
 
         start = self._clock()
-        result = self._call_transport(
+        result, retry_count = self._call_with_retry(
             lambda: self._transport.embed(
                 model_alias=model_alias, texts=request.texts, timeout_seconds=timeout_seconds
-            )
+            ),
+            request.cancellation,
+            "embed",
         )
         latency_ms = (self._clock() - start) * 1000
 
@@ -191,7 +210,7 @@ class ModelGateway:
             operation="embed",
             model_alias=model_alias,
             latency_ms=latency_ms,
-            retry_count=0,  # bounded retry ceiling/backoff/jitter: Task 3
+            retry_count=retry_count,
             token_usage=result.token_usage,
             budget_status=self._embed_budget_status(len(request.texts)),
         )
@@ -200,18 +219,19 @@ class ModelGateway:
     def chat(self, request: ChatRequest) -> ChatResult:
         model_alias = request.model_alias or self._config.models.chat
         timeout_seconds = request.timeout_seconds or self._config.resilience.timeout_seconds
-        self._check_cancellation(request.cancellation, "chat")
 
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
         start = self._clock()
-        result = self._call_transport(
+        result, retry_count = self._call_with_retry(
             lambda: self._transport.chat(
                 model_alias=model_alias,
                 messages=messages,
                 max_output_tokens=request.max_output_tokens,
                 timeout_seconds=timeout_seconds,
-            )
+            ),
+            request.cancellation,
+            "chat",
         )
         latency_ms = (self._clock() - start) * 1000
 
@@ -219,7 +239,7 @@ class ModelGateway:
             operation="chat",
             model_alias=model_alias,
             latency_ms=latency_ms,
-            retry_count=0,
+            retry_count=retry_count,
             token_usage=result.token_usage,
             budget_status=self._chat_budget_status(result.token_usage),
         )
@@ -229,19 +249,56 @@ class ModelGateway:
 
     def _check_cancellation(self, token: CancellationToken | None, operation: str) -> None:
         if token is not None and token.is_cancelled():
-            from aico.platform.errors import GatewayCancelledError
+            raise GatewayCancelledError(f"{operation} was cancelled")
 
-            raise GatewayCancelledError(f"{operation} was cancelled before it started")
+    def _call_with_retry(
+        self,
+        call: Callable[[], TransportResult],
+        cancellation: CancellationToken | None,
+        operation: str,
+    ) -> tuple[TransportResult, int]:
+        """Run `call()`, retrying a retryable ModelGatewayError with bounded
+        exponential backoff and (optionally) jitter, up to
+        `config.resilience.retry.max_attempts` attempts total. Returns the
+        successful TransportResult and how many retries it took (0 on a
+        first-try success). A non-retryable error, an unnormalized
+        exception, cancellation, or exhausting the attempt ceiling all end
+        the loop - it never runs unbounded."""
+        retry_cfg = self._config.resilience.retry
+        attempt = 0  # number of retries already taken (0 == first attempt in flight)
 
-    def _call_transport(self, call: Callable[[], TransportResult]) -> TransportResult:
-        try:
-            return call()
-        except ModelGatewayError:
-            raise
-        except Exception as exc:  # last-resort seam: a transport is expected to normalize
-            raise ModelGatewayError(
-                f"unnormalized transport failure: {exc.__class__.__name__}: {exc}", cause=exc
-            ) from exc
+        while True:
+            self._check_cancellation(cancellation, operation)
+            try:
+                return call(), attempt
+            except ModelGatewayError as exc:
+                if not exc.retryable:
+                    raise
+                if attempt + 1 >= retry_cfg.max_attempts:
+                    raise GatewayRetryCeilingExceededError(
+                        f"{operation} did not succeed within {retry_cfg.max_attempts} attempt(s) "
+                        f"(last failure: {exc.category}: {exc})",
+                        cause=exc,
+                    ) from exc
+                self._sleep(self._backoff_delay_seconds(attempt, retry_cfg))
+                attempt += 1
+            except Exception as exc:  # last-resort seam: a transport is expected to normalize
+                # Not retried - an un-normalized exception means the
+                # transport itself has a bug, not a known-transient
+                # provider failure, so blindly retrying it would just
+                # repeat whatever went wrong.
+                raise ModelGatewayError(
+                    f"unnormalized transport failure: {exc.__class__.__name__}: {exc}", cause=exc
+                ) from exc
+
+    def _backoff_delay_seconds(self, attempt: int, retry_cfg: RetryConfig) -> float:
+        """attempt is 0-indexed (0 == delay before the 2nd overall try).
+        Capped exponential backoff; full jitter (uniform between 0 and the
+        cap) when retry_cfg.jitter is set, so many concurrent callers
+        retrying the same failure don't all wake up at the same instant."""
+        capped_ms = min(retry_cfg.base_delay_ms * (2 ** attempt), retry_cfg.max_delay_ms)
+        delay_ms = capped_ms * self._random_factor() if retry_cfg.jitter else capped_ms
+        return delay_ms / 1000
 
     def _embed_budget_status(self, item_count: int) -> str:
         limit = self._config.budgets.embedding.max_items_per_call

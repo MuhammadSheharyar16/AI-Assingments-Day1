@@ -15,9 +15,9 @@ Task 1 — typed Model Gateway boundary.
 - Missing/invalid required routing configuration fails with
   GatewayConfigurationError, not a silent default.
 
-Bounded retry (ceiling/backoff/jitter), full timeout/cancellation-mid-call
-behavior, and routing/fallback policy are Task 3 and Task 4 - covered in
-test_model_gateway_retry.py / test_model_gateway_routing.py, not here.
+Bounded retry (ceiling/backoff/jitter) and cancellation-during-retry
+behavior are Task 3 - covered in test_model_gateway_retry.py, not here.
+Routing/fallback policy is Task 4 - test_model_gateway_routing.py.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ from aico.platform.config import (
     RouteEndpoint,
     RoutingPolicy,
 )
-from aico.platform.errors import GatewayConfigurationError, GatewayServerError, ModelGatewayError
+from aico.platform.errors import GatewayConfigurationError, ModelGatewayError
 from aico.platform.model_gateway import (
     CancellationToken,
     ChatMessage,
@@ -203,11 +203,18 @@ def test_cancellation_blocks_the_call_before_it_starts():
     assert transport.embed_calls == []  # never reached the transport
 
 
-def test_transport_failure_is_normalized_not_raw():
-    transport = FakeTransport(raises=GatewayServerError("boom"))
+def test_non_retryable_transport_failure_is_normalized_and_not_retried():
+    # GatewayServerError is retryable - bounded-retry behavior for that
+    # case is covered in test_model_gateway_retry.py. A non-retryable
+    # error (bad_request) should surface as itself, immediately, with no
+    # retry loop involved at all.
+    from aico.platform.errors import GatewayBadRequestError
+
+    transport = FakeTransport(raises=GatewayBadRequestError("boom"))
     gateway = ModelGateway(_make_config(), transport)
-    with pytest.raises(GatewayServerError):
+    with pytest.raises(GatewayBadRequestError):
         gateway.embed(EmbedRequest(texts=["x"]))
+    assert len(transport.embed_calls) == 1
 
 
 def test_unexpected_transport_exception_is_wrapped_not_leaked():
