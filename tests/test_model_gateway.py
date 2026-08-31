@@ -51,6 +51,7 @@ from aico.retrieval.embedding_provider import EmbeddingProvider, AzureEmbeddingP
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SDK_IMPORT_PATTERN = re.compile(r"^\s*(import requests\b|from requests\b)", re.MULTILINE)
+_MISSING = object()  # sentinel distinguishing "not passed" from "explicitly None"
 
 
 def _make_config(**overrides) -> GatewayConfig:
@@ -87,10 +88,16 @@ class FakeTransport:
     """Deterministic, in-memory Transport double - satisfies
     model_gateway.Transport without touching the network."""
 
-    def __init__(self, *, embed_result=None, chat_result=None, raises: Exception | None = None):
+    def __init__(
+        self, *, embed_result=None, chat_result=None, raises: Exception | None = None,
+        chat_token_usage=_MISSING,
+    ):
         self._embed_result = embed_result
         self._chat_result = chat_result
         self._raises = raises
+        self._chat_token_usage = (
+            {"prompt_tokens": 10, "completion_tokens": 5} if chat_token_usage is _MISSING else chat_token_usage
+        )
         self.embed_calls: list[dict] = []
         self.chat_calls: list[dict] = []
 
@@ -109,7 +116,7 @@ class FakeTransport:
         if self._raises is not None:
             raise self._raises
         content = self._chat_result or "fake completion"
-        return TransportResult(content=content, dimensions=None, token_usage={"prompt_tokens": 10, "completion_tokens": 5})
+        return TransportResult(content=content, dimensions=None, token_usage=self._chat_token_usage)
 
 
 # ── SDK isolation (required repository check) ───────────────────────────
@@ -180,6 +187,20 @@ def test_embed_budget_status_exceeded_when_over_configured_item_limit():
     gateway = ModelGateway(config, FakeTransport())
     result = gateway.embed(EmbedRequest(texts=["one", "two"]))
     assert result.metadata.budget_status == "exceeded"
+
+
+def test_missing_token_usage_is_represented_as_none_not_invented():
+    # Task 5: "if the provider does not return one of these values for a
+    # specific operation, represent that safely and consistently rather
+    # than inventing a value." A transport that reports no usage at all
+    # (e.g. the provider didn't return a usage block) must not turn into a
+    # fabricated token count or a guessed budget_status.
+    transport = FakeTransport(chat_result="hi", chat_token_usage=None)
+    gateway = ModelGateway(_make_config(), transport)
+    result = gateway.chat(ChatRequest(messages=[ChatMessage(role="user", content="hi")]))
+
+    assert result.metadata.token_usage is None
+    assert result.metadata.budget_status == "unknown"
 
 
 def test_embed_uses_configured_alias_and_timeout_by_default():

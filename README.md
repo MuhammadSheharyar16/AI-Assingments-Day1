@@ -86,7 +86,7 @@ and need neither of the above.
 pytest -q
 ```
 
-109 tests pass, across thirteen files. Every test is deterministic and
+132 tests pass, across fifteen files. Every test is deterministic and
 offline — none makes a real network call; Day 2's tests use
 `FakeEmbeddingProvider` exclusively, and Day 3's inject a fake
 transport/credential directly into the gateway/adapter (and, for retry
@@ -121,10 +121,11 @@ just "eventually retries").
 - `tests/test_search.py` (9) — identical record shape across all three
   modes, modes don't interfere with each other, determinism parametrized
   across bm25/vector/hybrid, dimension-mismatch and missing-cache errors
-- `tests/test_model_gateway.py` (15) — Day 3 typed gateway contract:
+- `tests/test_model_gateway.py` (16) — Day 3 typed gateway contract:
   the required SDK-isolation repository check, typed chat/embed round-trips
   against a fake transport, sanitized metadata (never prompt/completion
-  text), cancellation before a call starts, non-retryable transport
+  text), missing token usage represented as `None`/`"unknown"` rather than
+  invented, cancellation before a call starts, non-retryable transport
   failures normalized not leaked, `AzureEmbeddingProvider` satisfying
   `EmbeddingProvider` via the gateway, and config validation (missing
   file, placeholder alias, fully-filled file)
@@ -138,6 +139,28 @@ just "eventually retries").
   cancellation set during the backoff wait stops the loop before the next
   attempt, and backoff grows exponentially, caps at `max_delay_ms`, and
   jitter scales the delay by the configured random factor
+- `tests/test_model_gateway_routing.py` (12) — Day 3 routing policy and
+  safe fallback: an allowed route proceeds through a fully-compatible
+  fallback after the primary fails; policy-disallowed
+  (`routing.fallback.enabled=false`), region-mismatch,
+  data-boundary-mismatch, risk-incompatible and budget-incompatible
+  fallbacks are all blocked (`GatewayFallbackBlockedError`, chaining the
+  primary failure); an axis not marked required is never a reason to
+  block; no fallback transport configured lets the primary error
+  propagate unchanged; cancellation is never treated as a fallback
+  trigger; a successful primary call never touches the fallback transport
+  at all
+- `tests/test_model_gateway_logging.py` (10) — Day 3 sanitized logging:
+  behavioral `caplog` proof that a successful call, a retry, hitting the
+  retry ceiling, a non-retryable failure, an unnormalized exception, and a
+  blocked/attempted fallback each log a sanitized structured line
+  (operation, model_alias, category, counts) while a distinctive
+  prompt/completion marker planted in the request/response never appears
+  in `caplog.text` in any of those cases — including the adversarial case
+  where the raised exception's own message happens to contain it, proving
+  the gateway never logs `str(exc)`; plus a static check that
+  `foundry_adapter.py` (the only file that ever builds an Authorization
+  header) contains no logging call at all
 - `tests/test_foundry_adapter_identity.py` (7) — Day 3 identity
   authentication: bearer token from an injected `TokenCredential` (never
   an API key), token caching across calls, refresh once close to expiry,
