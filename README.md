@@ -568,12 +568,18 @@ scores against a previous run may show tiny drift. This is normal.
 ## Folder structure
 
 ```
-AI-Assingments-Day2/
+AI-Assignments-Day3/
   README.md                        this file
   requirements.txt
   pytest.ini                        pythonpath=src, so `pytest` runs standalone
   .gitignore
-  .env                              Day 2 provider credentials (gitignored, never committed)
+  .env                              endpoint + (legacy Day 2) provider values (gitignored, never committed)
+  config/
+    model-routing.yaml              Day 3 — deployment aliases, resilience/budget/routing policy (no secrets)
+  docs/adr/
+    ADR-003-model-routing-and-fallback.md   Day 3 — gateway/routing/fallback design decision
+  scripts/
+    day03_gateway_demo.py           Day 3 — regenerates artifacts/day03/gateway_demo.md's scenarios
   src/aico/
     platform/
       model_gateway.py              Day 3 — typed chat/embed boundary (ModelGateway)
@@ -608,6 +614,8 @@ AI-Assingments-Day2/
     day02/
       metrics.json                  full per-mode, per-query metrics
       mode_comparison.md            auto-generated three-way comparison report
+    day03/
+      gateway_demo.md               Day 3 — sanitized demonstration evidence (Task 7)
   tests/
     test_chunker.py                 (11)
     test_bm25.py                    (6)
@@ -618,4 +626,11 @@ AI-Assingments-Day2/
     test_embed.py                   (6)
     test_hybrid.py                  (4)
     test_search.py                  (9)
+    test_day2_regression.py         Day 3 — proves the gateway migration is behavior-preserving
+    test_model_gateway.py           Day 3 — typed contract, SDK isolation, config validation (16)
+    test_model_gateway_retry.py     Day 3 — timeout/cancellation/bounded retry with jitter (16)
+    test_model_gateway_routing.py   Day 3 — routing policy and safe fallback (12)
+    test_model_gateway_logging.py   Day 3 — sanitized logging, nothing sensitive logged (10)
+    test_foundry_adapter_identity.py       Day 3 — identity-based auth, no credential in source (7)
+    test_foundry_adapter_normalization.py  Day 3 — HTTP status -> typed ModelGatewayError
 ```
