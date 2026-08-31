@@ -50,13 +50,19 @@ Responsibilities:
   `logger.info`/`.warning`/`.error`.
 
 This module talks to a `Transport` (a small protocol - `embed`/`chat` in,
-`TransportResult` out) rather than to Foundry directly. `FoundryAdapter`
-(foundry_adapter.py) is the one real implementation; tests inject a fake
-transport instead so gateway behavior is provable without any network
-call. `ModelGateway.from_config()` is the only place in this file that
-imports the real adapter, and it does so lazily so importing
-model_gateway.py never requires config/model-routing.yaml or the Foundry
-endpoint to exist.
+`TransportResult` out) rather than to any one provider directly.
+`FoundryAdapter` (foundry_adapter.py) is the one real implementation today;
+tests inject a fake transport instead so gateway behavior is provable
+without any network call. `ModelGateway.from_config()` picks which real
+adapter to build by looking `config.routing.primary.provider` up in the
+`_PROVIDER_TRANSPORTS` registry below it - the only place in this file that
+imports a real adapter, and it does so lazily (one lazy import per
+provider, only the selected one ever runs) so importing model_gateway.py
+never requires config/model-routing.yaml, a provider SDK, or any provider
+endpoint to exist. Because that dispatch is config-driven, adding a second
+provider's adapter module and registering it here makes every later switch
+between registered providers a single config/model-routing.yaml edit - see
+the registry's docstring for how to add one.
 """
 from __future__ import annotations
 
@@ -70,6 +76,7 @@ from typing import Callable, Protocol
 from aico.platform.config import GatewayConfig, RetryConfig, RouteEndpoint, load_gateway_config
 from aico.platform.errors import (
     GatewayCancelledError,
+    GatewayConfigurationError,
     GatewayFallbackBlockedError,
     GatewayRetryCeilingExceededError,
     ModelGatewayError,
@@ -224,10 +231,48 @@ class FallbackCompatibility:
         return not self.blocked_axes
 
 
+# ── Provider registry (what makes a provider switch a one-file change) ──
+#
+# `from_config()` never hardcodes which real Transport to build. It reads
+# `config.routing.primary.provider` (config/model-routing.yaml) and looks
+# it up here. Every entry is a zero-arg-of-its-own factory that does its own
+# lazy import - constructing a ModelGateway for tests via __init__ directly
+# never imports any of these, and importing this module never requires a
+# provider SDK/HTTP client to be installed.
+#
+# To add support for a new provider: write one adapter module implementing
+# Transport (embed/chat in, TransportResult out - see FoundryAdapter) and
+# add one line here. After that, switching which provider a deployment
+# actually calls is exactly one file: change `routing.primary.provider` in
+# config/model-routing.yaml to a key already registered below. No Python
+# file needs to change for that switch.
+def _foundry_transport(config: GatewayConfig) -> Transport:
+    from aico.platform.foundry_adapter import FoundryAdapter
+
+    return FoundryAdapter(config)
+
+
+_PROVIDER_TRANSPORTS: dict[str, Callable[[GatewayConfig], Transport]] = {
+    "microsoft-foundry": _foundry_transport,
+}
+
+
+def _build_transport(config: GatewayConfig) -> Transport:
+    provider = config.routing.primary.provider
+    factory = _PROVIDER_TRANSPORTS.get(provider)
+    if factory is None:
+        raise GatewayConfigurationError(
+            f"routing.primary.provider={provider!r} (config/model-routing.yaml) has no "
+            f"registered transport - known providers: {', '.join(sorted(_PROVIDER_TRANSPORTS))}"
+        )
+    return factory(config)
+
+
 class ModelGateway:
     """Typed chat/embed boundary. Construct once (directly with a config +
-    transport, or via `from_config()` for the real Foundry path) and call
-    `.chat()` / `.embed()` - never the transport, never a provider SDK."""
+    transport, or via `from_config()` for the real provider path - see the
+    provider registry above) and call `.chat()` / `.embed()` - never the
+    transport, never a provider SDK."""
 
     def __init__(
         self,
@@ -257,20 +302,14 @@ class ModelGateway:
 
     @classmethod
     def from_config(cls, path: str | None = None) -> "ModelGateway":
-        # Local import: this is the only path through this file that
-        # touches the real adapter (and therefore, transitively, the HTTP
-        # client) - constructing a ModelGateway for tests via __init__
-        # directly never imports it.
-        from aico.platform.foundry_adapter import FoundryAdapter
-
         config = load_gateway_config(path) if path is not None else load_gateway_config()
         # No fallback endpoint/deployment is part of config/model-routing.yaml
         # today (routing.fallback only describes compatibility metadata, not
         # a second connection target) - so there is nothing to build a real
-        # fallback FoundryAdapter from yet. That means routing.fallback.enabled
+        # fallback transport from yet. That means routing.fallback.enabled
         # in the real path currently has no fallback_transport to use even
         # when true; see ADR-003. Tests exercise fallback via __init__ directly.
-        return cls(config, FoundryAdapter(config))
+        return cls(config, _build_transport(config))
 
     @property
     def config(self) -> GatewayConfig:
