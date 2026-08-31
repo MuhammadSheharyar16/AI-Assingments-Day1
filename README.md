@@ -49,19 +49,36 @@ your prompt: `(.venv) PS C:\...>` needs `$env:PYTHONPATH = "src"`;
 `PYTHONPATH=src` is only needed to invoke the `aico.*` modules directly with
 `python -m`. `pytest` doesn't need it.
 
-**Day 2 only** — embedding calls need provider credentials. Create a `.env`
-file at the repo root (gitignored, never committed) with:
+**Real embedding/chat calls only** (Day 2's `AzureEmbeddingProvider`, now
+Day 3's Model Gateway) need two things — neither is a secret in a file:
 
-```
-AICO_EMBEDDING_ENDPOINT=<team-shared Foundry endpoint>
-AICO_EMBEDDING_API_KEY=<team-shared key>
-AICO_EMBEDDING_MODEL=text-embedding-3-small
-AICO_EMBEDDING_API_VERSION=2024-05-01-preview
-```
+1. **`config/model-routing.yaml`** — copy it from
+   `day03_pack/config/model-routing.example.yaml` if it doesn't already
+   exist, then replace the lead-provided placeholders (chat/embedding
+   deployment alias, region, data boundary) through your own approved
+   configuration process. Never commit real values over the placeholders
+   in a shared example — this file has no secrets in it either way, but
+   the aliases/region are still lead-provided setup input, not something
+   to hardcode to make the example run.
+2. **Identity, not a key.** The gateway authenticates with
+   `azure.identity.DefaultAzureCredential` (see
+   `src/aico/platform/foundry_adapter.py`) — it tries, in order, a
+   managed identity (when running in Azure), then environment-variable
+   service-principal credentials (`AZURE_CLIENT_ID` /
+   `AZURE_TENANT_ID` / `AZURE_CLIENT_SECRET`), then your own `az login`
+   session, among others. Whichever applies to your environment, set it
+   up through the normal Azure CLI/identity mechanism — never in a `.env`
+   file or committed config. Two things are still environment-driven, via
+   plain (non-secret) environment variables:
 
-Get the actual values from the team channel — they are never written to this
-README or to any other committed file. `bm25`-mode search and every test use
-`FakeEmbeddingProvider` instead and need no `.env` at all.
+   ```
+   AICO_FOUNDRY_ENDPOINT=<team-shared Foundry endpoint>   # named by config/model-routing.yaml's foundry.endpoint_env
+   AICO_FOUNDRY_MANAGED_IDENTITY_CLIENT_ID=<client id>    # only if using a *user-assigned* managed identity
+   ```
+
+`bm25`-mode search and every test use `FakeEmbeddingProvider` (or a fake
+transport/credential injected directly into the gateway/adapter) instead
+and need neither of the above.
 
 ## Run the tests
 
@@ -69,9 +86,10 @@ README or to any other committed file. `bm25`-mode search and every test use
 pytest -q
 ```
 
-71 tests pass, across nine files. Every test is deterministic and offline —
-Day 2's tests use `FakeEmbeddingProvider` exclusively; none makes a network
-call.
+93 tests pass, across eleven files. Every test is deterministic and offline
+— none makes a real network call; Day 2's tests use `FakeEmbeddingProvider`
+exclusively, and Day 3's inject a fake transport/credential directly into
+the gateway/adapter.
 
 - `tests/test_chunker.py` (11) — offset reconstruction, overlap, unicode
   survival, empty input, invalid configuration, determinism
@@ -100,6 +118,18 @@ call.
 - `tests/test_search.py` (9) — identical record shape across all three
   modes, modes don't interfere with each other, determinism parametrized
   across bm25/vector/hybrid, dimension-mismatch and missing-cache errors
+- `tests/test_model_gateway.py` (15) — Day 3 typed gateway contract:
+  the required SDK-isolation repository check, typed chat/embed round-trips
+  against a fake transport, sanitized metadata (never prompt/completion
+  text), cancellation, transport failures normalized not leaked,
+  `AzureEmbeddingProvider` satisfying `EmbeddingProvider` via the gateway,
+  and config validation (missing file, placeholder alias, fully-filled file)
+- `tests/test_foundry_adapter_identity.py` (7) — Day 3 identity
+  authentication: bearer token from an injected `TokenCredential` (never
+  an API key), token caching across calls, refresh once close to expiry,
+  a credential/provider auth failure normalizing to
+  `GatewayAuthenticationError`, no API-key handling in source, no
+  secret-shaped value in `config/model-routing.yaml`
 
 ## Day 1 — Chunking and lexical retrieval
 
