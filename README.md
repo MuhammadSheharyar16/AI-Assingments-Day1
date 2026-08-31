@@ -86,7 +86,7 @@ and need neither of the above.
 pytest -q
 ```
 
-132 tests pass, across fifteen files. Every test is deterministic and
+149 tests pass, across sixteen files. Every test is deterministic and
 offline — none makes a real network call; Day 2's tests use
 `FakeEmbeddingProvider` exclusively, and Day 3's inject a fake
 transport/credential directly into the gateway/adapter (and, for retry
@@ -167,6 +167,23 @@ just "eventually retries").
   a credential/provider auth failure normalizing to
   `GatewayAuthenticationError`, no API-key handling in source, no
   secret-shaped value in `config/model-routing.yaml`
+- `tests/test_foundry_adapter_normalization.py` (11) — Task 6's required
+  HTTP-layer normalization coverage for `FoundryAdapter._post()` itself
+  (`requests.post` monkeypatched, never a real call): a real
+  `requests.Timeout` and a connection failure normalize to
+  `GatewayTimeoutError`/`GatewayServerError`; HTTP 429/401/403/400/5xx
+  normalize to the matching typed error; an unhandled status code (402)
+  still comes back as a `ModelGatewayError`, never a raw `requests`
+  exception; a 2xx response returns the parsed payload
+- `tests/test_day2_regression.py` (6) — Task 6's Day 2 regression proof:
+  routing the same text through `AzureEmbeddingProvider` -> `ModelGateway`
+  -> a fake transport backed by `FakeEmbeddingProvider` produces
+  bit-identical vectors (and preserves batch order) to calling
+  `FakeEmbeddingProvider` directly, and `vector_search`/`hybrid_search`
+  rankings are identical either way — proving the Day 3 migration is a
+  transparent pass-through, not a change in retrieval behavior; plus two
+  reminders that bm25 mode and RRF fusion never depended on the embedding
+  provider at all
 
 ## Day 1 — Chunking and lexical retrieval
 
