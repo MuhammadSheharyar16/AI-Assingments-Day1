@@ -147,6 +147,40 @@ def _require_str(d: dict, key: str, path: str) -> str:
     return value
 
 
+def _resolve_alias(d: dict, path: str) -> str:
+    """Resolve a models.chat/models.embedding alias from either a literal
+    `alias` (the original shape) or - mirroring foundry.endpoint_env - an
+    `alias_env` naming an environment variable to read the real alias
+    from, so a deployment alias never has to be a literal in
+    config/model-routing.yaml. Exactly one of the two may be given.
+
+    Unlike `GatewayConfig.endpoint` (resolved lazily, on every access,
+    specifically so building/validating a GatewayConfig never requires
+    the endpoint's env var to be set), an alias is resolved once, here,
+    during `load_gateway_config()` - the alias is load-time-required
+    config, not a late-bound deployment detail."""
+    has_alias = isinstance(d, dict) and d.get("alias") not in (None, "")
+    has_alias_env = isinstance(d, dict) and d.get("alias_env") not in (None, "")
+
+    if has_alias and has_alias_env:
+        raise GatewayConfigurationError(f"{path}: specify either 'alias' or 'alias_env', not both")
+    if not has_alias_env:
+        return _require_str(d, "alias", path)
+
+    env_var = _require_str(d, "alias_env", path)
+    value = os.environ.get(env_var, "")
+    if not value:
+        raise GatewayConfigurationError(
+            f"environment variable {env_var!r} (named by {path}.alias_env) is not set"
+        )
+    if _looks_like_placeholder(value):
+        raise GatewayConfigurationError(
+            f"{path}.alias_env={env_var!r} resolves to the pack's placeholder value ({value!r}) - "
+            "replace it through your approved configuration process before use"
+        )
+    return value
+
+
 # ── Typed configuration model ───────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -256,8 +290,8 @@ def _build_config(raw: dict, *, source: Path) -> GatewayConfig:
     endpoint_env = _require_str(foundry, "endpoint_env", "foundry")
 
     models_raw = section(raw, "models", "$")
-    chat_alias = _require_str(section(models_raw, "chat", "models"), "alias", "models.chat")
-    embedding_alias = _require_str(section(models_raw, "embedding", "models"), "alias", "models.embedding")
+    chat_alias = _resolve_alias(section(models_raw, "chat", "models"), "models.chat")
+    embedding_alias = _resolve_alias(section(models_raw, "embedding", "models"), "models.embedding")
 
     resilience_raw = section(raw, "resilience", "$")
     timeout_seconds = _require_positive_number(resilience_raw, "timeout_seconds", "resilience")
