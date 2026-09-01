@@ -7,8 +7,10 @@ validation -> typed result, with one bounded repair attempt on failure -
 
 Task 1 exports the versioned Pydantic contracts. Task 2 adds the typed
 failure value and the parse/contract validator. Task 3 adds semantic
-validation. Later tasks add the repair path and the service entry point
-in sibling modules.
+validation. Task 4 adds the bounded repair path (and the full
+parse->contract->semantic pipeline it revalidates against,
+`validate_full`). Later tasks add the service entry point in a sibling
+module.
 """
 from aico.contracts.errors import CONTRACT_CATEGORIES, ValidationFailure
 from aico.contracts.models import (
@@ -20,6 +22,7 @@ from aico.contracts.models import (
     ConfidenceLabel,
     ResponseEnvelope,
 )
+from aico.contracts.repair import attempt_repair, build_repair_request, is_repairable, resolve, validate_full
 from aico.contracts.semantic import validate_semantic
 from aico.contracts.validator import parse_and_validate, parse_json, validate_contract
 
@@ -37,4 +40,9 @@ __all__ = [
     "parse_json",
     "validate_contract",
     "validate_semantic",
+    "attempt_repair",
+    "build_repair_request",
+    "is_repairable",
+    "resolve",
+    "validate_full",
 ]

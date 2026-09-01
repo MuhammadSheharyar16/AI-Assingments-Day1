@@ -2,13 +2,19 @@
 Day 4 — typed contract-layer failures.
 
 Introduced for Task 2 (contract/schema validation), and shared by every
-later stage so the whole pipeline speaks one typed-failure shape: Task 3's
-semantic validation and Task 4's repair path both return the same
-`ValidationFailure`, just with a different `stage` value ("semantic"
-instead of "parse"/"contract"). That is what lets a caller distinguish a
-parse/contract/schema failure from a semantic failure with one `if
-result.stage == ...` instead of catching different exception types per
-stage.
+later stage so the whole pipeline speaks one typed-failure shape. `stage`
+is what lets a caller distinguish a parse/contract/schema failure from a
+semantic failure (Task 3) with one `if result.stage == ...`, instead of
+catching different exception types per stage:
+    "parse"    - Task 2, raw text was not (or did not decode to) a JSON object
+    "contract" - Task 2, parsed JSON did not match the Pydantic model
+    "semantic" - Task 3, a well-typed contract broke an application rule
+    "repair"   - Task 4, the one bounded repair *call itself* failed
+                  (e.g. the Model Gateway raised) - distinct from a
+                  repaired response that still fails validation, which
+                  simply comes back with stage "contract"/"semantic"
+                  again, from the same second validation pass as the
+                  first attempt.
 
 `ValidationFailure` is a frozen, JSON-safe *value*, not an exception - the
 validator (`validator.py`) returns it as an ordinary function result
@@ -38,7 +44,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-Stage = Literal["parse", "contract", "semantic"]
+Stage = Literal["parse", "contract", "semantic", "repair"]
 
 CONTRACT_CATEGORIES = (
     "malformed_json",
