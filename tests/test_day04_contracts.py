@@ -1,16 +1,28 @@
 """
-Day 4 Task 1 — versioned typed contracts.
+Day 4 Task 1/2 — versioned typed contracts, and contract/schema
+validation of raw model output.
 
-Proves the acceptance-relevant behaviors of `src/aico/contracts/models.py`
-directly against Pydantic (required/optional fields, enums, constrained
-values, extra-field rejection, explicit schema version) and that the
-committed JSON Schema under `contracts/schema/` is exactly what
-`scripts/day04_generate_schemas.py` would regenerate from the current
-source models - i.e. it cannot have drifted.
+Task 1 section proves the acceptance-relevant behaviors of
+`src/aico/contracts/models.py` directly against Pydantic (required/
+optional fields, enums, constrained values, extra-field rejection,
+explicit schema version) and that the committed JSON Schema under
+`contracts/schema/` is exactly what `scripts/day04_generate_schemas.py`
+would regenerate from the current source models - i.e. it cannot have
+drifted.
 
-Contract/schema *validation of raw model output* (Task 2), semantic
-validation (Task 3), repair (Task 4) and the broken-output fixture suite
-(Task 5) are covered in their own test files, not here.
+Task 2 section proves `src/aico/contracts/validator.py` end to end: a raw
+model-response *string* (not an already-parsed dict) becomes a typed
+contract or a typed `ValidationFailure`, covering every required
+rejection (malformed JSON, missing field, extra field, wrong type,
+invalid enum, out-of-range value) plus the documented bounded
+markdown-fence unwrap. It also runs every relevant case in the supplied
+`data/day04_pack/fixtures/structured_output_cases.json` through the real
+validator so Task 2's behavior is proven against the assignment's own
+fixtures, not only hand-rolled payloads.
+
+Semantic validation (Task 3), repair (Task 4) and the full broken-output
+fixture suite (Task 5, including the repair-specific cases) are covered
+in their own test files, not here.
 """
 from __future__ import annotations
 
@@ -20,6 +32,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from aico.contracts.errors import ValidationFailure
 from aico.contracts.models import (
     CITED_ANSWER_SCHEMA_VERSION,
     RESPONSE_ENVELOPE_SCHEMA_VERSION,
@@ -29,9 +42,19 @@ from aico.contracts.models import (
     ConfidenceLabel,
     ResponseEnvelope,
 )
+from aico.contracts.validator import parse_and_validate, parse_json, validate_contract
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_DIR = REPO_ROOT / "contracts" / "schema"
+FIXTURES_PATH = REPO_ROOT / "data" / "day04_pack" / "fixtures" / "structured_output_cases.json"
+
+
+def _load_fixture_cases() -> dict:
+    cases = json.loads(FIXTURES_PATH.read_text(encoding="utf-8"))["cases"]
+    return {case["id"]: case for case in cases}
+
+
+FIXTURE_CASES = _load_fixture_cases()
 
 
 def _valid_citation() -> dict:
@@ -234,3 +257,187 @@ def test_committed_schema_matches_generated_source_model(filename, model):
         f"{filename} is out of date - re-run "
         f"`python scripts/day04_generate_schemas.py` and commit the result"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TASK 2 — contract / schema validation of raw model output
+# ═══════════════════════════════════════════════════════════════════════
+
+# ── parse_json: malformed JSON, non-object JSON, markdown-fence unwrap ──
+
+def test_parse_json_valid_object_returns_dict():
+    result = parse_json('{"a": 1}')
+    assert result == {"a": 1}
+
+
+def test_parse_json_malformed_json_is_a_typed_parse_failure():
+    result = parse_json('{"schema_version":"1.0","status":"answered",')
+    assert isinstance(result, ValidationFailure)
+    assert result.stage == "parse"
+    assert result.category == "malformed_json"
+
+
+def test_parse_json_non_object_json_is_a_typed_parse_failure():
+    # A syntactically valid JSON array is still not a Day 4 contract shape.
+    result = parse_json("[1, 2, 3]")
+    assert isinstance(result, ValidationFailure)
+    assert result.stage == "parse"
+    assert result.category == "malformed_json"
+
+
+def test_parse_json_unwraps_one_documented_markdown_fence():
+    raw = '```json\n{"a": 1}\n```'
+    result = parse_json(raw)
+    assert result == {"a": 1}
+
+
+def test_parse_json_rejects_prose_around_a_fence():
+    # Not the documented bounded unwrap - text outside the fence besides
+    # whitespace must not be silently accepted.
+    raw = 'Here you go:\n```json\n{"a": 1}\n```\nHope that helps!'
+    result = parse_json(raw)
+    assert isinstance(result, ValidationFailure)
+    assert result.stage == "parse"
+
+
+def test_parse_json_rejects_non_json_inside_a_fence():
+    raw = "```json\nnot json at all\n```"
+    result = parse_json(raw)
+    assert isinstance(result, ValidationFailure)
+    assert result.stage == "parse"
+    assert result.category == "malformed_json"
+
+
+# ── validate_contract: category classification on an already-parsed dict ──
+
+def test_validate_contract_valid_dict_returns_typed_contract():
+    result = validate_contract(_valid_cited_answer(), CitedAnswer)
+    assert isinstance(result, CitedAnswer)
+
+
+@pytest.mark.parametrize(
+    "mutate,expected_category",
+    [
+        (lambda p: p.pop("answer"), "missing_field"),
+        (lambda p: p.update(unexpected=True), "extra_field"),
+        (lambda p: p.update(answer=123), "wrong_type"),
+        (lambda p: p.update(status="maybe"), "invalid_enum"),
+        (lambda p: p.update(citations=[{"chunk_id": "", "source_file": "DOC-001.md"}]), "out_of_range"),
+    ],
+    ids=["missing_field", "extra_field", "wrong_type", "invalid_enum", "out_of_range"],
+)
+def test_validate_contract_categorizes_each_required_rejection(mutate, expected_category):
+    payload = _valid_cited_answer()
+    mutate(payload)
+    result = validate_contract(payload, CitedAnswer)
+    assert isinstance(result, ValidationFailure)
+    assert result.stage == "contract"
+    assert result.category == expected_category
+
+
+def test_validate_contract_failure_carries_field_path_when_relevant():
+    payload = _valid_cited_answer()
+    payload["citations"] = [{"chunk_id": "", "source_file": "DOC-001.md"}]
+    result = validate_contract(payload, CitedAnswer)
+    assert isinstance(result, ValidationFailure)
+    assert result.field_path == "citations.0.chunk_id"
+
+
+def test_validate_contract_failure_message_never_contains_raw_payload_values():
+    # The safe message names *what* was wrong, never echoes the model's
+    # own submitted string value back out - see errors.py's module
+    # docstring on not logging full invalid model responses.
+    payload = _valid_cited_answer()
+    payload["answer"] = "SECRET-MARKER-DO-NOT-LEAK"
+    payload["confidence_label"] = "extreme"
+    result = validate_contract(payload, CitedAnswer)
+    assert isinstance(result, ValidationFailure)
+    assert "SECRET-MARKER-DO-NOT-LEAK" not in result.message
+    assert "extreme" not in result.message
+
+
+# ── parse_and_validate: the full Task 2 pipeline, raw string in ────────
+
+def test_parse_and_validate_valid_raw_string_returns_typed_contract():
+    raw = json.dumps(_valid_cited_answer())
+    result = parse_and_validate(raw, CitedAnswer)
+    assert isinstance(result, CitedAnswer)
+
+
+def test_parse_and_validate_malformed_json_short_circuits_at_parse_stage():
+    # Never reaches Pydantic - a parse failure is reported as "parse",
+    # not miscategorized as a contract failure.
+    result = parse_and_validate('{"not": "closed"', CitedAnswer)
+    assert isinstance(result, ValidationFailure)
+    assert result.stage == "parse"
+
+
+def test_parse_and_validate_well_formed_but_invalid_shape_is_a_contract_failure():
+    raw = json.dumps({**_valid_cited_answer(), "status": "maybe"})
+    result = parse_and_validate(raw, CitedAnswer)
+    assert isinstance(result, ValidationFailure)
+    assert result.stage == "contract"
+    assert result.category == "invalid_enum"
+
+
+# ── driven by the supplied structured_output_cases.json fixtures ───────
+
+@pytest.mark.parametrize(
+    "case_id,expected_category",
+    [
+        ("D04-04", "missing_field"),
+        ("D04-05", "extra_field"),
+        ("D04-06", "wrong_type"),
+        ("D04-07", "invalid_enum"),
+        ("D04-08", "out_of_range"),
+    ],
+)
+def test_fixture_contract_failures_are_categorized_correctly(case_id, expected_category):
+    raw = FIXTURE_CASES[case_id]["raw"]
+    result = parse_and_validate(raw, CitedAnswer)
+    assert isinstance(result, ValidationFailure)
+    assert result.stage == "contract"
+    assert result.category == expected_category
+
+
+def test_fixture_d04_01_valid_first_pass_becomes_typed_contract():
+    raw = FIXTURE_CASES["D04-01"]["raw"]
+    result = parse_and_validate(raw, CitedAnswer)
+    assert isinstance(result, CitedAnswer)
+
+
+def test_fixture_d04_02_malformed_json_is_a_parse_failure():
+    raw = FIXTURE_CASES["D04-02"]["raw"]
+    result = parse_and_validate(raw, CitedAnswer)
+    assert isinstance(result, ValidationFailure)
+    assert result.stage == "parse"
+
+
+def test_fixture_d04_03_markdown_wrapped_json_is_unwrapped_and_validates():
+    # This module's documented choice for the "parse_or_documented_unwrap"
+    # fixture case: support one bounded fence unwrap rather than reject.
+    raw = FIXTURE_CASES["D04-03"]["raw"]
+    result = parse_and_validate(raw, CitedAnswer)
+    assert isinstance(result, CitedAnswer)
+
+
+@pytest.mark.parametrize("case_id", ["D04-09", "D04-10"])
+def test_fixture_semantic_cases_are_schema_valid_at_the_contract_stage(case_id):
+    # D04-09/D04-10 are schema-valid but semantically invalid (Task 3
+    # rules S1/S2) - proving that split is this test's job; Task 2's
+    # validator must pass them through as typed contracts. The semantic
+    # rejection itself is asserted in test_day04_semantic_validation.py.
+    raw = FIXTURE_CASES[case_id]["raw"]
+    result = parse_and_validate(raw, CitedAnswer)
+    assert isinstance(result, CitedAnswer)
+
+
+@pytest.mark.parametrize("case_id", ["D04-11", "D04-12"])
+def test_fixture_repair_source_cases_fail_contract_validation(case_id):
+    # D04-11/D04-12 are the *first* (pre-repair) responses Task 4's
+    # bounded repair path is exercised against - both must fail contract
+    # validation here for repair to have something to repair.
+    raw = FIXTURE_CASES[case_id]["raw"]
+    result = parse_and_validate(raw, CitedAnswer)
+    assert isinstance(result, ValidationFailure)
+    assert result.stage == "contract"
