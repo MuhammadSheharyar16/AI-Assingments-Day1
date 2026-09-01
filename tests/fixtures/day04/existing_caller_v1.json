@@ -1,0 +1,32 @@
+{
+  "caller_version": "1.0",
+  "description": "Existing caller expects the original v1 envelope fields and must continue to work after an optional warning field is introduced.",
+  "expected_fields": [
+    "schema_version",
+    "request_id",
+    "result",
+    "model_alias"
+  ],
+  "sample_response": {
+    "schema_version": "1.0",
+    "request_id": "REQ-001",
+    "result": {
+      "schema_version": "1.0",
+      "status": "answered",
+      "answer": "Supplier insurance is required.",
+      "citations": [
+        {
+          "chunk_id": "CHK-001",
+          "source_file": "DOC-001.md"
+        }
+      ],
+      "confidence_label": "medium"
+    },
+    "model_alias": "chat-primary"
+  },
+  "compatibility_change_to_prove": {
+    "field": "warning",
+    "change": "add_optional_field",
+    "expected_result": "existing caller remains compatible"
+  }
+}

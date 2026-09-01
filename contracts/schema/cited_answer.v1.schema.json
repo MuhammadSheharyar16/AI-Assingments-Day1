@@ -1,0 +1,83 @@
+{
+  "$defs": {
+    "AnswerStatus": {
+      "description": "Whether a cited answer actually answers the question or explicitly\ndeclines for lack of evidence. Day 5 owns *deciding* insufficiency;\nDay 4 only owns the typed shape of the outcome.",
+      "enum": [
+        "answered",
+        "insufficient_evidence"
+      ],
+      "title": "AnswerStatus",
+      "type": "string"
+    },
+    "Citation": {
+      "additionalProperties": false,
+      "description": "One cited source chunk backing an answer.\n\nDay 4 validates only the shape of a citation (non-empty id/source).\nIt does not prove the chunk was actually returned by retrieval for\nthis query - that grounding check against retrieved chunks is Day 5,\nper `data/day04_pack/contract_requirements.md`.",
+      "properties": {
+        "chunk_id": {
+          "description": "Non-empty chunk identifier.",
+          "minLength": 1,
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "source_file": {
+          "description": "Non-empty source document name.",
+          "minLength": 1,
+          "title": "Source File",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chunk_id",
+        "source_file"
+      ],
+      "title": "Citation",
+      "type": "object"
+    },
+    "ConfidenceLabel": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "ConfidenceLabel",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Versioned cited-answer contract (`contract_requirements.md` #1).\n\n`citations` defaults to empty - whether an empty list is *allowed*\nfor a given `status` is a semantic rule (S1/S4 in\n`semantic_rules.md`), enforced in Task 3's `semantic.py`, not here.",
+  "properties": {
+    "answer": {
+      "description": "Non-empty answer text.",
+      "minLength": 1,
+      "title": "Answer",
+      "type": "string"
+    },
+    "citations": {
+      "items": {
+        "$ref": "#/$defs/Citation"
+      },
+      "title": "Citations",
+      "type": "array"
+    },
+    "confidence_label": {
+      "$ref": "#/$defs/ConfidenceLabel"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "description": "Cited-answer contract version.",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/AnswerStatus"
+    }
+  },
+  "required": [
+    "schema_version",
+    "status",
+    "answer",
+    "confidence_label"
+  ],
+  "title": "CitedAnswer",
+  "type": "object"
+}
