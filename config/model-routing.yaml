@@ -11,9 +11,9 @@ foundry:
 
 models:
   chat:
-    alias: "__LEAD_PROVIDED_CHAT_ALIAS__"
+    alias: "gpt-4.1-mini"
   embedding:
-    alias: "__LEAD_PROVIDED_EMBEDDING_ALIAS__"
+    alias: "text-embedding-3-small"
 
 resilience:
   timeout_seconds: 20
@@ -33,8 +33,8 @@ budgets:
 routing:
   primary:
     provider: "microsoft-foundry"
-    region: "__LEAD_PROVIDED_REGION__"
-    data_boundary: "__LEAD_PROVIDED_DATA_BOUNDARY__"
+    region: "uk-south"
+    data_boundary: "uk"
     risk_class: "standard"
   fallback:
     enabled: false

@@ -26,6 +26,8 @@ Never log: the request body, the response body, headers, or the token.
 """
 from __future__ import annotations
 
+import hashlib
+import math
 import os
 import time
 from urllib.parse import urlencode
@@ -185,3 +187,69 @@ class FoundryAdapter:
         # Only the numeric token-count fields - never any other part of
         # the response - become operational metadata.
         return {k: v for k, v in usage.items() if isinstance(v, int) and not isinstance(v, bool)}
+
+
+class FakeFoundryAdapter:
+    """Deterministic, offline stand-in for FoundryAdapter (same Transport
+    shape - see model_gateway.Transport): for tests and local development
+    that want something provider-shaped without ever touching Azure
+    identity, `az login` or the network. Construct a ModelGateway with this
+    in place of `FoundryAdapter(config)` and everything downstream (retry,
+    fallback, budgets, sanitized call metadata) exercises exactly as it
+    would for real.
+
+    Embedding vectors are derived from a SHA-256 hash of each text (same
+    scheme as aico.retrieval.embedding_provider.FakeEmbeddingProvider), so
+    they are stable across processes and runs and different text almost
+    always produces a different vector. Chat replies with a fixed,
+    obviously-fake completion. Token usage is a deterministic word-count
+    proxy, not a real tokenizer - good enough to exercise budget_status,
+    never meant to match a real provider's count.
+
+    This is not the same tool as day03_gateway_demo.py's ScriptedTransport:
+    that one replays a scripted sequence of outcomes (including failures)
+    to demonstrate retry/timeout/fallback; this one always succeeds and is
+    for "just give me plausible embed/chat results" use.
+    """
+
+    def __init__(self, dimensions: int = 8):
+        self._dimensions = dimensions
+        # Recorded for tests/callers that want to assert on what was sent,
+        # without ever needing a real network call to do it.
+        self.embed_calls: list[list[str]] = []
+        self.chat_calls: list[list[dict]] = []
+
+    def embed(self, *, model_alias: str, texts: list[str], timeout_seconds: float) -> TransportResult:
+        self.embed_calls.append(list(texts))
+        if not texts:
+            return TransportResult(content=[], dimensions=0, token_usage=None)
+        vectors = [self._embed_one(text) for text in texts]
+        usage = {"prompt_tokens": sum(len(t.split()) for t in texts), "completion_tokens": 0}
+        return TransportResult(content=vectors, dimensions=self._dimensions, token_usage=usage)
+
+    def chat(
+        self,
+        *,
+        model_alias: str,
+        messages: list[dict],
+        max_output_tokens: int | None,
+        timeout_seconds: float,
+    ) -> TransportResult:
+        self.chat_calls.append(list(messages))
+        completion = f"[fake completion from {model_alias} - FakeFoundryAdapter, no network call made]"
+        usage = {
+            "prompt_tokens": sum(len(m["content"].split()) for m in messages),
+            "completion_tokens": len(completion.split()),
+        }
+        return TransportResult(content=completion, dimensions=None, token_usage=usage)
+
+    def _embed_one(self, text: str) -> list[float]:
+        seed = text.encode("utf-8")
+        raw: list[float] = []
+        for i in range(self._dimensions):
+            digest = hashlib.sha256(seed + i.to_bytes(4, "big")).digest()
+            value = int.from_bytes(digest[:8], "big")
+            raw.append((value / 2**63) - 1.0)  # spread into [-1, 1)
+
+        norm = math.sqrt(sum(v * v for v in raw)) or 1.0
+        return [v / norm for v in raw]
