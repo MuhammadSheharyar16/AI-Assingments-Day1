@@ -21,10 +21,19 @@ responses; do not create avoidable cloud cost"):
   `structured_output_cases.json`, run end to end through `resolve()`
   with each fixture's own `fake_repair_response` as the fake gateway
   reply.
+
+Also covers Task 8's "Gateway boundary" row here, since `repair.py` is the
+only file in `src/aico/contracts/` that ever talks to a model: a static
+scan proving the contract layer imports neither a provider SDK nor
+`aico.platform.foundry_adapter` directly, plus a behavioral proof that
+`attempt_repair` only ever calls the typed `.chat()` method a
+`ModelGateway`-shaped object exposes - nothing transport- or
+provider-shaped.
 """
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -346,3 +355,95 @@ def test_repair_does_not_engage_day3_retry_for_a_successful_call():
     result = attempt_repair('{"status": "answered"}', failure, CitedAnswer, gateway)
     assert isinstance(result, CitedAnswer)
     assert len(transport.chat_calls) == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TASK 8 — "Gateway boundary": the contract layer never bypasses Day 3's
+# Model Gateway
+# ═══════════════════════════════════════════════════════════════════════
+
+_SRC_ROOT = REPO_ROOT / "src"
+_CONTRACTS_DIR = _SRC_ROOT / "aico" / "contracts"
+_SDK_IMPORT_PATTERN = re.compile(r"^\s*(import requests\b|from requests\b)", re.MULTILINE)
+_FOUNDRY_ADAPTER_IMPORT_PATTERN = re.compile(
+    r"^\s*(import\s+aico\.platform\.foundry_adapter\b"
+    r"|from\s+aico\.platform\.foundry_adapter\b"
+    r"|from\s+aico\.platform\s+import\s+.*\bfoundry_adapter\b)",
+    re.MULTILINE,
+)
+
+
+def test_contract_layer_never_imports_a_provider_sdk_directly():
+    # Same check as Day 3's test_no_model_sdk_import_outside_platform_
+    # package (test_model_gateway.py), scoped to the contract layer -
+    # working rule "Do not add provider SDK imports inside the contract
+    # layer."
+    offenders = [
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in _CONTRACTS_DIR.glob("*.py")
+        if _SDK_IMPORT_PATTERN.search(p.read_text(encoding="utf-8"))
+    ]
+    assert offenders == [], f"HTTP client imported directly inside the contract layer: {offenders}"
+
+
+def test_contract_layer_never_imports_the_foundry_adapter_directly():
+    # The Model Gateway is the boundary, not the adapter behind it -
+    # reaching past ModelGateway into FoundryAdapter would bypass Day 3's
+    # retry/routing/logging/identity guarantees entirely.
+    offenders = [
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in _CONTRACTS_DIR.glob("*.py")
+        if _FOUNDRY_ADAPTER_IMPORT_PATTERN.search(p.read_text(encoding="utf-8"))
+    ]
+    assert offenders == [], f"foundry_adapter imported directly, bypassing ModelGateway: {offenders}"
+
+
+def test_only_repair_py_imports_from_the_model_gateway_module():
+    # Confines "the contract layer talks to a model" to exactly one file -
+    # a reviewer auditing the gateway boundary only ever needs to read
+    # repair.py, not every file under contracts/.
+    importers = [
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in _CONTRACTS_DIR.glob("*.py")
+        if "aico.platform.model_gateway" in p.read_text(encoding="utf-8")
+    ]
+    assert importers == ["src/aico/contracts/repair.py"]
+
+
+def test_attempt_repair_only_ever_calls_the_gateways_typed_chat_method():
+    # Behavioral proof, not just a static import scan: give attempt_repair
+    # a duck-typed double that exposes nothing but `.chat()` - no `.embed`,
+    # no transport, nothing provider-shaped - and it still works. That
+    # means attempt_repair's entire interaction with `gateway` is the one
+    # typed call Day 3's ModelGateway itself exposes.
+    from aico.platform.model_gateway import CallMetadata, ChatResult
+
+    class _ChatOnlyGateway:
+        """Deliberately has no `.embed`, no `._transport`, nothing beyond
+        the one typed method repair.py is allowed to use."""
+
+        def __init__(self, content: str):
+            self._content = content
+            self.chat_calls = 0
+
+        def chat(self, request):
+            self.chat_calls += 1
+            return ChatResult(
+                content=self._content,
+                metadata=CallMetadata(
+                    operation="chat",
+                    model_alias="test-chat-alias",
+                    latency_ms=0.0,
+                    retry_count=0,
+                    token_usage=None,
+                    budget_status="within_budget",
+                ),
+            )
+
+    gateway = _ChatOnlyGateway(_valid_cited_answer_json())
+    failure = ValidationFailure(stage="contract", category="missing_field", message="Field required")
+
+    result = attempt_repair('{"status": "answered"}', failure, CitedAnswer, gateway)
+
+    assert isinstance(result, CitedAnswer)
+    assert gateway.chat_calls == 1
