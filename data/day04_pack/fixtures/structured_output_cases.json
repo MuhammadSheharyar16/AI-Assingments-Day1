@@ -1,0 +1,80 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "D04-01",
+      "name": "valid_first_pass",
+      "expected_stage": "valid",
+      "raw": "{\"schema_version\":\"1.0\",\"status\":\"answered\",\"answer\":\"Supplier insurance is required.\",\"citations\":[{\"chunk_id\":\"CHK-001\",\"source_file\":\"DOC-001.md\"}],\"confidence_label\":\"medium\"}"
+    },
+    {
+      "id": "D04-02",
+      "name": "malformed_json",
+      "expected_stage": "parse",
+      "raw": "{\"schema_version\":\"1.0\",\"status\":\"answered\","
+    },
+    {
+      "id": "D04-03",
+      "name": "markdown_wrapped_json",
+      "expected_stage": "parse_or_documented_unwrap",
+      "raw": "```json\n{\"schema_version\":\"1.0\",\"status\":\"answered\",\"answer\":\"Policy applies.\",\"citations\":[{\"chunk_id\":\"CHK-002\",\"source_file\":\"DOC-002.md\"}],\"confidence_label\":\"low\"}\n```"
+    },
+    {
+      "id": "D04-04",
+      "name": "missing_required_field",
+      "expected_stage": "contract",
+      "raw": "{\"schema_version\":\"1.0\",\"status\":\"answered\",\"citations\":[{\"chunk_id\":\"CHK-001\",\"source_file\":\"DOC-001.md\"}],\"confidence_label\":\"medium\"}"
+    },
+    {
+      "id": "D04-05",
+      "name": "extra_field",
+      "expected_stage": "contract",
+      "raw": "{\"schema_version\":\"1.0\",\"status\":\"answered\",\"answer\":\"Policy applies.\",\"citations\":[{\"chunk_id\":\"CHK-001\",\"source_file\":\"DOC-001.md\"}],\"confidence_label\":\"medium\",\"unexpected\":true}"
+    },
+    {
+      "id": "D04-06",
+      "name": "wrong_type",
+      "expected_stage": "contract",
+      "raw": "{\"schema_version\":\"1.0\",\"status\":\"answered\",\"answer\":123,\"citations\":[{\"chunk_id\":\"CHK-001\",\"source_file\":\"DOC-001.md\"}],\"confidence_label\":\"medium\"}"
+    },
+    {
+      "id": "D04-07",
+      "name": "invalid_enum",
+      "expected_stage": "contract",
+      "raw": "{\"schema_version\":\"1.0\",\"status\":\"maybe\",\"answer\":\"Policy applies.\",\"citations\":[],\"confidence_label\":\"medium\"}"
+    },
+    {
+      "id": "D04-08",
+      "name": "out_of_range_value",
+      "expected_stage": "contract",
+      "note": "If you implement a constrained numeric helper field for the lab, this fixture may target that field. Otherwise satisfy the out-of-range acceptance criterion with a separate deterministic test fixture documented in your report.",
+      "raw": "{\"schema_version\":\"1.0\",\"status\":\"answered\",\"answer\":\"Policy applies.\",\"citations\":[{\"chunk_id\":\"\",\"source_file\":\"DOC-001.md\"}],\"confidence_label\":\"medium\"}"
+    },
+    {
+      "id": "D04-09",
+      "name": "semantic_answered_without_citation",
+      "expected_stage": "semantic",
+      "raw": "{\"schema_version\":\"1.0\",\"status\":\"answered\",\"answer\":\"Supplier insurance is required.\",\"citations\":[],\"confidence_label\":\"medium\"}"
+    },
+    {
+      "id": "D04-10",
+      "name": "semantic_insufficient_with_high_confidence",
+      "expected_stage": "semantic",
+      "raw": "{\"schema_version\":\"1.0\",\"status\":\"insufficient_evidence\",\"answer\":\"INSUFFICIENT_EVIDENCE: source does not answer this.\",\"citations\":[],\"confidence_label\":\"high\"}"
+    },
+    {
+      "id": "D04-11",
+      "name": "repairable_invalid_response",
+      "expected_stage": "repair_then_valid",
+      "raw": "{\"schema_version\":\"1.0\",\"status\":\"answered\",\"citations\":[{\"chunk_id\":\"CHK-003\",\"source_file\":\"DOC-003.md\"}],\"confidence_label\":\"medium\"}",
+      "fake_repair_response": "{\"schema_version\":\"1.0\",\"status\":\"answered\",\"answer\":\"A corrected typed answer.\",\"citations\":[{\"chunk_id\":\"CHK-003\",\"source_file\":\"DOC-003.md\"}],\"confidence_label\":\"medium\"}"
+    },
+    {
+      "id": "D04-12",
+      "name": "repair_still_invalid",
+      "expected_stage": "repair_then_failure",
+      "raw": "{\"schema_version\":\"1.0\",\"status\":\"answered\",\"answer\":123,\"citations\":[],\"confidence_label\":\"medium\"}",
+      "fake_repair_response": "{\"schema_version\":\"1.0\",\"status\":\"answered\",\"answer\":456,\"citations\":[],\"confidence_label\":\"medium\"}"
+    }
+  ]
+}
