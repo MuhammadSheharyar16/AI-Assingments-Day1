@@ -86,13 +86,14 @@ and need neither of the above.
 pytest -q
 ```
 
-149 tests pass, across sixteen files. Every test is deterministic and
+274 tests pass, across twenty-one files. Every test is deterministic and
 offline — none makes a real network call; Day 2's tests use
-`FakeEmbeddingProvider` exclusively, and Day 3's inject a fake
+`FakeEmbeddingProvider` exclusively, Day 3's inject a fake
 transport/credential directly into the gateway/adapter (and, for retry
 tests, a no-delay `sleep` and a fixed `random_factor` so bounded-retry
 tests run instantly and assert exact backoff/jitter values instead of
-just "eventually retries").
+just "eventually retries"), and Day 4's inject a fake `ModelGateway`
+transport for the one bounded repair call it ever makes.
 
 - `tests/test_chunker.py` (11) — offset reconstruction, overlap, unicode
   survival, empty input, invalid configuration, determinism
@@ -184,6 +185,45 @@ just "eventually retries").
   transparent pass-through, not a change in retrieval behavior; plus two
   reminders that bm25 mode and RRF fusion never depended on the embedding
   provider at all
+- `tests/test_day04_contracts.py` (58) — Day 4 Tasks 1/2: required/
+  optional fields, enums, constrained values, extra-field rejection and
+  explicit `schema_version` on both `CitedAnswer`/`ResponseEnvelope`;
+  committed schema under `contracts/schema/` matches a fresh
+  `model_json_schema()` regeneration (no drift); the raw-string parse ->
+  contract/schema validator (`parse_json`/`validate_contract`/
+  `parse_and_validate`) against hand-built payloads and every relevant
+  case in `data/day04_pack/fixtures/structured_output_cases.json`
+- `tests/test_day04_semantic_validation.py` (20) — Day 4 Task 3: each of
+  the five `semantic_rules.md` rules (S1–S5) rejects exactly the case it
+  names and accepts everything else, deterministic S1..S5 evaluation
+  order, semantic validation never mutates its input, is distinguishable
+  from a contract/schema failure by `ValidationFailure.stage`, and the
+  supplied D04-09/D04-10 fixtures prove the schema-valid-but-
+  semantically-invalid split end to end
+- `tests/test_day04_repair.py` (20) — Day 4 Task 4: the three required
+  repair cases (invalid → repaired valid → success; invalid → repaired
+  invalid → typed failure; non-repairable path → typed failure with zero
+  Model Gateway calls) against a fake `ModelGateway` transport, repair
+  capped at exactly one call structurally, the repaired response
+  revalidated through the complete pipeline (contract *and* semantic), a
+  Model Gateway failure during repair coming back as a typed
+  `stage="repair"` failure rather than a raised exception, the D04-11/
+  D04-12 repair fixtures end to end, and the gateway-boundary proof that
+  only `repair.py` in the contract layer ever imports
+  `aico.platform.model_gateway`
+- `tests/test_day04_broken_output_suite.py` (17) — Day 4 Task 5: every
+  one of the 12 cases in `structured_output_cases.json` run end to end
+  and asserted against its documented final outcome (not just its
+  per-stage behaviour), the documented bounded markdown-fence unwrap
+  proven never to extend to surrounding prose, and a coverage check that
+  every fixture case is actually exercised somewhere in the suite
+- `tests/test_day04_compatibility.py` (10) — Day 4 Task 6: the required
+  case (`existing_caller_v1.json`, which never sends `warning`, still
+  validates against the current `ResponseEnvelope`, in both directions),
+  `schema_version` present in output metadata on both contracts, and the
+  four breaking-change examples documented in
+  `docs/adr/ADR-004-day4-contract-versioning.md` each proven to fail
+  validation
 
 ## Day 1 — Chunking and lexical retrieval
 
@@ -500,6 +540,60 @@ Hit@1/Hit@5/MRR won't change from that (the differences are far too small
 to flip a ranking), but a byte-diff of `metrics.json`'s vector/hybrid
 scores against a previous run may show tiny drift. This is normal.
 
+## Day 4 — Structured AI contracts
+
+Adds a typed contract boundary (`src/aico/contracts/`) in front of model
+output: parse -> contract/schema validation -> semantic validation, with
+one bounded repair attempt on failure. Nothing outside this package ever
+deserializes model JSON directly, and it never calls a provider SDK or
+`foundry_adapter` itself — the Day 3 `ModelGateway` stays the only
+model-call boundary (`repair.py` is the sole file in the package that
+imports it, for the one repair call it's allowed to make).
+
+Requires no live endpoint or credentials at all — every Day 4 command and
+test uses a fake `ModelGateway` transport.
+
+### Regenerate the committed JSON Schema
+
+```
+python scripts/day04_generate_schemas.py
+```
+
+Writes `contracts/schema/cited_answer.v1.schema.json` and
+`contracts/schema/response_envelope.v1.schema.json` straight from
+`model_json_schema()` on the current `src/aico/contracts/models.py`
+models — never hand-edited. Re-run this after any change to `models.py`
+and commit the result; `tests/test_day04_contracts.py` fails if the
+committed files drift from what the source models would regenerate.
+
+### Regenerate the validation report
+
+```
+python scripts/day04_generate_validation_report.py
+```
+
+Runs the real contract-layer pipeline (`aico.contracts.repair.
+validate_full`/`resolve`) against every case in
+`data/day04_pack/fixtures/structured_output_cases.json` and the
+compatibility check against `existing_caller_v1.json`, using a fake
+`ModelGateway` transport for the two repair fixtures — no real network
+call. Writes `artifacts/day04/validation_report.md`: contract/schema
+version, generated schema paths, a full fixture-by-fixture outcome table,
+the valid/contract-failure/semantic-failure/repair breakdowns, the
+compatibility result, and one schema-valid-but-semantically-invalid
+example described from sanitized structural facts (never raw fixture
+text).
+
+### Supplied resource pack and fixtures
+
+`data/day04_pack/` (`contract_requirements.md`, `semantic_rules.md`,
+`fixtures/structured_output_cases.json`,
+`fixtures/existing_caller_v1.json`) is the fixed, unedited input every
+Day 4 test and script runs against — see `data/day04_pack/README.md`.
+`docs/adr/ADR-004-day4-contract-versioning.md` documents the
+backward-compatibility rule and four breaking-change examples, each
+proven by an executable test in `tests/test_day04_compatibility.py`.
+
 ## Key design decisions
 
 **Day 1**
@@ -568,7 +662,7 @@ scores against a previous run may show tiny drift. This is normal.
 ## Folder structure
 
 ```
-AI-Assignments-Day3/
+AI-Assignments-Day4/
   README.md                        this file
   requirements.txt
   pytest.ini                        pythonpath=src, so `pytest` runs standalone
@@ -576,16 +670,28 @@ AI-Assignments-Day3/
   .env                              endpoint + (legacy Day 2) provider values (gitignored, never committed)
   config/
     model-routing.yaml              Day 3 — deployment aliases, resilience/budget/routing policy (no secrets)
+  contracts/schema/
+    cited_answer.v1.schema.json           Day 4 — generated from CitedAnswer, never hand-edited
+    response_envelope.v1.schema.json      Day 4 — generated from ResponseEnvelope, never hand-edited
   docs/adr/
     ADR-003-model-routing-and-fallback.md   Day 3 — gateway/routing/fallback design decision
+    ADR-004-day4-contract-versioning.md     Day 4 — backward-compatibility rule + breaking-change examples
   scripts/
     day03_gateway_demo.py           Day 3 — regenerates artifacts/day03/gateway_demo.md's scenarios
+    day04_generate_schemas.py       Day 4 — regenerates contracts/schema/*.json from the source models
+    day04_generate_validation_report.py  Day 4 — regenerates artifacts/day04/validation_report.md
   src/aico/
     platform/
       model_gateway.py              Day 3 — typed chat/embed boundary (ModelGateway)
       config.py                     Day 3 — validated config/model-routing.yaml loading
       errors.py                     Day 3 — normalized ModelGatewayError hierarchy
       foundry_adapter.py            Day 3 — the only file that calls the provider over HTTP
+    contracts/
+      models.py                     Day 4 — versioned Pydantic contracts (CitedAnswer, ResponseEnvelope)
+      errors.py                     Day 4 — typed ValidationFailure (parse/contract/semantic/repair)
+      validator.py                  Day 4 — raw string -> typed contract or typed failure
+      semantic.py                   Day 4 — S1-S5 semantic rules, run only after contract validation
+      repair.py                     Day 4 — one bounded repair attempt through the Day 3 ModelGateway
     retrieval/
       chunker.py                    Day 1 — offset-exact chunking
       ingest.py                     Day 1 — CLI: documents -> index.json
@@ -603,8 +709,14 @@ AI-Assignments-Day3/
     evals/
       day01_queries.json            10 labelled queries
       day02_queries.json            16 labelled queries (Q01-10 shared with Day 1, Q11-16 new)
-    index/                          build output (gitignored) - python -m aico.retrieval.ingest
-    vectors/                        build output (gitignored) - python -m aico.retrieval.embed
+    day04_pack/                     Day 4 — supplied requirements/rules/fixtures, used as-is
+      contract_requirements.md
+      semantic_rules.md
+      fixtures/
+        structured_output_cases.json      12 broken-output cases (D04-01..D04-12)
+        existing_caller_v1.json           frozen pre-`warning` caller snapshot
+    index/                         build output (gitignored) - python -m aico.retrieval.ingest
+    vectors/                       build output (gitignored) - python -m aico.retrieval.embed
   artifacts/
     day01/
       chunks_200_40.json            committed chunk set, config A
@@ -616,6 +728,8 @@ AI-Assignments-Day3/
       mode_comparison.md            auto-generated three-way comparison report
     day03/
       gateway_demo.md               Day 3 — sanitized demonstration evidence (Task 7)
+    day04/
+      validation_report.md          Day 4 — auto-generated by day04_generate_validation_report.py
   tests/
     test_chunker.py                 (11)
     test_bm25.py                    (6)
@@ -633,4 +747,9 @@ AI-Assignments-Day3/
     test_model_gateway_logging.py   Day 3 — sanitized logging, nothing sensitive logged (10)
     test_foundry_adapter_identity.py       Day 3 — identity-based auth, no credential in source (7)
     test_foundry_adapter_normalization.py  Day 3 — HTTP status -> typed ModelGatewayError
+    test_day04_contracts.py         Day 4 — versioned contracts + contract/schema validation (58)
+    test_day04_semantic_validation.py      Day 4 — semantic rules S1-S5 (20)
+    test_day04_repair.py            Day 4 — bounded repair + gateway boundary (20)
+    test_day04_broken_output_suite.py      Day 4 — all 12 fixture cases end to end (17)
+    test_day04_compatibility.py     Day 4 — backward compatibility + versioning (10)
 ```
