@@ -13,41 +13,43 @@ classified data is used.
 
 ## Setup
 
-**PowerShell** (`(.venv) PS ...>` prompt — this is the default on Windows
-when you activate via `.venv\Scripts\Activate.ps1` or the VS Code/Windows
-Terminal PowerShell profile):
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-$env:PYTHONPATH = "src"
-```
+Dependencies are managed with [`uv`](https://docs.astral.sh/uv/) — a single
+lockfile (`uv.lock`) pins every package (direct and transitive) with hashes,
+and `uv` creates/manages the `.venv` for you. Install `uv` once
+([instructions](https://docs.astral.sh/uv/getting-started/installation/)),
+then from the repo root:
 
-**cmd.exe** (`(.venv) C:\...>` prompt, no `PS`):
-```cmd
-python -m venv .venv
-.venv\Scripts\activate.bat
-pip install -r requirements.txt
-set PYTHONPATH=src
-```
-
-**macOS/Linux/git-bash**:
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-export PYTHONPATH=src
+uv sync
 ```
 
-⚠️ **PowerShell vs cmd.exe `set` is a common trap**: in PowerShell, `set` is
-an alias for `Set-Variable`, which creates a PowerShell variable, not an
-environment variable — running the cmd.exe-style `set PYTHONPATH=src` in a
-PowerShell prompt silently does nothing useful, and every `python -m aico...`
-command then fails with `ModuleNotFoundError: No module named 'aico'`. Check
-your prompt: `(.venv) PS C:\...>` needs `$env:PYTHONPATH = "src"`;
-`(.venv) C:\...>` (no `PS`) needs `set PYTHONPATH=src`.
+This creates `.venv/` (Python version pinned by `.python-version`) and
+installs everything from `pyproject.toml` + `uv.lock` — dependencies plus the
+`dev` group (`pytest`). No manual activation, `pip install`, or
+`PYTHONPATH` juggling needed:
 
-`PYTHONPATH=src` is only needed to invoke the `aico.*` modules directly with
-`python -m`. `pytest` doesn't need it.
+```bash
+uv run pytest -q               # run the test suite
+uv run python -m aico.retrieval.search ...   # run any aico.* module
+```
+
+`uv sync` builds and installs `aico` itself into the `.venv` in editable mode
+(via the `hatchling` backend declared in `pyproject.toml`), so `import aico`
+and `python -m aico...` just work under `uv run` — no `$env:PYTHONPATH` /
+`set PYTHONPATH` distinction between PowerShell and cmd.exe to worry about
+(that was only ever needed for the old `venv`+`pip` setup).
+
+If you'd rather activate the environment directly instead of prefixing every
+command with `uv run`:
+```powershell
+.venv\Scripts\Activate.ps1   # PowerShell
+.venv\Scripts\activate.bat   # cmd.exe
+source .venv/bin/activate    # macOS/Linux/git-bash
+```
+
+Adding a new dependency: `uv add <package>` (or `uv add --dev <package>` for
+dev-only tools) — updates `pyproject.toml` and `uv.lock` and installs it in
+one step, instead of hand-editing a flat `requirements.txt`.
 
 **Real embedding/chat calls only** (Day 2's `AzureEmbeddingProvider`, now
 Day 3's Model Gateway) need two things — neither is a secret in a file:
@@ -83,7 +85,7 @@ and need neither of the above.
 ## Run the tests
 
 ```
-pytest -q
+uv run pytest -q
 ```
 
 274 tests pass, across twenty-one files. Every test is deterministic and
@@ -664,8 +666,9 @@ proven by an executable test in `tests/test_day04_compatibility.py`.
 ```
 AI-Assignments-Day4/
   README.md                        this file
-  requirements.txt
-  pytest.ini                        pythonpath=src, so `pytest` runs standalone
+  pyproject.toml                    project metadata, deps, [tool.pytest.ini_options] (pythonpath=src)
+  uv.lock                           uv's resolved + hashed dependency lockfile
+  .python-version                   Python version uv pins the .venv to
   .gitignore
   .env                              endpoint + (legacy Day 2) provider values (gitignored, never committed)
   config/
