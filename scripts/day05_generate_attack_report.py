@@ -7,7 +7,7 @@ Run: python scripts/day05_generate_attack_report.py
 Runs the real Day 5 security pipeline - `aico.security.normalization.
 normalize_input` then `aico.security.input_policy.evaluate_policy`, the
 exact two calls `GroundedAnswerService.answer()` makes - against every
-fixture in `day05_pack/attacks/attack_fixtures.json`, then writes
+fixture in `data/day05_pack/attacks/attack_fixtures.json`, then writes
 `artifacts/day05/attack_results.md` straight from those results, the same
 discipline the Day 4 validation-report generator uses (never a separate,
 hand-summarized reimplementation of the policy logic).
@@ -19,7 +19,7 @@ the policy function in isolation: a `block`/`clarify` fixture must reach
 zero gateway calls, an `allow` fixture must reach exactly one.
 
 No secrets or production/customer data appear here - every fixture is
-synthetic text already committed in `day05_pack/attacks/attack_fixtures.json`
+synthetic text already committed in `data/day05_pack/attacks/attack_fixtures.json`
 (the resource pack's own README: "Synthetic data only"). Per
 grounding_rules.md and the working rule "do not claim universal jailbreak
 prevention," this report documents a fixed, deterministic corpus - it is
@@ -39,7 +39,7 @@ from aico.security.input_policy import evaluate_policy
 from aico.security.normalization import normalize_input
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-FIXTURES_PATH = REPO_ROOT / "day05_pack" / "attacks" / "attack_fixtures.json"
+FIXTURES_PATH = REPO_ROOT / "data" / "day05_pack" / "attacks" / "attack_fixtures.json"
 REPORT_PATH = REPO_ROOT / "artifacts" / "day05" / "attack_results.md"
 
 # The brief's required attack-category list (Task 6), mapped onto the
@@ -163,14 +163,14 @@ def render_report(rows: list[FixtureRow]) -> str:
     lines.append("")
     lines.append(
         f"Generated {date.today().isoformat()} by `scripts/day05_generate_attack_report.py` against "
-        f"`day05_pack/attacks/attack_fixtures.json`. Every row runs the real "
+        f"`data/day05_pack/attacks/attack_fixtures.json`. Every row runs the real "
         f"`aico.security.normalization.normalize_input` -> `aico.security.input_policy.evaluate_policy` "
         f"pipeline, cross-checked against the full `GroundedAnswerService` (Task 1) wired to a fake Model "
         f"Gateway - no real network call is made generating this report."
     )
     lines.append("")
     lines.append(
-        "**Scope note** (`day05_pack/README.md`, `grounding_rules.md`): this is a fixed, deterministic "
+        "**Scope note** (`data/day05_pack/README.md`, `grounding_rules.md`): this is a fixed, deterministic "
         "corpus. Passing it does not imply universal jailbreak prevention."
     )
     lines.append("")

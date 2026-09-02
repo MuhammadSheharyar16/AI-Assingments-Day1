@@ -23,7 +23,7 @@ import pytest
 from aico.security.input_policy import PolicyOutcome, evaluate_policy
 from aico.security.normalization import normalize_input
 
-PACK_DIR = pathlib.Path(__file__).resolve().parent.parent / "day05_pack"
+PACK_DIR = pathlib.Path(__file__).resolve().parent.parent / "data" / "day05_pack"
 ATTACK_FIXTURES = json.loads((PACK_DIR / "attacks" / "attack_fixtures.json").read_text(encoding="utf-8"))["fixtures"]
 EXPECTED_OUTCOMES = {f["id"]: f["expected"] for f in ATTACK_FIXTURES}
 
@@ -50,7 +50,7 @@ def _normalized(text: str) -> str:
     return normalize_input(text).normalized
 
 
-# ── Supplied fixture pack (day05_pack/attacks/attack_fixtures.json) ─────
+# ── Supplied fixture pack (data/day05_pack/attacks/attack_fixtures.json) ─────
 
 @pytest.mark.parametrize("fixture", ATTACK_FIXTURES, ids=[f["id"] for f in ATTACK_FIXTURES])
 def test_supplied_attack_fixtures_produce_their_documented_outcome(fixture):
@@ -62,7 +62,7 @@ def test_supplied_attack_fixtures_produce_their_documented_outcome(fixture):
 
 
 def test_expected_policy_outcomes_doc_matches_the_fixture_pack():
-    # day05_pack/expected_policy_outcomes.md documents the same nine
+    # data/day05_pack/expected_policy_outcomes.md documents the same nine
     # fixtures - keep the two supplied artifacts in agreement.
     documented = {
         "ATK-001": "block", "ATK-002": "block", "ATK-003": "block", "ATK-004": "block",

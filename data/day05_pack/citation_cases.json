@@ -1,0 +1,55 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "CIT-001",
+      "name": "single_valid_citation",
+      "retrieved_context_ids": [
+        "CHUNK-001",
+        "CHUNK-004"
+      ],
+      "model_citations": [
+        "CHUNK-001"
+      ],
+      "expected": "pass"
+    },
+    {
+      "id": "CIT-002",
+      "name": "multiple_valid_citations",
+      "retrieved_context_ids": [
+        "CHUNK-001",
+        "CHUNK-004"
+      ],
+      "model_citations": [
+        "CHUNK-001",
+        "CHUNK-004"
+      ],
+      "expected": "pass"
+    },
+    {
+      "id": "CIT-003",
+      "name": "forged_citation",
+      "retrieved_context_ids": [
+        "CHUNK-001",
+        "CHUNK-004"
+      ],
+      "model_citations": [
+        "CHUNK-999"
+      ],
+      "expected": "fail_closed"
+    },
+    {
+      "id": "CIT-004",
+      "name": "mixed_valid_and_forged",
+      "retrieved_context_ids": [
+        "CHUNK-001",
+        "CHUNK-004"
+      ],
+      "model_citations": [
+        "CHUNK-001",
+        "CHUNK-999"
+      ],
+      "expected": "fail_closed"
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 Day 5 Task 3 — citation validation.
 
 Proves `aico.rag.citation_validator.validate_citations` directly against
-the supplied fixture pack (day05_pack/citation_cases.json - CIT-001..004)
+the supplied fixture pack (data/day05_pack/citation_cases.json - CIT-001..004)
 plus the edge cases the brief explicitly warns about:
 
     - a citation is checked by *membership* against the chunk IDs actually
@@ -25,7 +25,7 @@ import pytest
 
 from aico.rag.citation_validator import EvidenceChunk, validate_citations
 
-PACK_DIR = pathlib.Path(__file__).resolve().parent.parent / "day05_pack"
+PACK_DIR = pathlib.Path(__file__).resolve().parent.parent / "data" / "day05_pack"
 CITATION_CASES = json.loads((PACK_DIR / "citation_cases.json").read_text(encoding="utf-8"))["cases"]
 
 
@@ -35,7 +35,7 @@ def _retrieved(chunk_ids: list[str]) -> list[EvidenceChunk]:
     return [EvidenceChunk(chunk_id=cid, source_file="synthetic.md", text="synthetic evidence text") for cid in chunk_ids]
 
 
-# ── Supplied fixture pack (day05_pack/citation_cases.json) ─────────────
+# ── Supplied fixture pack (data/day05_pack/citation_cases.json) ─────────────
 
 @pytest.mark.parametrize("case", CITATION_CASES, ids=[c["id"] for c in CITATION_CASES])
 def test_supplied_citation_cases_produce_their_expected_outcome(case):

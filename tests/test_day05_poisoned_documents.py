@@ -46,7 +46,7 @@ from aico.rag.answer_service import GroundedAnswer, GroundedAnswerService, Typed
 from aico.rag.citation_validator import EvidenceChunk
 from aico.rag.prompt_builder import build_prompt
 
-PACK_DIR = pathlib.Path(__file__).resolve().parent.parent / "day05_pack"
+PACK_DIR = pathlib.Path(__file__).resolve().parent.parent / "data" / "day05_pack"
 ANSWER_CASES = json.loads((PACK_DIR / "answer_cases.json").read_text(encoding="utf-8"))["cases"]
 ANS_003 = next(c for c in ANSWER_CASES if c["id"] == "ANS-003")
 

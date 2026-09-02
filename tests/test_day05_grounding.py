@@ -36,7 +36,7 @@ from aico.rag.prompt_builder import build_prompt
 from aico.security.input_policy import PolicyOutcome, evaluate_policy
 from aico.security.normalization import normalize_input
 
-PACK_DIR = pathlib.Path(__file__).resolve().parent.parent / "day05_pack"
+PACK_DIR = pathlib.Path(__file__).resolve().parent.parent / "data" / "day05_pack"
 ATTACK_FIXTURES = json.loads((PACK_DIR / "attacks" / "attack_fixtures.json").read_text(encoding="utf-8"))["fixtures"]
 ANSWER_CASES = json.loads((PACK_DIR / "answer_cases.json").read_text(encoding="utf-8"))["cases"]
 

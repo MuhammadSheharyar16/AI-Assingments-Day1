@@ -9,8 +9,8 @@ first - grounding_rules.md #9) into exactly one of:
 Every rule here is pattern-based and deterministic - no LLM call, per the
 working rule "do not use an LLM as the only policy classifier for these
 required deterministic fixtures." The rule set is built directly from
-day05_pack/attacks/attack_fixtures.json and
-day05_pack/expected_policy_outcomes.md and is exercised end to end against
+data/day05_pack/attacks/attack_fixtures.json and
+data/day05_pack/expected_policy_outcomes.md and is exercised end to end against
 all nine supplied fixtures in tests/test_day05_grounding.py.
 
 This module classifies *user input* only. A malicious instruction sitting

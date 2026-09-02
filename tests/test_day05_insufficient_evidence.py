@@ -23,7 +23,7 @@ from aico.platform.model_gateway import CallMetadata, ChatRequest, ChatResult
 from aico.rag.answer_service import GroundedAnswer, GroundedAnswerService, InsufficientEvidence, TypedFailure
 from aico.rag.citation_validator import EvidenceChunk
 
-PACK_DIR = pathlib.Path(__file__).resolve().parent.parent / "day05_pack"
+PACK_DIR = pathlib.Path(__file__).resolve().parent.parent / "data" / "day05_pack"
 ANSWER_CASES = json.loads((PACK_DIR / "answer_cases.json").read_text(encoding="utf-8"))["cases"]
 INSUFFICIENT_CASES = [c for c in ANSWER_CASES if c["expected_result"] == "insufficient_evidence"]
 
@@ -80,7 +80,7 @@ def _answered_json(*, answer: str, citation_ids: list[str]) -> str:
     )
 
 
-# ── Supplied fixture pack (day05_pack/answer_cases.json) ────────────────
+# ── Supplied fixture pack (data/day05_pack/answer_cases.json) ────────────────
 
 def test_answer_case_pack_has_at_least_one_insufficient_evidence_case():
     # Task 4 requirement: "Implement at least one query where retrieval
