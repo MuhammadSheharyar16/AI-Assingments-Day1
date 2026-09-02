@@ -743,9 +743,6 @@ AI-Assignments-Day5/
       citation_cases.json           supplied citation membership cases (Task 3)
       answer_cases.json             supplied supported / insufficient-evidence cases (Task 4, 9)
       expected_policy_outcomes.md   allow/clarify/block outcome per attack category (Task 6)
-      attacks/
-        attack_fixtures.json        the fixed >=8-case attack corpus (Task 8) — mirrored, never edited,
-                                     into tests/fixtures/day05/attacks/ for direct test/script consumption
     index/                         build output (gitignored) - python -m aico.retrieval.ingest
     vectors/                       build output (gitignored) - python -m aico.retrieval.embed
   artifacts/
@@ -772,7 +769,9 @@ AI-Assignments-Day5/
         existing_caller_v1.json           mirrors data/day04_pack/fixtures/, read by test_day04_compatibility.py
         structured_output_cases.json      mirrors data/day04_pack/fixtures/, read by test_day04_broken_output_suite.py
       day05/attacks/
-        attack_fixtures.json              mirrors data/day05_pack/attacks/, read by the Day 5 policy/attack tests
+        attack_fixtures.json              the fixed >=8-case attack corpus (Task 8) — canonical copy, read
+                                           directly by the Day 5 policy/attack tests and by
+                                           scripts/day05_generate_attack_report.py
     test_chunker.py                 (11)
     test_bm25.py                    (6)
     test_ingest.py                  (4)

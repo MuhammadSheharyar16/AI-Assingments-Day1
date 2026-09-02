@@ -3,7 +3,7 @@ Day 5 Task 5 — input normalization.
 
 Proves `aico.security.normalization.normalize_input` in isolation:
 deterministic, bounded to the obfuscation shape the supplied attack corpus
-(data/day05_pack/attacks/attack_fixtures.json, ATK-006) actually demonstrates,
+(tests/fixtures/day05/attacks/attack_fixtures.json, ATK-006) actually demonstrates,
 and never needlessly rewrites an ordinary benign question. The integration
 proof - that normalization actually runs *before* policy classification -
 belongs to test_day05_input_policy.py (Task 6); this file is the
@@ -18,8 +18,8 @@ import pytest
 
 from aico.security.normalization import normalize_input
 
-PACK_DIR = pathlib.Path(__file__).resolve().parent.parent / "data" / "day05_pack"
-ATTACK_FIXTURES = json.loads((PACK_DIR / "attacks" / "attack_fixtures.json").read_text(encoding="utf-8"))["fixtures"]
+FIXTURES_DIR = pathlib.Path(__file__).resolve().parent / "fixtures" / "day05"
+ATTACK_FIXTURES = json.loads((FIXTURES_DIR / "attacks" / "attack_fixtures.json").read_text(encoding="utf-8"))["fixtures"]
 
 BENIGN_QUESTIONS = [
     "What is the synthetic supplier invoice submission window?",

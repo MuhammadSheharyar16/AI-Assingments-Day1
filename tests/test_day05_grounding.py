@@ -37,7 +37,8 @@ from aico.security.input_policy import PolicyOutcome, evaluate_policy
 from aico.security.normalization import normalize_input
 
 PACK_DIR = pathlib.Path(__file__).resolve().parent.parent / "data" / "day05_pack"
-ATTACK_FIXTURES = json.loads((PACK_DIR / "attacks" / "attack_fixtures.json").read_text(encoding="utf-8"))["fixtures"]
+FIXTURES_DIR = pathlib.Path(__file__).resolve().parent / "fixtures" / "day05"
+ATTACK_FIXTURES = json.loads((FIXTURES_DIR / "attacks" / "attack_fixtures.json").read_text(encoding="utf-8"))["fixtures"]
 ANSWER_CASES = json.loads((PACK_DIR / "answer_cases.json").read_text(encoding="utf-8"))["cases"]
 
 

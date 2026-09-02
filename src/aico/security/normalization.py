@@ -2,7 +2,7 @@
 Day 5 Task 5 — input normalization.
 
 Normalizes the small, bounded set of obfuscation techniques used by the
-supplied attack corpus (data/day05_pack/attacks/attack_fixtures.json, see
+supplied attack corpus (tests/fixtures/day05/attacks/attack_fixtures.json, see
 ATK-006) before the deterministic input policy (input_policy.py) ever
 looks at the text. This is deliberately not a general-purpose text
 cleaner - see grounding_rules.md #9 ("normalize supported obfuscations

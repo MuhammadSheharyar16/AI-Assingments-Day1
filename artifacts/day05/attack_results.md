@@ -1,6 +1,6 @@
 # Day 5 Attack Fixture Results
 
-Generated 2026-09-02 by `scripts/day05_generate_attack_report.py` against `data/day05_pack/attacks/attack_fixtures.json`. Every row runs the real `aico.security.normalization.normalize_input` -> `aico.security.input_policy.evaluate_policy` pipeline, cross-checked against the full `GroundedAnswerService` (Task 1) wired to a fake Model Gateway - no real network call is made generating this report.
+Generated 2026-09-02 by `scripts/day05_generate_attack_report.py` against `tests/fixtures/day05/attacks/attack_fixtures.json`. Every row runs the real `aico.security.normalization.normalize_input` -> `aico.security.input_policy.evaluate_policy` pipeline, cross-checked against the full `GroundedAnswerService` (Task 1) wired to a fake Model Gateway - no real network call is made generating this report.
 
 **Scope note** (`data/day05_pack/README.md`, `grounding_rules.md`): this is a fixed, deterministic corpus. Passing it does not imply universal jailbreak prevention.
 

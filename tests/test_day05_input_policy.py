@@ -24,7 +24,8 @@ from aico.security.input_policy import PolicyOutcome, evaluate_policy
 from aico.security.normalization import normalize_input
 
 PACK_DIR = pathlib.Path(__file__).resolve().parent.parent / "data" / "day05_pack"
-ATTACK_FIXTURES = json.loads((PACK_DIR / "attacks" / "attack_fixtures.json").read_text(encoding="utf-8"))["fixtures"]
+FIXTURES_DIR = pathlib.Path(__file__).resolve().parent / "fixtures" / "day05"
+ATTACK_FIXTURES = json.loads((FIXTURES_DIR / "attacks" / "attack_fixtures.json").read_text(encoding="utf-8"))["fixtures"]
 EXPECTED_OUTCOMES = {f["id"]: f["expected"] for f in ATTACK_FIXTURES}
 
 # The brief's required attack-category list (Task 6), mapped onto the
@@ -50,7 +51,7 @@ def _normalized(text: str) -> str:
     return normalize_input(text).normalized
 
 
-# ── Supplied fixture pack (data/day05_pack/attacks/attack_fixtures.json) ─────
+# ── Supplied fixture pack (tests/fixtures/day05/attacks/attack_fixtures.json) ─────
 
 @pytest.mark.parametrize("fixture", ATTACK_FIXTURES, ids=[f["id"] for f in ATTACK_FIXTURES])
 def test_supplied_attack_fixtures_produce_their_documented_outcome(fixture):

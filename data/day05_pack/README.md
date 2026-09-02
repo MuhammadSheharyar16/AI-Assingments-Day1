@@ -7,7 +7,10 @@ Contents:
 - citation_cases.json
 - answer_cases.json
 - expected_policy_outcomes.md
-- attacks/attack_fixtures.json
+
+The attack corpus (attack_fixtures.json) lives under
+`tests/fixtures/day05/attacks/` - read directly from there by the Day 5
+policy/attack tests and by `scripts/day05_generate_attack_report.py`.
 
 Rules:
 - Synthetic data only.
