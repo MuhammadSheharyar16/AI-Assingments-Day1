@@ -28,15 +28,22 @@ import unicodedata
 from dataclasses import dataclass
 
 # Zero-width / invisible characters sometimes inserted mid-word to dodge
-# keyword matching (zero-width space/non-joiner/joiner, word joiner, BOM).
-_ZERO_WIDTH_RE = re.compile("[​‌‍⁠﻿]")
+# keyword matching. Written as explicit \u escapes rather than literal
+# invisible characters - literal zero-width characters pasted into source
+# are themselves impossible for a reviewer or a diff to verify by eye.
+#   U+200B zero-width space       U+200C zero-width non-joiner
+#   U+200D zero-width joiner      U+2060 word joiner
+#   U+FEFF zero-width no-break space (BOM)
+_ZERO_WIDTH_RE = re.compile("[\u200b\u200c\u200d\u2060\ufeff]")
 
 # Collapses runs of single letters separated by whitespace ("I G N O R E")
-# back into one word ("IGNORE"). Requires at least three single-letter
-# "tokens" in a row so short, legitimate fragments ("a b" as part of a
-# list, an initial like "J. Smith") are never rewritten - bounded to the
-# obfuscation shape the supplied corpus actually uses.
-_SPACED_LETTERS_RE = re.compile(r"\b(?:[A-Za-z]\s+){2,}[A-Za-z]\b")
+# back into one word ("IGNORE"). Requires at least FOUR single-letter
+# "tokens" in a row - long enough to catch the obfuscated keywords the
+# supplied corpus actually uses (ATK-006's "IGNORE" is 6), short enough
+# that a benign three-letter enumeration ("options are a b c") is never
+# rewritten. Bounded to the obfuscation shape the corpus demonstrates,
+# not a general "detect any spaced-out word" heuristic.
+_SPACED_LETTERS_RE = re.compile(r"\b(?:[A-Za-z]\s+){3,}[A-Za-z]\b")
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
