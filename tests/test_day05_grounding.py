@@ -8,7 +8,12 @@ stand-in for `aico.platform.model_gateway.ModelGateway` - same pattern as
 per the working rule "failure-path tests should use fakes/fixtures rather
 than avoidable real cloud calls." Retrieval is likewise a fake in-memory
 list of `EvidenceChunk`, never the real Day 2 index, so these tests never
-depend on `data/index/index.json` existing or being unchanged.
+depend on `data/index/index.json` existing or being unchanged - with one
+deliberate exception: the "Day 2/3/4 boundary integration proofs" section
+at the end of this file uses the real `BM25Retriever`/index and the real
+`ModelGateway` class (still no network call - a fake `Transport`/`Model
+Gateway` chat response underneath), specifically to prove those boundaries
+are still load-bearing, not just duck-typed-compatible (Task 10).
 """
 from __future__ import annotations
 
@@ -412,3 +417,109 @@ def test_supplied_answer_cases_produce_their_expected_result_type(case):
         assert set(result.citation_ids) == set(case["expected_citation_ids"])
     else:
         assert isinstance(result, InsufficientEvidence)
+
+
+# ── Task 10 — Day 2/3/4 boundary integration proofs ──────────────────────
+#
+# Every test above proves the Day 5 orchestration logic using fakes for
+# Day 2 retrieval and the Day 3 Model Gateway (module docstring). The three
+# tests below are the deliberate exception: they use the REAL Day 2/3/4
+# code - the actual `BM25Retriever`/`data/index/index.json`, the actual
+# `ModelGateway` class, the actual `aico.contracts.validator` - to prove
+# those boundaries are still load-bearing, not just duck-typed-compatible.
+
+def test_day2_retrieval_path_evidence_comes_from_the_real_bm25_index():
+    from aico.rag.answer_service import BM25Retriever
+
+    retriever = BM25Retriever()  # the real default - reads data/index/index.json
+    chunks = retriever("What are the payment terms and pricing cost breakdown?")
+
+    assert chunks, "the real Day 2 index returned no evidence at all"
+    assert any(c.source_file == "DOC-003-pricing-payment.md" for c in chunks), (
+        "expected the real BM25 index to surface DOC-003 (pricing/payment terms) for this query; "
+        f"got sources: {[c.source_file for c in chunks]}"
+    )
+
+    # And wired end to end: the default-constructed service (no retriever
+    # override) actually uses this real retrieval, not a stub.
+    gateway = FakeGateway(_cited_answer_json(status="insufficient_evidence", answer="n/a", citations=[]))
+    service = GroundedAnswerService(gateway=gateway)  # retriever defaults to BM25Retriever()
+    service.answer("What are the payment terms and pricing cost breakdown?")
+
+    sent_evidence = gateway.calls[0].messages[-1].content  # [system, user input, evidence] - see prompt_builder.py
+    assert "DOC-003-pricing-payment.md" in sent_evidence
+
+
+def test_day3_gateway_path_model_call_goes_through_the_real_model_gateway_class():
+    from aico.platform.config import (
+        BudgetsConfig, ChatBudget, EmbeddingBudget, FallbackPolicy, GatewayConfig,
+        ModelAliases, ResilienceConfig, RetryConfig, RouteEndpoint, RoutingPolicy,
+    )
+    from aico.platform.model_gateway import ModelGateway, TransportResult
+
+    config = GatewayConfig(
+        version="1.0",
+        endpoint_env="AICO_TEST_FOUNDRY_ENDPOINT",
+        models=ModelAliases(chat="test-chat-alias", embedding="test-embed-alias"),
+        resilience=ResilienceConfig(
+            timeout_seconds=5, retry=RetryConfig(max_attempts=3, base_delay_ms=10, max_delay_ms=100, jitter=False)
+        ),
+        budgets=BudgetsConfig(
+            chat=ChatBudget(max_input_tokens=1000, max_output_tokens=500),
+            embedding=EmbeddingBudget(max_items_per_call=32),
+        ),
+        routing=RoutingPolicy(
+            primary=RouteEndpoint(provider="microsoft-foundry", region="uk-south", data_boundary="uk", risk_class="standard"),
+            fallback=FallbackPolicy(
+                enabled=False, route=None,
+                require_compatibility={"provider": True, "region": True, "data_boundary": True, "risk": True, "budget": True},
+            ),
+        ),
+    )
+
+    class _RecordingTransport:
+        def __init__(self):
+            self.chat_calls = 0
+
+        def embed(self, *, model_alias, texts, timeout_seconds):
+            raise AssertionError("this test never embeds")
+
+        def chat(self, *, model_alias, messages, max_output_tokens, timeout_seconds):
+            self.chat_calls += 1
+            return TransportResult(content=_cited_answer_json(), dimensions=None, token_usage={"prompt_tokens": 5, "completion_tokens": 5})
+
+    transport = _RecordingTransport()
+    real_gateway = ModelGateway(config, transport)  # the actual Day 3 class, not a duck-typed fake
+    chunk = EvidenceChunk(chunk_id="CHUNK-101", source_file="synthetic.md", text="Some real evidence.")
+    service = GroundedAnswerService(gateway=real_gateway, retriever=_fixed_retriever([chunk]))
+
+    result = service.answer("What does the policy say?")
+
+    assert isinstance(result, GroundedAnswer)
+    assert transport.chat_calls == 1  # the call actually reached the transport through ModelGateway.chat()
+
+
+def test_day4_contract_path_model_output_uses_the_real_typed_validation():
+    # A response missing a required field classifies as Day 4's own
+    # "missing_field" category (aico.contracts.validator._PYDANTIC_TYPE_TO_CATEGORY)
+    # - a hand-rolled Day 5 validator would not reproduce that exact,
+    # Pydantic-derived taxonomy, so seeing it here proves the real
+    # `aico.contracts.validator.parse_and_validate` ran, not a duplicate.
+    chunk = EvidenceChunk(chunk_id="CHUNK-001", source_file="synthetic.md", text="Some real evidence.")
+    missing_field_response = json.dumps(
+        {
+            "schema_version": "1.0",
+            "status": "answered",
+            "answer": "An answer without a confidence label.",
+            "citations": [{"chunk_id": "CHUNK-001", "source_file": "synthetic.md"}],
+            # confidence_label deliberately omitted
+        }
+    )
+    gateway = FakeGateway(missing_field_response)
+    service = GroundedAnswerService(gateway=gateway, retriever=_fixed_retriever([chunk]))
+
+    result = service.answer("What does the policy say?")
+
+    assert isinstance(result, TypedFailure)
+    assert result.stage == "contract"
+    assert result.category == "missing_field"
