@@ -67,7 +67,7 @@ _BLOCK_RULES: tuple[tuple[str, re.Pattern], ...] = (
         "role_escalation",
         re.compile(
             r"\byou are now\b.{0,40}\b(admin|administrator|system|root|developer)\b"
-            r"|\bact as (the )?(system|admin|administrator)\b",
+            r"|\bact as (the |an? )?(system|admin|administrator)\b",
             re.IGNORECASE,
         ),
     ),
