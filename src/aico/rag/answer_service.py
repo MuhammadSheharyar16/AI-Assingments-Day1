@@ -176,6 +176,25 @@ class GroundedAnswerService:
                 )
             return InsufficientEvidence(question=question, explanation=parsed.answer, retrieved_ids=retrieved_ids)
 
+        # 6b. Symmetric guard on the other side of status (Task 4 / Day 4
+        # semantic rule S1 - "an answered response needs at least one
+        # citation"): the contract stage alone allows status="answered"
+        # with zero citations (see models.py's CitedAnswer docstring and
+        # fixture D04-09 - that separation is deliberate, Day 4 only
+        # types the shape). Day 5 owns deciding groundedness, and an
+        # "answered" claim anchored to nothing retrieved is exactly the
+        # unsupported-answer case grounding_rules.md forbids ("a polished
+        # answer that is unsupported by retrieved evidence is a failed
+        # result") - fail closed here rather than let it become a
+        # GroundedAnswer with an empty citation_ids tuple.
+        if not parsed.citations:
+            return TypedFailure(
+                question=question,
+                stage="contract",
+                category="answered_without_citation",
+                message="model returned status=answered but citations is empty - an unsupported claim is not a grounded answer",
+            )
+
         # 7. Citation validation (Task 3) - membership against the actual
         # retrieved context, fails the whole answer closed on any forged
         # citation rather than silently dropping it.
