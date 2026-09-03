@@ -13,28 +13,48 @@ reimplements retrieval/generation itself (working rule) - it only:
 
 Task 2 IS wired: `get_trusted_identity` is a required dependency on
 `POST /ask`, so an untrusted caller never reaches `GroundedAnswerService`
-(see identity.py). The `IdentityError` exception handler below is a Task 2
-stopgap plain-401 response - Task 4 folds it into the shared error
-envelope every other 4xx/5xx uses.
+(see identity.py). `IdentityError` is an `ApiError` (errors.py), so
+`register_error_handlers` covers it - no bespoke handler here.
 
 Task 3 IS wired: `CorrelationMiddleware` (correlation.py) decides
 request_id/correlation_id for every request - accepting a caller-supplied
 `X-Request-ID`/`X-Correlation-ID`, generating whichever is absent - and
 echoes both back as response headers on every response (success or
 error), in addition to `AskResponse.request_id`/`.correlation_id`
-already carrying them in the body. Content-Type/size limits and the
-shared error envelope (Task 4), cancellation propagation (Task 5) and
-health endpoints (Task 6) are not yet wired - each lands in its own task.
+already carrying them in the body.
+
+Task 4 IS wired:
+- `RequestProtectionMiddleware` (request_protection.py) rejects an
+  unsupported Content-Type or an oversize body before routing/dependency
+  resolution even runs - `GroundedAnswerService` never sees either case.
+- `register_error_handlers` (errors.py) makes every 4xx/5xx `/ask`
+  response - identity rejection, content-type/size rejection, a body that
+  fails `AskRequest` validation, or an unexpected failure - use the one
+  shared `ErrorResponse` envelope.
+
+Middleware order matters here and is deliberately NOT the order these two
+`add_middleware` calls appear in: Starlette's `add_middleware` makes the
+most-recently-added middleware the OUTERMOST one (it runs first on the
+way in). `RequestProtectionMiddleware` is added first so
+`CorrelationMiddleware`, added second, ends up outermost - meaning
+request_id/correlation_id are already decided by the time
+`RequestProtectionMiddleware` runs, so even a Content-Type/size rejection
+carries them (request_protection.py reads `request.state`, which
+`CorrelationMiddleware` must have already populated).
+
+Cancellation propagation (Task 5) and health endpoints (Task 6) are not
+yet wired - each lands in its own task.
 """
 from __future__ import annotations
 
-from fastapi import Depends, FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI
 
 from aico.api.contracts import AskRequest, AskResponse, ask_response_from_result
 from aico.api.correlation import CorrelationMiddleware, RequestContext, get_request_context
 from aico.api.dependencies import get_answer_service
-from aico.api.identity import IdentityError, TrustedIdentity, get_trusted_identity
+from aico.api.errors import register_error_handlers
+from aico.api.identity import TrustedIdentity, get_trusted_identity
+from aico.api.request_protection import RequestProtectionMiddleware
 from aico.rag.answer_service import GroundedAnswerService
 
 app = FastAPI(
@@ -46,25 +66,13 @@ app = FastAPI(
         "boundary this service maintains."
     ),
 )
+
+# See the module docstring's "Middleware order matters" note - this order
+# is required, not incidental.
+app.add_middleware(RequestProtectionMiddleware)
 app.add_middleware(CorrelationMiddleware)
 
-
-@app.exception_handler(IdentityError)
-def _identity_error_handler(request: Request, exc: IdentityError) -> JSONResponse:
-    # Task 2 stopgap: 401, safe reason only - never the token, the secret,
-    # or a raw library exception (identity.py already guarantees
-    # exc.reason is safe to return). Task 4 replaces this body shape with
-    # the shared error envelope every 4xx/5xx response uses. request_id/
-    # correlation_id are already on request.state - CorrelationMiddleware
-    # wraps this whole call - so even a rejected request is traceable.
-    content = {"error_code": "trusted_identity_rejected", "message": exc.reason}
-    request_id = getattr(request.state, "request_id", None)
-    correlation_id = getattr(request.state, "correlation_id", None)
-    if request_id is not None:
-        content["request_id"] = request_id
-    if correlation_id is not None:
-        content["correlation_id"] = correlation_id
-    return JSONResponse(status_code=401, content=content)
+register_error_handlers(app)
 
 
 @app.post(

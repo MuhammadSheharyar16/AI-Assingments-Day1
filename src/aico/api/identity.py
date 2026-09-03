@@ -43,6 +43,8 @@ from typing import Mapping
 import jwt
 from fastapi import Request
 
+from aico.api.errors import ApiError
+
 # Lab-only: names the environment variable holding the HS256 verification
 # secret. Never a literal secret in source, never a default value here -
 # an unset secret means every request is rejected (fail closed), not
@@ -59,12 +61,18 @@ class TrustedIdentity:
     user_id: str
 
 
-class IdentityError(Exception):
+class IdentityError(ApiError):
     """Raised when trusted identity cannot be established: missing/expired/
     unverifiable token, or verified claims that lack tenant_id/user_id.
-    `app.py` maps this to a 401 (Task 4 folds it into the shared error
-    envelope). Its message is always safe to return to the caller - it
-    never includes the token, the secret, or a raw library exception."""
+    Subclasses `ApiError` (errors.py, Task 4) so `register_error_handlers`
+    maps it onto the shared error envelope like every other typed API
+    failure - no bespoke handler needed. Its message (`.message`, also
+    kept as `.reason` for readability at call sites) is always safe to
+    return to the caller - it never includes the token, the secret, or a
+    raw library exception."""
+
+    status_code = 401
+    error_code = "trusted_identity_rejected"
 
     def __init__(self, reason: str):
         self.reason = reason
