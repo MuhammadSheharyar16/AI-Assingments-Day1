@@ -839,7 +839,9 @@ the repo as shown; nothing here is aspirational.
 ```
 AI-Assignments-Day6/
   README.md                        this file
-  pyproject.toml                    project metadata, deps, [tool.pytest.ini_options] (pythonpath=src)
+  pyproject.toml                    project metadata, deps, [tool.pytest.ini_options] (testpaths=tests) -
+                                     `import aico` works under `uv run` because `uv sync` installs the
+                                     package itself in editable mode (hatchling), not via a pythonpath setting
   uv.lock                           uv's resolved + hashed dependency lockfile
   .python-version                   Python version uv pins the .venv to
   .gitignore
