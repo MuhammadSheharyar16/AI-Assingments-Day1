@@ -57,8 +57,19 @@ documented degraded-mode policy). None of the three require trusted
 identity or go through `RequestProtectionMiddleware`'s Content-Type/size
 checks (they are unauthenticated GET probes, same as any orchestrator's
 liveness/readiness probe).
+
+Task 7 IS wired: `configure_logging()` (observability/logging.py) sets up
+structured JSON logging once at import time. `CorrelationMiddleware`
+already emits the request-level `stage="http_request"` start/end log
+lines for every route; `/ask` additionally emits one `stage="ask_pipeline"`
+log line once the typed result is known - `outcome` is the same
+already-safe `AskStatus` value the caller receives in the body, and
+`error_category` (when present) is `AskResponse.category` - never the
+question, the answer, or any raw pipeline content.
 """
 from __future__ import annotations
+
+import time
 
 from fastapi import Depends, FastAPI, Request
 
@@ -70,7 +81,10 @@ from aico.api.errors import register_error_handlers
 from aico.api.identity import TrustedIdentity, get_trusted_identity
 from aico.api.request_cancellation import run_cancellable
 from aico.api.request_protection import RequestProtectionMiddleware
+from aico.observability.logging import configure_logging, log_event
 from aico.rag.answer_service import GroundedAnswerService
+
+configure_logging()
 
 app = FastAPI(
     title="AICO Grounded RAG API",
@@ -114,6 +128,20 @@ async def ask(
     # observable - as sanitized tenant/user identifiers, never raw claims.
     del identity
 
+    start = time.monotonic()
     result = await run_cancellable(http_request, lambda token: service.answer(request.question, token))
+    response = ask_response_from_result(result, request_id=context.request_id, correlation_id=context.correlation_id)
 
-    return ask_response_from_result(result, request_id=context.request_id, correlation_id=context.correlation_id)
+    # response.status/.category are already the public, pre-sanitized
+    # AskResponse fields (contracts.py) - never the question, the answer
+    # text, or retrieved evidence.
+    log_event(
+        request_id=context.request_id,
+        correlation_id=context.correlation_id,
+        stage="ask_pipeline",
+        outcome=response.status.value,
+        error_category=response.category,
+        latency_ms=(time.monotonic() - start) * 1000,
+    )
+
+    return response

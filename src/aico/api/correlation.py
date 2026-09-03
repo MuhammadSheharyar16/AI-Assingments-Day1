@@ -37,7 +37,16 @@ wraps the whole ASGI call). It:
 3. echoes both back as `X-Request-ID`/`X-Correlation-ID` response
    headers, in addition to `AskResponse.request_id`/`.correlation_id`
    (contracts.py) already carrying them in the body - both are
-   "documented API contract/header behavior" per the assignment.
+   "documented API contract/header behavior" per the assignment;
+4. emits one structured `stage="http_request"` log line (Task 7) on
+   entry (`outcome="start"`) and one on exit (`outcome="end"`, with
+   `latency_ms` and the response `status_code`) - the request-level half
+   of Task 7's "request start/end" requirement, for every route
+   (`/ask` and the health endpoints alike). `app.py`'s `/ask` handler
+   separately logs the RAG pipeline's own outcome
+   (`stage="ask_pipeline"`) once it has one - this middleware never sees
+   or logs the question, the answer, or any pipeline-specific detail, only
+   HTTP-level facts (method, path, status code, latency).
 
 This is a pure ASGI middleware, not a `starlette.middleware.base.
 BaseHTTPMiddleware`, deliberately: `BaseHTTPMiddleware` wraps the request
@@ -56,6 +65,7 @@ caught this.
 from __future__ import annotations
 
 import contextvars
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Optional
@@ -63,6 +73,8 @@ from typing import Optional
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from aico.observability.logging import log_event
 
 REQUEST_ID_HEADER = "X-Request-ID"
 CORRELATION_ID_HEADER = "X-Correlation-ID"
@@ -140,8 +152,22 @@ class CorrelationMiddleware:
         request_token = _request_id_var.set(request_id)
         correlation_token = _correlation_id_var.set(correlation_id)
 
+        method = scope.get("method", "")
+        path = scope.get("path", "")
+        log_event(
+            request_id=request_id,
+            correlation_id=correlation_id,
+            stage="http_request",
+            outcome="start",
+            method=method,
+            path=path,
+        )
+        start = time.monotonic()
+        status_code_seen: list[int] = []
+
         async def send_with_correlation_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
+                status_code_seen.append(message["status"])
                 # `__setitem__` (replace-if-present), not `.append()` - a
                 # handler/error-response layer downstream (errors.py's
                 # `error_response`) may already have set these from the
@@ -155,6 +181,16 @@ class CorrelationMiddleware:
         try:
             await self._app(scope, receive, send_with_correlation_headers)
         finally:
+            log_event(
+                request_id=request_id,
+                correlation_id=correlation_id,
+                stage="http_request",
+                outcome="end",
+                method=method,
+                path=path,
+                status_code=status_code_seen[0] if status_code_seen else None,
+                latency_ms=(time.monotonic() - start) * 1000,
+            )
             _request_id_var.reset(request_token)
             _correlation_id_var.reset(correlation_token)
 
