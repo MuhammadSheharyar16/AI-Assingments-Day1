@@ -73,12 +73,26 @@ gateway/retriever in `MetricsGateway`/`MetricsRetriever`
 latency are recorded without touching Day 5. `/ask` itself records the
 end-to-end request outcome metric alongside its structured log line,
 from the same already-safe `AskResponse.status`/`.category` fields.
+
+Task 9 IS wired: `configure_tracing()` (observability/telemetry.py)
+installs the OTel provider once at import time. `/ask` opens the root
+`api.ask` span around the whole pipeline call - `answer_service.py`'s own
+"policy"/"retrieval"/"model_gateway"/"validation"/"response_composition"
+spans nest under it automatically (OTel's ambient-current-span context
+propagates through `run_cancellable`'s thread-pool hop, the same way
+`aico.api.correlation`'s contextvars already do), so every span in one
+`/ask` call shares one trace_id - the "same correlation context [linking]
+the operation" the assignment requires - without `answer_service.py`
+needing to know anything about `request_id`/`correlation_id`, which are
+instead set as attributes on this root span (the one place both this
+module's HTTP-level IDs and the OTel trace they head are both available).
 """
 from __future__ import annotations
 
 import time
 
 from fastapi import Depends, FastAPI, Request
+from opentelemetry import trace
 
 from aico.api import health
 from aico.api.contracts import AskRequest, AskResponse, ask_response_from_result
@@ -90,9 +104,13 @@ from aico.api.request_cancellation import run_cancellable
 from aico.api.request_protection import RequestProtectionMiddleware
 from aico.observability.logging import configure_logging, log_event
 from aico.observability.metrics import record_request_outcome
+from aico.observability.telemetry import configure_tracing
 from aico.rag.answer_service import GroundedAnswerService
 
 configure_logging()
+configure_tracing()
+
+_tracer = trace.get_tracer(__name__)
 
 app = FastAPI(
     title="AICO Grounded RAG API",
@@ -137,8 +155,20 @@ async def ask(
     del identity
 
     start = time.monotonic()
-    result = await run_cancellable(http_request, lambda token: service.answer(request.question, token))
-    response = ask_response_from_result(result, request_id=context.request_id, correlation_id=context.correlation_id)
+    with _tracer.start_as_current_span("api.ask") as span:
+        # The one place request_id/correlation_id (Task 3, HTTP-level IDs)
+        # and the OTel trace they head both exist together - see module
+        # docstring. Never the question/answer/evidence.
+        span.set_attribute("request_id", context.request_id)
+        span.set_attribute("correlation_id", context.correlation_id)
+
+        result = await run_cancellable(http_request, lambda token: service.answer(request.question, token))
+        response = ask_response_from_result(
+            result, request_id=context.request_id, correlation_id=context.correlation_id
+        )
+        span.set_attribute("response.status", response.status.value)
+        if response.category:
+            span.set_attribute("response.category", response.category)
 
     # response.status/.category are already the public, pre-sanitized
     # AskResponse fields (contracts.py) - never the question, the answer
