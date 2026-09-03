@@ -582,3 +582,41 @@ def test_span_attributes_never_contain_raw_question_evidence_or_answer_text():
     assert _SECRET_QUESTION not in joined
     assert _SECRET_EVIDENCE not in joined
     assert _SECRET_ANSWER not in joined
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Task 12 — correlation propagation, tying logs + spans + response together
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_one_correlation_id_links_the_response_body_the_log_lines_and_every_span(caplog):
+    """The single strongest proof of "correlation propagation": one
+    request's correlation_id is identical across three independently
+    populated surfaces - the `AskResponse` body (Task 3), every
+    `stage="http_request"`/`"ask_pipeline"` structured log line (Task 7),
+    and the `api.ask` root span's attribute (Task 9) - and every other
+    span in the trace shares that same request's `trace_id`, which is
+    OpenTelemetry's own correlation mechanism."""
+    caplog.set_level(logging.INFO, logger="aico.api")
+    clear_finished_spans()
+    client = _client()
+
+    headers = {"X-Correlation-ID": "corr-propagation-proof-1"}
+    resp = client.post("/ask", json={"question": _SECRET_QUESTION}, headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["correlation_id"] == "corr-propagation-proof-1"
+
+    # Logs: every captured aico.api log line for this request carries the
+    # same correlation_id.
+    log_correlation_ids = {p["correlation_id"] for p in _log_payloads(caplog)}
+    assert log_correlation_ids == {"corr-propagation-proof-1"}
+
+    # Spans: the root span's attribute matches, and every span in the
+    # trace - including the ones deep inside answer_service.py, which
+    # never see request_id/correlation_id directly - shares its trace_id.
+    spans = get_finished_spans()
+    root = next(s for s in spans if s.name == "api.ask")
+    assert root.attributes["correlation_id"] == "corr-propagation-proof-1"
+    trace_ids = {s.context.trace_id for s in spans}
+    assert trace_ids == {root.context.trace_id}
