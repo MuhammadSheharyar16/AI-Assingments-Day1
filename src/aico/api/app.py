@@ -50,6 +50,13 @@ observed - threaded all the way down to the Model Gateway call
 (answer_service.py / prompt_builder.py), not just stopped at this
 handler.
 
+Swagger `/docs` "Authorize" button: `POST /ask` also declares
+`identity.bearer_scheme` (an `HTTPBearer` security scheme, `auto_error=False`)
+purely so the OpenAPI spec advertises a bearer-token field and `/docs` can
+attach it for "Try it out" - it is documentation-only and never itself
+verifies anything. `get_trusted_identity` (Task 2, above) remains the sole
+enforcement point; this second dependency's value is discarded unread.
+
 Task 6 IS wired: `health.router` adds `GET /health/live`, `GET /health/ready`
 and `GET /health/dependencies` - three distinct endpoints, not one that
 conflates liveness/readiness/dependency health (see health.py for the
@@ -91,7 +98,8 @@ from __future__ import annotations
 
 import time
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, Security
+from fastapi.security import HTTPAuthorizationCredentials
 from opentelemetry import trace
 
 from aico.api import health
@@ -99,7 +107,7 @@ from aico.api.contracts import AskRequest, AskResponse, ask_response_from_result
 from aico.api.correlation import CorrelationMiddleware, RequestContext, get_request_context
 from aico.api.dependencies import get_answer_service
 from aico.api.errors import register_error_handlers
-from aico.api.identity import TrustedIdentity, get_trusted_identity
+from aico.api.identity import TrustedIdentity, bearer_scheme, get_trusted_identity
 from aico.api.request_cancellation import run_cancellable
 from aico.api.request_protection import RequestProtectionMiddleware
 from aico.observability.logging import configure_logging, log_event
@@ -143,6 +151,7 @@ async def ask(
     context: RequestContext = Depends(get_request_context),
     identity: TrustedIdentity = Depends(get_trusted_identity),
     service: GroundedAnswerService = Depends(get_answer_service),
+    _bearer: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
 ) -> AskResponse:
     # `identity` is required for this call to reach here at all (an
     # untrusted caller was already rejected by the dependency above) but
@@ -153,6 +162,11 @@ async def ask(
     # logging (Task 7) and tracing (Task 9) are where `identity` becomes
     # observable - as sanitized tenant/user identifiers, never raw claims.
     del identity
+    # `_bearer` (identity.bearer_scheme) exists solely to make `/docs`
+    # render an "Authorize" button - see module docstring. It is never
+    # read; `get_trusted_identity` above already did the real
+    # verification independently of this value.
+    del _bearer
 
     start = time.monotonic()
     with _tracer.start_as_current_span("api.ask") as span:

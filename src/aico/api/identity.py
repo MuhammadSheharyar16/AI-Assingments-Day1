@@ -42,6 +42,7 @@ from typing import Mapping
 
 import jwt
 from fastapi import Request
+from fastapi.security import HTTPBearer
 
 from aico.api.errors import ApiError
 
@@ -50,6 +51,19 @@ from aico.api.errors import ApiError
 # an unset secret means every request is rejected (fail closed), not
 # silently trusted.
 AUTH_JWT_SECRET_ENV = "AICO_AUTH_JWT_SECRET"
+
+# Documentation-only: registers a bearer-token security scheme in the
+# OpenAPI spec so `/docs` renders an "Authorize" button (and "Try it out"
+# can attach the header) for routes that declare it. `auto_error=False` so
+# this scheme itself never accepts or rejects a request - it does not
+# read `AUTH_JWT_SECRET_ENV`, verify a signature, or produce a
+# `TrustedIdentity`. `get_trusted_identity`/`_decode_bearer_token` above
+# remain the sole source of truth for the actual trust boundary; a route
+# using this scheme still depends on `get_trusted_identity` separately.
+bearer_scheme = HTTPBearer(
+    auto_error=False,
+    description="Lab-only HS256 JWT (see identity.py). Verified claims must include non-empty tenant_id and user_id.",
+)
 
 
 @dataclass(frozen=True)
