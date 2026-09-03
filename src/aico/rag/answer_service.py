@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import pathlib
 from dataclasses import dataclass, field
-from typing import Protocol, Union
+from typing import Callable, Protocol, Union
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -58,7 +58,7 @@ from aico.rag.citation_validator import EvidenceChunk, validate_citations
 from aico.rag.prompt_builder import build_prompt
 from aico.retrieval.bm25 import BM25Index
 from aico.retrieval.search import load_chunks
-from aico.security.input_policy import PolicyOutcome, evaluate_policy
+from aico.security.input_policy import PolicyDecision, PolicyOutcome, evaluate_policy
 from aico.security.normalization import normalize_input
 
 DEFAULT_TOP_K = 4
@@ -75,6 +75,14 @@ class Retriever(Protocol):
     implementation directly, only this protocol."""
 
     def __call__(self, query: str) -> list[EvidenceChunk]: ...
+
+
+# Day 6 Task 10 - the input/policy component as an injectable seam,
+# mirroring `Retriever` above: anything `(normalized_text) -> PolicyDecision`
+# satisfies this - `evaluate_policy` (Day 5, unchanged) is the real one;
+# tests inject a fake to force allow/clarify/block deterministically
+# without depending on `input_policy.py`'s specific pattern rules.
+PolicyEvaluator = Callable[[str], PolicyDecision]
 
 
 class BM25Retriever:
@@ -144,12 +152,15 @@ AnswerResult = Union[GroundedAnswer, InsufficientEvidence, Clarify, Blocked, Typ
 @dataclass
 class GroundedAnswerService:
     """Construct with an already-built `ModelGateway` (Day 3 - the only
-    model-call boundary this service ever uses) and a `Retriever` (Day 2 -
+    model-call boundary this service ever uses), a `Retriever` (Day 2 -
     defaults to `BM25Retriever`, but tests inject a fake so no fixture run
-    ever needs a real index)."""
+    ever needs a real index), and a `PolicyEvaluator` (Day 5 - defaults to
+    the real `evaluate_policy`; Day 6 Task 10 makes it swappable the same
+    way gateway/retriever already are)."""
 
     gateway: ModelGateway
     retriever: Retriever = field(default_factory=BM25Retriever)
+    policy_evaluator: PolicyEvaluator = evaluate_policy
     model_alias: str | None = None
 
     def answer(self, question: str, cancellation: CancellationToken | None = None) -> AnswerResult:
@@ -166,8 +177,9 @@ class GroundedAnswerService:
 
             # 2. Policy (Task 6) - allow / clarify / block, evaluated on the
             # normalized text so an obfuscated attack is caught the same way
-            # as its plain form.
-            decision = evaluate_policy(normalized.normalized)
+            # as its plain form. `self.policy_evaluator` (Day 6 Task 10) -
+            # defaults to the real `evaluate_policy`, injectable for tests.
+            decision = self.policy_evaluator(normalized.normalized)
             span.set_attribute("policy.outcome", decision.outcome.value)
             span.set_attribute("policy.category", decision.category)
             if decision.outcome is PolicyOutcome.BLOCK:
