@@ -50,12 +50,19 @@ observed - threaded all the way down to the Model Gateway call
 (answer_service.py / prompt_builder.py), not just stopped at this
 handler.
 
-Health endpoints (Task 6) are not yet wired - lands in its own task.
+Task 6 IS wired: `health.router` adds `GET /health/live`, `GET /health/ready`
+and `GET /health/dependencies` - three distinct endpoints, not one that
+conflates liveness/readiness/dependency health (see health.py for the
+documented degraded-mode policy). None of the three require trusted
+identity or go through `RequestProtectionMiddleware`'s Content-Type/size
+checks (they are unauthenticated GET probes, same as any orchestrator's
+liveness/readiness probe).
 """
 from __future__ import annotations
 
 from fastapi import Depends, FastAPI, Request
 
+from aico.api import health
 from aico.api.contracts import AskRequest, AskResponse, ask_response_from_result
 from aico.api.correlation import CorrelationMiddleware, RequestContext, get_request_context
 from aico.api.dependencies import get_answer_service
@@ -81,6 +88,7 @@ app.add_middleware(RequestProtectionMiddleware)
 app.add_middleware(CorrelationMiddleware)
 
 register_error_handlers(app)
+app.include_router(health.router)
 
 
 @app.post(
