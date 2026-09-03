@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from aico.platform.model_gateway import ChatMessage, ChatRequest
+from aico.platform.model_gateway import CancellationToken, ChatMessage, ChatRequest
 from aico.rag.citation_validator import EvidenceChunk
 
 SYSTEM_INSTRUCTIONS = """SYSTEM INSTRUCTIONS:
@@ -60,11 +60,21 @@ class BuiltPrompt:
     user_message: ChatMessage
     evidence_message: ChatMessage
 
-    def to_chat_request(self, *, model_alias: str | None = None, max_output_tokens: int | None = None) -> ChatRequest:
+    def to_chat_request(
+        self,
+        *,
+        model_alias: str | None = None,
+        max_output_tokens: int | None = None,
+        cancellation: CancellationToken | None = None,
+    ) -> ChatRequest:
+        # `cancellation` (Day 6 Task 5) defaults to None so every existing
+        # Day 5 call site is unchanged - the Model Gateway already accepts
+        # and checks it (model_gateway.py), this just threads it through.
         return ChatRequest(
             messages=[self.system_message, self.user_message, self.evidence_message],
             model_alias=model_alias,
             max_output_tokens=max_output_tokens,
+            cancellation=cancellation,
         )
 
     def sections(self) -> dict[str, str]:

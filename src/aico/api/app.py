@@ -42,18 +42,26 @@ request_id/correlation_id are already decided by the time
 carries them (request_protection.py reads `request.state`, which
 `CorrelationMiddleware` must have already populated).
 
-Cancellation propagation (Task 5) and health endpoints (Task 6) are not
-yet wired - each lands in its own task.
+Task 5 IS wired: `/ask` runs `GroundedAnswerService.answer()` through
+`run_cancellable` (request_cancellation.py), which watches the HTTP
+request for a client disconnect while the (synchronous) pipeline call
+runs in the thread pool, and sets a `CancellationToken` the moment one is
+observed - threaded all the way down to the Model Gateway call
+(answer_service.py / prompt_builder.py), not just stopped at this
+handler.
+
+Health endpoints (Task 6) are not yet wired - lands in its own task.
 """
 from __future__ import annotations
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 
 from aico.api.contracts import AskRequest, AskResponse, ask_response_from_result
 from aico.api.correlation import CorrelationMiddleware, RequestContext, get_request_context
 from aico.api.dependencies import get_answer_service
 from aico.api.errors import register_error_handlers
 from aico.api.identity import TrustedIdentity, get_trusted_identity
+from aico.api.request_cancellation import run_cancellable
 from aico.api.request_protection import RequestProtectionMiddleware
 from aico.rag.answer_service import GroundedAnswerService
 
@@ -81,8 +89,9 @@ register_error_handlers(app)
     summary="Ask a grounded question",
     tags=["ask"],
 )
-def ask(
+async def ask(
     request: AskRequest,
+    http_request: Request,
     context: RequestContext = Depends(get_request_context),
     identity: TrustedIdentity = Depends(get_trusted_identity),
     service: GroundedAnswerService = Depends(get_answer_service),
@@ -97,6 +106,6 @@ def ask(
     # observable - as sanitized tenant/user identifiers, never raw claims.
     del identity
 
-    result = service.answer(request.question)
+    result = await run_cancellable(http_request, lambda token: service.answer(request.question, token))
 
     return ask_response_from_result(result, request_id=context.request_id, correlation_id=context.correlation_id)

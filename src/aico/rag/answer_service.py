@@ -32,7 +32,7 @@ from aico.contracts.errors import ValidationFailure
 from aico.contracts.models import AnswerStatus, CitedAnswer
 from aico.contracts.validator import parse_and_validate
 from aico.platform.errors import ModelGatewayError
-from aico.platform.model_gateway import ModelGateway
+from aico.platform.model_gateway import CancellationToken, ModelGateway
 from aico.rag.citation_validator import EvidenceChunk, validate_citations
 from aico.rag.prompt_builder import build_prompt
 from aico.retrieval.bm25 import BM25Index
@@ -129,7 +129,14 @@ class GroundedAnswerService:
     retriever: Retriever = field(default_factory=BM25Retriever)
     model_alias: str | None = None
 
-    def answer(self, question: str) -> AnswerResult:
+    def answer(self, question: str, cancellation: CancellationToken | None = None) -> AnswerResult:
+        # `cancellation` (Day 6 Task 5) is optional and defaults to None so
+        # every existing Day 5 call site (positional `answer(question)`)
+        # is unchanged. When given, it is threaded through to the Model
+        # Gateway call below (step 5) - the one place in this pipeline
+        # that does expensive, cancellable work - so an HTTP client
+        # disconnect (app.py) reaches the Model Gateway path, not just the
+        # HTTP handler (working rule).
         # 1. Normalize (Task 5) - deterministic, bounded, runs before policy.
         normalized = normalize_input(question)
 
@@ -150,7 +157,9 @@ class GroundedAnswerService:
 
         # 5. Model Gateway (Day 3) - the only model-call boundary.
         try:
-            chat_result = self.gateway.chat(prompt.to_chat_request(model_alias=self.model_alias))
+            chat_result = self.gateway.chat(
+                prompt.to_chat_request(model_alias=self.model_alias, cancellation=cancellation)
+            )
         except ModelGatewayError as exc:
             return TypedFailure(question=question, stage="gateway", category=exc.category, message=str(exc))
 

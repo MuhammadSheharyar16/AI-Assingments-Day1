@@ -23,10 +23,11 @@ every request (success or error path - including the 401 an identity
 rejection produces and the 422 a contract violation produces, since it
 wraps the whole ASGI call). It:
 
-1. reads/generates both IDs and stores them on `request.state`
-   (`get_request_context` - a FastAPI dependency handlers use) so the
-   value a handler sees and the value already decided are always the same
-   value, never independently recomputed;
+1. reads/generates both IDs and stores them on `scope["state"]`
+   (`get_request_context` - a FastAPI dependency handlers use - reads
+   this back via `request.state`) so the value a handler sees and the
+   value already decided are always the same value, never independently
+   recomputed;
 2. also publishes them on module-level `contextvars`, so Tasks 7-9
    (structured logs, metrics, spans) can read the *current* request's
    correlation id from deep inside `answer_service`/`model_gateway`
@@ -37,6 +38,20 @@ wraps the whole ASGI call). It:
    headers, in addition to `AskResponse.request_id`/`.correlation_id`
    (contracts.py) already carrying them in the body - both are
    "documented API contract/header behavior" per the assignment.
+
+This is a pure ASGI middleware, not a `starlette.middleware.base.
+BaseHTTPMiddleware`, deliberately: `BaseHTTPMiddleware` wraps the request
+it forwards downstream in its own `receive_or_disconnect`/`_CachedRequest.
+wrapped_receive` indirection, which - combined with `Request.
+is_disconnected()` deliberately running inside an already-cancelled
+`anyio.CancelScope` so it never blocks - means a real client disconnect
+can never actually be observed by code running *inside* the wrapped app
+(a known Starlette `BaseHTTPMiddleware` limitation, not specific to this
+codebase). Task 5's cancellation propagation (request_cancellation.py)
+depends on `Request.is_disconnected()` working correctly from inside the
+route handler, so this middleware must not be a `BaseHTTPMiddleware` -
+see `tests/test_day06_cancellation.py`'s HTTP-level test, which is what
+caught this.
 """
 from __future__ import annotations
 
@@ -45,9 +60,9 @@ import uuid
 from dataclasses import dataclass
 from typing import Optional
 
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 REQUEST_ID_HEADER = "X-Request-ID"
 CORRELATION_ID_HEADER = "X-Correlation-ID"
@@ -94,30 +109,54 @@ def _clean_id(value: Optional[str]) -> Optional[str]:
     return value or None
 
 
-class CorrelationMiddleware(BaseHTTPMiddleware):
+class CorrelationMiddleware:
     """Decides request_id/correlation_id once per request (generating
     whichever the caller did not supply) and makes that decision
     available to the rest of the request - `request.state`, contextvars,
     and the response headers - consistently."""
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        # Header-only access - never touches the body, so `receive` is
+        # untouched and passed straight through to the inner app below.
+        request = Request(scope, receive=receive)
         request_id = _clean_id(request.headers.get(REQUEST_ID_HEADER)) or new_id()
         correlation_id = _clean_id(request.headers.get(CORRELATION_ID_HEADER)) or new_id()
 
-        request.state.request_id = request_id
-        request.state.correlation_id = correlation_id
+        # `scope["state"]` is the same dict every `Request(scope, ...)`
+        # built later (routing, dependencies, RequestProtectionMiddleware)
+        # reads via `.state` - see starlette.requests.Request.state - so a
+        # plain dict write here is visible everywhere downstream.
+        scope.setdefault("state", {})
+        scope["state"]["request_id"] = request_id
+        scope["state"]["correlation_id"] = correlation_id
 
         request_token = _request_id_var.set(request_id)
         correlation_token = _correlation_id_var.set(correlation_id)
+
+        async def send_with_correlation_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                # `__setitem__` (replace-if-present), not `.append()` - a
+                # handler/error-response layer downstream (errors.py's
+                # `error_response`) may already have set these from the
+                # same `request.state` values; appending would duplicate
+                # the header instead of agreeing with it.
+                headers = MutableHeaders(scope=message)
+                headers[REQUEST_ID_HEADER] = request_id
+                headers[CORRELATION_ID_HEADER] = correlation_id
+            await send(message)
+
         try:
-            response = await call_next(request)
+            await self._app(scope, receive, send_with_correlation_headers)
         finally:
             _request_id_var.reset(request_token)
             _correlation_id_var.reset(correlation_token)
-
-        response.headers[REQUEST_ID_HEADER] = request_id
-        response.headers[CORRELATION_ID_HEADER] = correlation_id
-        return response
 
 
 def get_request_context(request: Request) -> RequestContext:
