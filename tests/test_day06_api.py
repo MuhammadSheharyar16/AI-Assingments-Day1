@@ -14,6 +14,11 @@ No network call, ever: `GroundedAnswerService` is built with a `FakeGateway`
 retriever, injected through `app.dependency_overrides` (Task 10's seam),
 so these tests never touch `config/model-routing.yaml`, Azure identity, or
 the real `data/index` on disk.
+
+`get_trusted_identity` (Task 2) is a required dependency on `/ask` too, so
+every client built here also overrides it with a fixed, valid
+`TrustedIdentity` - identity *behavior itself* (accept/reject) is
+Task 2's own test file, `test_day06_identity.py`.
 """
 from __future__ import annotations
 
@@ -21,9 +26,12 @@ from fastapi.testclient import TestClient
 
 from aico.api.app import app
 from aico.api.dependencies import get_answer_service
+from aico.api.identity import TrustedIdentity, get_trusted_identity
 from aico.platform.model_gateway import CallMetadata, ChatRequest, ChatResult
 from aico.rag.answer_service import GroundedAnswerService
 from aico.rag.citation_validator import EvidenceChunk
+
+_VALID_IDENTITY = TrustedIdentity(tenant_id="TENANT-SYN-001", user_id="USER-SYN-001")
 
 
 class FakeGateway:
@@ -73,6 +81,7 @@ def _build_service(respond=_ANSWERED_JSON) -> GroundedAnswerService:
 
 def _client_with_service(service: GroundedAnswerService) -> TestClient:
     app.dependency_overrides[get_answer_service] = lambda: service
+    app.dependency_overrides[get_trusted_identity] = lambda: _VALID_IDENTITY
     return TestClient(app)
 
 

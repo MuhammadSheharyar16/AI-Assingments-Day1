@@ -1,0 +1,45 @@
+{
+  "version": "1.0",
+  "note": "Exact status codes may follow the developer's documented API policy, but invalid transport/input cases must be 4xx and must not reach expensive RAG/model work.",
+  "cases": [
+    {
+      "id": "API-001",
+      "name": "valid_ask",
+      "content_type": "application/json",
+      "payload": {"question": "What payment terms are stated in the synthetic supplier policy?"},
+      "payload_size": "below_configured_limit",
+      "expected_class": "success"
+    },
+    {
+      "id": "API-002",
+      "name": "unsupported_content_type",
+      "content_type": "text/plain",
+      "payload": "What are the payment terms?",
+      "expected_class": "4xx",
+      "must_not_reach_expensive_pipeline": true
+    },
+    {
+      "id": "API-003",
+      "name": "oversize_payload",
+      "content_type": "application/json",
+      "payload_size": "above_configured_limit",
+      "expected_class": "4xx",
+      "must_not_reach_expensive_pipeline": true
+    },
+    {
+      "id": "API-004",
+      "name": "invalid_request",
+      "content_type": "application/json",
+      "payload": {},
+      "expected_class": "4xx"
+    },
+    {
+      "id": "API-005",
+      "name": "generated_correlation_context",
+      "content_type": "application/json",
+      "payload": {"question": "Synthetic test question"},
+      "incoming_correlation_id": null,
+      "expected": "server_generates_correlation_id"
+    }
+  ]
+}

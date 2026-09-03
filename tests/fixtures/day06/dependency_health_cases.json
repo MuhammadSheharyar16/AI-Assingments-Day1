@@ -1,0 +1,30 @@
+{
+  "version": "1.0",
+  "note": "Readiness during a dependency outage is policy-dependent. The implementation must match its documented degraded-mode policy. Liveness must not fail solely because a remote dependency is unavailable.",
+  "cases": [
+    {
+      "id": "HLT-001",
+      "name": "all_dependencies_healthy",
+      "dependencies": {"retrieval": "healthy", "model_gateway": "healthy"},
+      "expected_liveness": "healthy",
+      "expected_dependency_health": "healthy",
+      "expected_readiness": "ready"
+    },
+    {
+      "id": "HLT-002",
+      "name": "model_dependency_unavailable",
+      "dependencies": {"retrieval": "healthy", "model_gateway": "unavailable"},
+      "expected_liveness": "healthy",
+      "expected_dependency_health": "degraded_or_unhealthy",
+      "expected_readiness": "must_match_documented_policy"
+    },
+    {
+      "id": "HLT-003",
+      "name": "retrieval_dependency_unavailable",
+      "dependencies": {"retrieval": "unavailable", "model_gateway": "healthy"},
+      "expected_liveness": "healthy",
+      "expected_dependency_health": "degraded_or_unhealthy",
+      "expected_readiness": "must_match_documented_policy"
+    }
+  ]
+}

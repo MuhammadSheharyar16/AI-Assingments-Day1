@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "note": "Synthetic trusted-principal fixtures for tests. They are not request-body identity fields.",
+  "cases": [
+    {
+      "id": "ID-001",
+      "name": "valid_trusted_identity",
+      "trusted_claims": {"tenant_id": "TENANT-SYN-001", "user_id": "USER-SYN-001"},
+      "expected": "allow_request_to_continue"
+    },
+    {
+      "id": "ID-002",
+      "name": "missing_tenant",
+      "trusted_claims": {"user_id": "USER-SYN-001"},
+      "expected": "reject"
+    },
+    {
+      "id": "ID-003",
+      "name": "missing_user",
+      "trusted_claims": {"tenant_id": "TENANT-SYN-001"},
+      "expected": "reject"
+    },
+    {
+      "id": "ID-004",
+      "name": "empty_identity",
+      "trusted_claims": {},
+      "expected": "reject"
+    },
+    {
+      "id": "ID-005",
+      "name": "body_identity_cannot_override",
+      "trusted_claims": {"tenant_id": "TENANT-SYN-001", "user_id": "USER-SYN-001"},
+      "request_body_extra_identity": {"tenant_id": "TENANT-ATTACK", "user_id": "USER-ATTACK"},
+      "expected": "trusted_claims_remain_authoritative"
+    }
+  ]
+}
