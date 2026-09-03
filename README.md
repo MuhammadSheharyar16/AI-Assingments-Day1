@@ -1,4 +1,4 @@
-# AICO — Retrieval Engineering (Day 1: Lexical Baseline · Day 2: Embeddings & Hybrid)
+# AICO — Retrieval Engineering (Day 1: Lexical Baseline · Day 2: Embeddings & Hybrid · Day 3: Model Gateway · Day 4: Structured Contracts · Day 5: Grounded Answering · Day 6: API Surface & Observability)
 
 Day 1 is a from-scratch chunker and BM25 lexical search baseline. Day 2 adds
 semantic retrieval on top of it: a real embedding provider behind one
@@ -6,7 +6,10 @@ interface, a persistent content-hash-keyed vector cache, cosine similarity
 search, and a hybrid mode that fuses BM25 and vector rankings with
 reciprocal-rank fusion — measured against the same corpus and queries so the
 two days are directly comparable. No vector database, no retrieval
-framework, no LLM.
+framework, no LLM. Day 6 exposes the Day 5 grounded RAG pipeline as a typed
+FastAPI service — `POST /ask`, trusted identity, request protection,
+cancellation, health endpoints, structured logs/metrics/OpenTelemetry
+tracing — see "Day 6 — API surface and observability" below.
 
 All data in `data/` is synthetic. No production, MOD, customer, personal or
 classified data is used.
@@ -82,13 +85,28 @@ Day 3's Model Gateway) need two things — neither is a secret in a file:
 transport/credential injected directly into the gateway/adapter) instead
 and need neither of the above.
 
+**Day 6's `POST /ask` API needs one more thing**, distinct from the above:
+trusted-identity verification (`src/aico/api/identity.py`) needs an HS256
+signing secret, named by (never hardcoded as) an environment variable:
+
+```
+AICO_AUTH_JWT_SECRET=<any local signing secret>   # lab-only stand-in for a real identity provider - see identity.py
+```
+
+Unset, every `/ask` call is rejected 401 (fails closed, not open — see
+"Day 6" below). Day 6 tests never need this or a real Foundry
+endpoint/credential — every test overrides the trusted-identity and
+gateway/retriever dependencies with fakes (Task 10, dependency injection).
+
 ## Run the tests
 
 ```
 uv run pytest -q
 ```
 
-274 tests pass, across twenty-one files. Every test is deterministic and
+490 tests pass, across thirty-five files (416 from Days 1-5, unchanged, plus
+74 new Day 6 tests across eight `test_day06_*.py` files — see "Day 6" below).
+Every test is deterministic and
 offline — none makes a real network call; Day 2's tests use
 `FakeEmbeddingProvider` exclusively, Day 3's inject a fake
 transport/credential directly into the gateway/adapter (and, for retry
@@ -226,6 +244,49 @@ transport for the one bounded repair call it ever makes.
   four breaking-change examples documented in
   `docs/adr/ADR-004-day4-contract-versioning.md` each proven to fail
   validation
+- `tests/test_day06_api.py` (5) — Task 1: OpenAPI documents `POST /ask`
+  with its request/response models, a successful call returns the typed
+  `AskResponse`, and the public contract is proven to be a real mapping
+  from `AnswerResult`, not the internal dataclass reflected through
+- `tests/test_day06_identity.py` (18) — Task 2: every
+  `identity_claim_cases.json` fixture driven through the trusted-identity
+  decision function, plus route-level proof that a rejecting identity
+  dependency stops the request before the RAG pipeline runs and that a
+  caller-supplied body identity can never override trusted claims
+- `tests/test_day06_correlation.py` (7) — Task 3: missing request/
+  correlation IDs are generated, a caller-supplied ID is echoed not
+  replaced, and the same correlation ID set by the middleware is
+  reachable from deep inside the pipeline via a contextvar (proving
+  propagation, not just generation)
+- `tests/test_day06_errors.py` (8) — Task 4: unsupported Content-Type and
+  an oversize payload are both rejected 4xx **before the fake gateway is
+  ever called** (call-count asserted), and every failure source
+  (content-type, size, identity, body validation, an unhandled exception)
+  uses the identical safe `ErrorResponse` envelope
+- `tests/test_day06_cancellation.py` (4) — Task 5: a fake slow gateway
+  that polls its cancellation token proves cancellation reaches
+  mid-flight work (never a real model call), plus an HTTP-level test
+  driving the app over a raw ASGI `scope`/`receive`/`send` to prove a
+  real client disconnect propagates all the way to that same token
+- `tests/test_day06_health.py` (9) — Task 6: liveness never depends on
+  dependency state (even when both checks raise), all three
+  `dependency_health_cases.json` fixtures driven through all three
+  endpoints, and the real default health checks run cleanly against this
+  repo's own `data/index`/`config/model-routing.yaml`
+- `tests/test_day06_observability.py` (18) — Tasks 7-9 + the Task 12
+  correlation cross-check: structured JSON log lines carry required
+  operational fields and never raw question/evidence/answer/auth-header
+  content; gateway/retrieval metrics are recorded from already-sanitized
+  `CallMetadata`; a successful `/ask` produces one OpenTelemetry trace
+  linking every named stage under one root span; and one correlation ID
+  is proven identical across the response body, every log line, and
+  every span in the trace
+- `tests/test_day06_dependency_injection.py` (5) — Task 10: each of
+  answer-service/gateway/retriever/policy-evaluator/dependency-health is
+  independently replaceable with a deterministic fake - the
+  gateway/retriever/policy tests deliberately do NOT override the whole
+  answer service, proving the seam is load-bearing in the real FastAPI
+  dependency graph
 
 ## Day 1 — Chunking and lexical retrieval
 
@@ -596,6 +657,115 @@ Day 4 test and script runs against — see `data/day04_pack/README.md`.
 backward-compatibility rule and four breaking-change examples, each
 proven by an executable test in `tests/test_day04_compatibility.py`.
 
+## Day 6 — API surface and observability
+
+Exposes the Day 5 grounded RAG pipeline (`GroundedAnswerService`,
+unmodified in its logic) as a typed FastAPI service
+(`src/aico/api/app.py`) that another application can call safely and
+operate under production-like conditions — trusted identity, request
+protection, cancellation propagation, health endpoints, structured
+telemetry, dependency injection.
+
+### Run the API
+
+```
+uv run uvicorn aico.api.app:app --reload
+```
+
+Needs `AICO_AUTH_JWT_SECRET` (Setup, above) to accept any request at all.
+`GET /docs` serves the interactive OpenAPI UI once running. A real
+`/ask` call that reaches the Model Gateway also needs `config/model-routing.yaml`
++ Azure identity, exactly as Day 3 — see Setup.
+
+### Endpoints
+
+- **`POST /ask`** — the grounded-answer endpoint. Request/response
+  contracts (`src/aico/api/contracts.py`) are deliberately separate from
+  `answer_service.py`'s internal `AnswerResult` union — `AskResponse`'s
+  `status`/`category`/`message` are a mapped, stable public shape, never
+  the internal dataclass reflected through.
+- **`GET /health/live`** — always `alive`; calls no dependency check, so
+  a Model Gateway/retrieval outage can never fail it.
+- **`GET /health/ready`** — **documented degraded-mode policy**: ready
+  (200) only when *every* monitored dependency (retrieval index, Model
+  Gateway configuration) is healthy; otherwise `not_ready` (503), so this
+  instance is removed from traffic until dependencies recover. The
+  policy string itself is echoed in the response body
+  (`src/aico/api/health.py`'s `READINESS_POLICY`) and enforced/tested in
+  `tests/test_day06_health.py`.
+- **`GET /health/dependencies`** — separate, always-200 detail per
+  dependency (`retrieval`, `model_gateway`) — status + a safe, pre-written
+  reason, never a credential, endpoint URL, or raw exception.
+
+### Trusted identity, request protection, cancellation
+
+- **Identity** (`src/aico/api/identity.py`): tenant/user context comes
+  only from a verified `Authorization: Bearer` JWT (HS256, the
+  `AICO_AUTH_JWT_SECRET` env var — a lab stand-in; the trust boundary,
+  not this specific mechanism, is the Day 6 requirement). A body-supplied
+  `tenant_id`/`user_id` can never override it — `AskRequest` forbids
+  unknown fields outright, so the attempt itself is a 422, not something
+  reconciled at runtime.
+- **Content-Type / size** (`src/aico/api/request_protection.py`): a pure
+  ASGI middleware rejects an unsupported Content-Type or a body over the
+  documented 32 KiB ceiling (`MAX_REQUEST_BODY_BYTES`) before routing or
+  `GroundedAnswerService` ever run.
+- **Errors** (`src/aico/api/errors.py`): one shared `ErrorResponse`
+  envelope (`error_code`/`message`/`request_id`/`correlation_id`) for
+  every 4xx/5xx source — identity rejection, content-type/size,
+  `AskRequest` validation, an unexpected exception — never a stack trace
+  or raw provider exception.
+- **Cancellation** (`src/aico/api/request_cancellation.py`): a client
+  disconnect is watched for while the (synchronous) pipeline call runs in
+  the thread pool, and sets a `CancellationToken` threaded all the way to
+  the Model Gateway call — proven with a fake slow gateway, never a real
+  model call.
+
+### Observability (`src/aico/observability/`)
+
+- **Structured logs** (`logging.py`): one JSON line per event
+  (`request_id`, `correlation_id`, `stage`, `outcome`, `latency_ms`,
+  `error_category` where applicable). Never the raw question, retrieved
+  evidence, model completion, or an `Authorization` value.
+- **Metrics** (`metrics.py`): OpenTelemetry Metrics API, in-memory
+  reader. Request/retrieval/gateway latency, token usage, retry count,
+  request outcome; a retrieval cache hit/miss metric exists and is
+  directly tested, though not wired into `BM25Retriever` (Day 5's
+  default), which has no cache concept.
+- **Tracing** (`telemetry.py`): OpenTelemetry spans, in-memory exporter.
+  One successful `/ask` produces one trace linking `api.ask` (the HTTP
+  layer) to `policy` / `retrieval` / `model_gateway` / `validation` /
+  `response_composition` (`answer_service.py`) under one `trace_id` — the
+  correlation context the assignment requires. A stage that never runs
+  (e.g. a policy block) produces no span for it.
+- **Sanitized trace artifact**: `artifacts/day06/trace_summary.md`,
+  regenerated by `scripts/day06_generate_trace_artifact.py`, which
+  asserts (not just eyeballs) that a deliberately distinctive fake
+  question/evidence/answer/auth-header never appear in the rendered
+  document before writing it.
+
+### Dependency injection
+
+`src/aico/api/dependencies.py` provides five independently-overridable
+seams — `get_answer_service`, `get_gateway`, `get_retriever`,
+`get_policy_evaluator`, and the two dependency-health checks.
+`get_gateway`/`get_retriever`/`get_policy_evaluator` are wired as
+`Depends(...)` parameters of `get_answer_service` itself, so a test can
+override *one* of them (e.g. force a policy block) and still exercise the
+real assembly logic for everything else — see
+`tests/test_day06_dependency_injection.py`.
+
+### Supplied resource pack and fixtures
+
+`data/day06_pack/` (`README.md`, `uv_workflow.md`,
+`api_contract_guidance.md`, `telemetry_requirements.md`,
+`trace_summary_template.md`) is the fixed, unedited input Day 6 was built
+against. Its synthetic validation fixtures (`api_cases.json`,
+`identity_claim_cases.json`, `dependency_health_cases.json`) live under
+`tests/fixtures/day06/` — the same "docs stay in the pack, fixtures move
+to `tests/fixtures/`" convention Day 5's `attack_fixtures.json` already
+established.
+
 ## Key design decisions
 
 **Day 1**
@@ -663,11 +833,11 @@ proven by an executable test in `tests/test_day04_compatibility.py`.
 
 ## Folder structure
 
-Verified against `git ls-files` on 2026-09-02 — every path below exists in
+Verified against `git ls-files` on 2026-09-03 — every path below exists in
 the repo as shown; nothing here is aspirational.
 
 ```
-AI-Assignments-Day5/
+AI-Assignments-Day6/
   README.md                        this file
   pyproject.toml                    project metadata, deps, [tool.pytest.ini_options] (pythonpath=src)
   uv.lock                           uv's resolved + hashed dependency lockfile
@@ -690,7 +860,25 @@ AI-Assignments-Day5/
                                           and insufficient_evidence.md from the real answer_service pipeline
     day05_generate_attack_report.py      Day 5 Task 8 — regenerates artifacts/day05/attack_results.md
                                           from the real normalization -> input_policy -> answer_service pipeline
+    day06_generate_trace_artifact.py     Day 6 Task 11 — regenerates artifacts/day06/trace_summary.md from
+                                          one real /ask call's spans + metrics (fake gateway, no network call)
   src/aico/
+    api/                             Day 6 — the typed FastAPI service (Tasks 1-6, 10)
+      app.py                         Task 1 — FastAPI app, POST /ask, middleware/router wiring
+      contracts.py                   Task 1 — public AskRequest/AskResponse, separate from AnswerResult
+      identity.py                    Task 2 — trusted-identity dependency (verified JWT, fails closed)
+      correlation.py                 Task 3 — request/correlation ID middleware + contextvars
+      errors.py                      Task 4 — shared ErrorResponse envelope + exception handlers
+      request_protection.py          Task 4 — Content-Type/size-limit ASGI middleware
+      request_cancellation.py        Task 5 — client-disconnect-to-CancellationToken plumbing
+      health.py                      Task 6 — liveness/readiness/dependency-health endpoints + policy
+      instrumentation.py             Task 8 — MetricsGateway/MetricsRetriever wrappers
+      dependencies.py                Task 10 — every DI provider (answer service, gateway, retriever,
+                                      policy evaluator, both dependency-health checks)
+    observability/                   Day 6 — telemetry configuration (Tasks 7-9)
+      logging.py                     Task 7 — structured JSON log_event() + stdout handler setup
+      metrics.py                     Task 8 — OpenTelemetry Metrics API, in-memory reader
+      telemetry.py                   Task 9 — OpenTelemetry TracerProvider, in-memory exporter
     platform/
       model_gateway.py              Day 3 — typed chat/embed boundary (ModelGateway)
       config.py                     Day 3 — validated config/model-routing.yaml loading
@@ -706,6 +894,8 @@ AI-Assignments-Day5/
       __init__.py
       answer_service.py             Day 5 Task 1 — GroundedAnswerService: normalize -> policy -> retrieve
                                      -> prompt -> gateway -> Day 4 validation -> citation validation
+                                     (Day 6 Tasks 5/9/10 add cancellation, OTel spans per stage, and an
+                                     injectable policy_evaluator - additive only, logic unchanged)
       prompt_builder.py             Day 5 Task 2 — explicit SYSTEM / USER / EVIDENCE message separation;
                                      evidence is always labelled untrusted data, never merged into system
       citation_validator.py         Day 5 Task 3 — cited_ids ⊆ retrieved_context_ids, fails closed
@@ -743,6 +933,13 @@ AI-Assignments-Day5/
       citation_cases.json           supplied citation membership cases (Task 3)
       answer_cases.json             supplied supported / insufficient-evidence cases (Task 4, 9)
       expected_policy_outcomes.md   allow/clarify/block outcome per attack category (Task 6)
+    day06_pack/                     Day 6 — supplied resource pack (docs only - fixtures moved to
+                                     tests/fixtures/day06/, same convention as Day 5's attack_fixtures.json)
+      README.md
+      uv_workflow.md
+      api_contract_guidance.md
+      telemetry_requirements.md
+      trace_summary_template.md
     index/                         build output (gitignored) - python -m aico.retrieval.ingest
     vectors/                       build output (gitignored) - python -m aico.retrieval.embed
   artifacts/
@@ -762,6 +959,9 @@ AI-Assignments-Day5/
       supported_answer.md           Task 9 — question, retrieved IDs, typed answer, citations, validation result
       insufficient_evidence.md      Task 9 — question, retrieved IDs, insufficient-evidence result, no invented fact/citation
       attack_results.md             Task 8 — fixture ID / category / expected / actual / pass-fail per attack case
+    day06/                          Day 6 Task 11 — auto-generated by day06_generate_trace_artifact.py
+      trace_summary.md              request/correlation IDs, all 6 trace stages, latency/token/retry,
+                                     programmatically-verified redaction check (not a hand-ticked box)
   tests/
     __init__.py
     fixtures/
@@ -772,6 +972,10 @@ AI-Assignments-Day5/
         attack_fixtures.json              the fixed >=8-case attack corpus (Task 8) — canonical copy, read
                                            directly by the Day 5 policy/attack tests and by
                                            scripts/day05_generate_attack_report.py
+      day06/
+        api_cases.json                    synthetic Content-Type/size/validation/correlation cases
+        identity_claim_cases.json         synthetic trusted-principal claims cases (allow/reject)
+        dependency_health_cases.json      synthetic dependency-outage combinations
     test_chunker.py                 (11)
     test_bm25.py                    (6)
     test_ingest.py                  (4)
@@ -799,12 +1003,20 @@ AI-Assignments-Day5/
     test_day05_normalization.py     Day 5 Task 5 — bounded obfuscation normalization, benign text untouched (12)
     test_day05_input_policy.py      Day 5 Task 6 — allow/clarify/block over all 9 supplied fixtures, determinism (18)
     test_day05_poisoned_documents.py       Day 5 Task 7 — malicious retrieved text cannot override system behavior (12)
+    test_day06_api.py               Day 6 Task 1 — OpenAPI, typed /ask success, API/domain separation (5)
+    test_day06_identity.py          Day 6 Task 2 — trusted identity, all identity_claim_cases.json fixtures (18)
+    test_day06_correlation.py       Day 6 Task 3 — ID generation, header echo, contextvar propagation (7)
+    test_day06_errors.py            Day 6 Task 4 — Content-Type/size rejection, shared error envelope (8)
+    test_day06_cancellation.py      Day 6 Task 5 — deterministic mid-flight cancellation + HTTP-level proof (4)
+    test_day06_health.py            Day 6 Task 6 — liveness/readiness/dependency-health, all 3 fixtures (9)
+    test_day06_observability.py     Day 6 Tasks 7-9 + 12 — structured logs, metrics, tracing, redaction (18)
+    test_day06_dependency_injection.py     Day 6 Task 10 — every DI seam independently replaceable (5)
 ```
 
-416 tests pass in total (`uv run pytest -q`, verified 2026-09-02) — 86 of
-them are new Day 5 tests (`test_day05_*.py`); every Day 1-4 test listed
-above still passes unchanged, satisfying the working-rule regression
-requirement.
+490 tests pass in total (`uv run pytest -q`, verified 2026-09-03) — 74 of
+them are new Day 6 tests (`test_day06_*.py`); every Day 1-5 test listed
+above still passes unchanged (416 tests), satisfying the working-rule
+regression requirement.
 
 Note: the task brief's "Required structure" names `requirements.txt`; this
 repo uses `pyproject.toml` + `uv.lock` (via `uv`) instead, which is the
@@ -812,3 +1024,13 @@ documented dependency-management choice from Day 1 onward — see Setup
 above. Everything else in the brief's required tree (`src/aico/rag/`,
 `src/aico/security/`, `tests/fixtures/day05/attacks/`, the five
 `test_day05_*.py` files, and `artifacts/day05/*.md`) matches exactly.
+
+Day 6's own required tree (`src/aico/api/`, `src/aico/observability/`,
+`test_day06_api.py` / `test_day06_identity.py` / `test_day06_cancellation.py`
+/ `test_day06_health.py` / `test_day06_observability.py`, and
+`artifacts/day06/trace_summary.md`) matches exactly too — three extra test
+files (`test_day06_correlation.py`, `test_day06_errors.py`,
+`test_day06_dependency_injection.py`) split Task 3/4/10 coverage out of the
+minimum set, which the brief's "equivalent file splitting is acceptable
+when responsibilities remain clear and independently testable" explicitly
+allows.
