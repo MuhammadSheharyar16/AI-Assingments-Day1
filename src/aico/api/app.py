@@ -11,28 +11,28 @@ reimplements retrieval/generation itself (working rule) - it only:
     3. maps the typed `AnswerResult` onto the public `AskResponse`
        (contracts.py's `ask_response_from_result`)
 
-Request/correlation ID generation here is a Task 1 placeholder (every
-call gets a fresh server-generated UUID) - Task 3 replaces this with
-header-aware logic (accept a caller-supplied ID, generate one only when
-absent) and threads the correlation ID through logs/spans. Content-Type/
-size limits and the shared error envelope (Task 4), cancellation
-propagation (Task 5) and health endpoints (Task 6) are not yet wired -
-each lands in its own task rather than being front-loaded here.
-
 Task 2 IS wired: `get_trusted_identity` is a required dependency on
 `POST /ask`, so an untrusted caller never reaches `GroundedAnswerService`
 (see identity.py). The `IdentityError` exception handler below is a Task 2
 stopgap plain-401 response - Task 4 folds it into the shared error
 envelope every other 4xx/5xx uses.
+
+Task 3 IS wired: `CorrelationMiddleware` (correlation.py) decides
+request_id/correlation_id for every request - accepting a caller-supplied
+`X-Request-ID`/`X-Correlation-ID`, generating whichever is absent - and
+echoes both back as response headers on every response (success or
+error), in addition to `AskResponse.request_id`/`.correlation_id`
+already carrying them in the body. Content-Type/size limits and the
+shared error envelope (Task 4), cancellation propagation (Task 5) and
+health endpoints (Task 6) are not yet wired - each lands in its own task.
 """
 from __future__ import annotations
-
-import uuid
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from aico.api.contracts import AskRequest, AskResponse, ask_response_from_result
+from aico.api.correlation import CorrelationMiddleware, RequestContext, get_request_context
 from aico.api.dependencies import get_answer_service
 from aico.api.identity import IdentityError, TrustedIdentity, get_trusted_identity
 from aico.rag.answer_service import GroundedAnswerService
@@ -46,15 +46,25 @@ app = FastAPI(
         "boundary this service maintains."
     ),
 )
+app.add_middleware(CorrelationMiddleware)
 
 
 @app.exception_handler(IdentityError)
-def _identity_error_handler(_request: Request, exc: IdentityError) -> JSONResponse:
+def _identity_error_handler(request: Request, exc: IdentityError) -> JSONResponse:
     # Task 2 stopgap: 401, safe reason only - never the token, the secret,
     # or a raw library exception (identity.py already guarantees
     # exc.reason is safe to return). Task 4 replaces this body shape with
-    # the shared error envelope every 4xx/5xx response uses.
-    return JSONResponse(status_code=401, content={"error_code": "trusted_identity_rejected", "message": exc.reason})
+    # the shared error envelope every 4xx/5xx response uses. request_id/
+    # correlation_id are already on request.state - CorrelationMiddleware
+    # wraps this whole call - so even a rejected request is traceable.
+    content = {"error_code": "trusted_identity_rejected", "message": exc.reason}
+    request_id = getattr(request.state, "request_id", None)
+    correlation_id = getattr(request.state, "correlation_id", None)
+    if request_id is not None:
+        content["request_id"] = request_id
+    if correlation_id is not None:
+        content["correlation_id"] = correlation_id
+    return JSONResponse(status_code=401, content=content)
 
 
 @app.post(
@@ -65,12 +75,10 @@ def _identity_error_handler(_request: Request, exc: IdentityError) -> JSONRespon
 )
 def ask(
     request: AskRequest,
+    context: RequestContext = Depends(get_request_context),
     identity: TrustedIdentity = Depends(get_trusted_identity),
     service: GroundedAnswerService = Depends(get_answer_service),
 ) -> AskResponse:
-    request_id = str(uuid.uuid4())
-    correlation_id = str(uuid.uuid4())
-
     # `identity` is required for this call to reach here at all (an
     # untrusted caller was already rejected by the dependency above) but
     # is not yet threaded into the pipeline/response - Day 5's
@@ -83,4 +91,4 @@ def ask(
 
     result = service.answer(request.question)
 
-    return ask_response_from_result(result, request_id=request_id, correlation_id=correlation_id)
+    return ask_response_from_result(result, request_id=context.request_id, correlation_id=context.correlation_id)
