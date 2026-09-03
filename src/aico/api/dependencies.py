@@ -17,14 +17,20 @@ so that importing this module, building the FastAPI app, or generating
 OpenAPI never triggers config loading: `ModelGateway.from_config()` only
 runs the first time `get_answer_service()` is actually resolved for a
 request that was not overridden.
+
+Task 8: the real gateway/retriever are wrapped in `MetricsGateway`/
+`MetricsRetriever` (instrumentation.py) before being handed to
+`GroundedAnswerService` - metrics are recorded at this DI boundary, never
+inside Day 5 itself.
 """
 from __future__ import annotations
 
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from aico.api.instrumentation import MetricsGateway, MetricsRetriever
 from aico.platform.model_gateway import ModelGateway
-from aico.rag.answer_service import GroundedAnswerService
+from aico.rag.answer_service import BM25Retriever, GroundedAnswerService
 
 if TYPE_CHECKING:
     from aico.api.health import DependencyCheck
@@ -37,10 +43,13 @@ def _default_gateway() -> ModelGateway:
 
 def get_answer_service() -> GroundedAnswerService:
     """Default provider: the real Day 5 pipeline (real Model Gateway,
-    default `BM25Retriever` over `data/index`). Tests override this
-    dependency rather than call it."""
+    default `BM25Retriever` over `data/index`), both wrapped for metrics
+    (Task 8). Tests override this dependency rather than call it."""
 
-    return GroundedAnswerService(gateway=_default_gateway())
+    return GroundedAnswerService(
+        gateway=MetricsGateway(_default_gateway()),
+        retriever=MetricsRetriever(BM25Retriever()),
+    )
 
 
 def get_retrieval_health_check() -> "DependencyCheck":

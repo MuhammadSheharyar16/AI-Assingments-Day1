@@ -75,6 +75,7 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from aico.observability.logging import log_event
+from aico.observability.metrics import record_request_latency
 
 REQUEST_ID_HEADER = "X-Request-ID"
 CORRELATION_ID_HEADER = "X-Correlation-ID"
@@ -181,6 +182,8 @@ class CorrelationMiddleware:
         try:
             await self._app(scope, receive, send_with_correlation_headers)
         finally:
+            latency_ms = (time.monotonic() - start) * 1000
+            status_code = status_code_seen[0] if status_code_seen else None
             log_event(
                 request_id=request_id,
                 correlation_id=correlation_id,
@@ -188,9 +191,14 @@ class CorrelationMiddleware:
                 outcome="end",
                 method=method,
                 path=path,
-                status_code=status_code_seen[0] if status_code_seen else None,
-                latency_ms=(time.monotonic() - start) * 1000,
+                status_code=status_code,
+                latency_ms=latency_ms,
             )
+            if status_code is not None:
+                # Task 8 - only recorded when a response actually started
+                # (an exception that escaped before any response was sent
+                # has nothing meaningful to label a latency histogram with).
+                record_request_latency(latency_ms, status_code=status_code)
             _request_id_var.reset(request_token)
             _correlation_id_var.reset(correlation_token)
 

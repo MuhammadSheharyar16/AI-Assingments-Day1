@@ -1,10 +1,10 @@
 """
-Day 6 Task 7 — structured logs.
+Day 6 Task 7 (structured logs) + Task 8 (metrics).
 
-(Tasks 8-9 - metrics and OpenTelemetry tracing - add their own sections to
-this same file, per the required test structure.)
+(Task 9 - OpenTelemetry tracing - adds its own section to this same file,
+per the required test structure.)
 
-Proves:
+Task 7 proves:
 - Structured logging: every response - a successful `/ask`, a
   policy-blocked one, and one rejected before the pipeline ever ran -
   emits JSON log lines carrying request_id, correlation_id, stage,
@@ -18,17 +18,38 @@ real stdout - `configure_logging()`'s stdout handler and caplog's handler
 both receive the same records (Python's logging module delivers to every
 attached handler independently), so this proves exactly what the real
 handler would have printed.
+
+Task 8 proves:
+- `MetricsGateway`/`MetricsRetriever` (instrumentation.py) record gateway
+  latency/retry/token-usage and retrieval latency from real
+  `ChatResult.metadata`, never from prompt/completion content.
+- A full `/ask` request updates the request-latency and request-outcome
+  metrics too.
+- `record_cache_event` (the retrieval-cache metric - not wired into
+  BM25Retriever, which has no cache concept, but directly testable).
+- No metric attribute ever carries raw question/evidence/answer content.
+
+Reads `aico.observability.metrics.get_metrics_snapshot()` (an
+`InMemoryMetricReader` - Task 9's tracing uses the same
+"local/in-memory exporter is acceptable for tests" allowance). Metrics
+are process-global cumulative counters, so most assertions use a
+before/after delta rather than an absolute value, since other tests in
+the same process may have already recorded to the same metric; a few use
+a per-test-unique `model_alias` label instead, where that is simpler.
 """
 from __future__ import annotations
 
 import json
 import logging
+import uuid
 
 from fastapi.testclient import TestClient
 
 from aico.api.app import app
 from aico.api.dependencies import get_answer_service
 from aico.api.identity import IdentityError, TrustedIdentity, get_trusted_identity
+from aico.api.instrumentation import MetricsGateway, MetricsRetriever
+from aico.observability.metrics import get_metrics_snapshot, record_cache_event
 from aico.platform.model_gateway import CallMetadata, ChatRequest, ChatResult
 from aico.rag.answer_service import GroundedAnswerService
 from aico.rag.citation_validator import EvidenceChunk
@@ -220,3 +241,210 @@ def test_logs_never_contain_an_authorization_header_value(caplog):
 
     log_text = _all_log_text(caplog)
     assert "super-secret-token-should-never-be-logged" not in log_text
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Task 8 — metrics
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _counter_value(data, name: str, **attrs) -> float:
+    for resource_metrics in data.resource_metrics:
+        for scope_metrics in resource_metrics.scope_metrics:
+            for metric in scope_metrics.metrics:
+                if metric.name != name:
+                    continue
+                for point in metric.data.data_points:
+                    if all(point.attributes.get(k) == v for k, v in attrs.items()):
+                        return point.value
+    return 0
+
+
+def _histogram_count_sum(data, name: str, **attrs) -> tuple[int, float]:
+    for resource_metrics in data.resource_metrics:
+        for scope_metrics in resource_metrics.scope_metrics:
+            for metric in scope_metrics.metrics:
+                if metric.name != name:
+                    continue
+                for point in metric.data.data_points:
+                    if all(point.attributes.get(k) == v for k, v in attrs.items()):
+                        return point.count, point.sum
+    return 0, 0.0
+
+
+class _FakeInnerGateway:
+    def __init__(self, metadata: CallMetadata):
+        self._metadata = metadata
+
+    def chat(self, request: ChatRequest) -> ChatResult:
+        return ChatResult(content="irrelevant - never read by MetricsGateway", metadata=self._metadata)
+
+
+def test_metrics_gateway_records_latency_retries_and_token_usage():
+    alias = f"metrics-test-gateway-{uuid.uuid4()}"
+    metadata = CallMetadata(
+        operation="chat",
+        model_alias=alias,
+        latency_ms=42.5,
+        retry_count=2,
+        token_usage={"prompt_tokens": 10, "completion_tokens": 5},
+        budget_status="within_budget",
+    )
+    gateway = MetricsGateway(_FakeInnerGateway(metadata))
+
+    gateway.chat(ChatRequest(messages=[]))
+
+    data = get_metrics_snapshot()
+    count, total = _histogram_count_sum(data, "aico_gateway_latency_ms", model_alias=alias)
+    assert count == 1
+    assert total == 42.5
+    assert _counter_value(data, "aico_gateway_retries_total", model_alias=alias) == 2
+    assert _counter_value(data, "aico_gateway_tokens_total", model_alias=alias, token_type="prompt_tokens") == 10
+    assert _counter_value(data, "aico_gateway_tokens_total", model_alias=alias, token_type="completion_tokens") == 5
+
+
+def test_metrics_gateway_handles_missing_token_usage():
+    """A gateway result with no token_usage (e.g. embed, or a provider
+    that didn't report it) must not raise - the token counter is simply
+    not incremented."""
+    alias = f"metrics-test-no-tokens-{uuid.uuid4()}"
+    metadata = CallMetadata(
+        operation="chat", model_alias=alias, latency_ms=5.0, retry_count=0, token_usage=None, budget_status="unknown"
+    )
+    gateway = MetricsGateway(_FakeInnerGateway(metadata))
+
+    gateway.chat(ChatRequest(messages=[]))  # must not raise
+
+    data = get_metrics_snapshot()
+    count, _total = _histogram_count_sum(data, "aico_gateway_latency_ms", model_alias=alias)
+    assert count == 1
+
+
+def test_metrics_retriever_records_retrieval_latency():
+    def _inner(question: str) -> list[EvidenceChunk]:
+        return [EvidenceChunk(chunk_id="c1", source_file="f.md", text="irrelevant - never read by the metric")]
+
+    before, _ = _histogram_count_sum(get_metrics_snapshot(), "aico_retrieval_latency_ms")
+
+    retriever = MetricsRetriever(_inner)
+    result = retriever("what are the terms?")
+
+    assert len(result) == 1  # the wrapper is transparent - real result still returned
+    after, _ = _histogram_count_sum(get_metrics_snapshot(), "aico_retrieval_latency_ms")
+    assert after == before + 1
+
+
+def test_cache_metric_records_hit_and_miss():
+    """`record_cache_event` is not wired into BM25Retriever (no cache
+    concept - see instrumentation.py), but the metric itself is real and
+    directly testable, ready for a future cache-aware retriever."""
+    data_before = get_metrics_snapshot()
+    hits_before = _counter_value(data_before, "aico_retrieval_cache_total", result="hit")
+    misses_before = _counter_value(data_before, "aico_retrieval_cache_total", result="miss")
+
+    record_cache_event(hit=True)
+    record_cache_event(hit=False)
+    record_cache_event(hit=False)
+
+    data_after = get_metrics_snapshot()
+    assert _counter_value(data_after, "aico_retrieval_cache_total", result="hit") == hits_before + 1
+    assert _counter_value(data_after, "aico_retrieval_cache_total", result="miss") == misses_before + 2
+
+
+def test_full_ask_request_updates_request_and_pipeline_metrics():
+    """End-to-end: a real `/ask` call through the same instrumentation
+    wrappers `dependencies.get_answer_service` uses in production updates
+    the request-latency, request-outcome, gateway and retrieval metrics
+    together, from one request."""
+    alias = f"metrics-test-e2e-{uuid.uuid4()}"
+
+    def _respond(_request: ChatRequest) -> str:
+        return _ANSWERED_JSON
+
+    class _AliasedFakeGateway(FakeGateway):
+        def chat(self, request: ChatRequest) -> ChatResult:
+            result = super().chat(request)
+            return ChatResult(
+                content=result.content,
+                metadata=CallMetadata(
+                    operation="chat",
+                    model_alias=alias,
+                    latency_ms=result.metadata.latency_ms,
+                    retry_count=1,
+                    token_usage={"prompt_tokens": 7, "completion_tokens": 3},
+                    budget_status="within_budget",
+                ),
+            )
+
+    app.dependency_overrides[get_answer_service] = lambda: GroundedAnswerService(
+        gateway=MetricsGateway(_AliasedFakeGateway(_respond)),
+        retriever=MetricsRetriever(_fake_retriever),
+    )
+    app.dependency_overrides[get_trusted_identity] = lambda: _VALID_IDENTITY
+    client = TestClient(app)
+
+    retrieval_count_before, _ = _histogram_count_sum(get_metrics_snapshot(), "aico_retrieval_latency_ms")
+    outcome_before = _counter_value(get_metrics_snapshot(), "aico_request_outcome_total", status="answered", category="none")
+
+    resp = client.post("/ask", json={"question": _SECRET_QUESTION})
+    assert resp.status_code == 200
+
+    data = get_metrics_snapshot()
+
+    request_count, _request_sum = _histogram_count_sum(data, "aico_request_latency_ms", status_code="200")
+    assert request_count >= 1
+
+    outcome_after = _counter_value(data, "aico_request_outcome_total", status="answered", category="none")
+    assert outcome_after == outcome_before + 1
+
+    assert _counter_value(data, "aico_gateway_retries_total", model_alias=alias) == 1
+    assert _counter_value(data, "aico_gateway_tokens_total", model_alias=alias, token_type="prompt_tokens") == 7
+
+    retrieval_count_after, _ = _histogram_count_sum(get_metrics_snapshot(), "aico_retrieval_latency_ms")
+    assert retrieval_count_after == retrieval_count_before + 1
+
+
+def test_metric_attributes_never_contain_raw_question_evidence_or_answer_text():
+    alias = f"metrics-test-redaction-{uuid.uuid4()}"
+
+    def _respond(_request: ChatRequest) -> str:
+        return _ANSWERED_JSON
+
+    class _AliasedFakeGateway(FakeGateway):
+        def chat(self, request: ChatRequest) -> ChatResult:
+            result = super().chat(request)
+            return ChatResult(
+                content=result.content,
+                metadata=CallMetadata(
+                    operation="chat",
+                    model_alias=alias,
+                    latency_ms=result.metadata.latency_ms,
+                    retry_count=0,
+                    token_usage={"prompt_tokens": 1, "completion_tokens": 1},
+                    budget_status="within_budget",
+                ),
+            )
+
+    app.dependency_overrides[get_answer_service] = lambda: GroundedAnswerService(
+        gateway=MetricsGateway(_AliasedFakeGateway(_respond)),
+        retriever=MetricsRetriever(_fake_retriever),
+    )
+    app.dependency_overrides[get_trusted_identity] = lambda: _VALID_IDENTITY
+    client = TestClient(app)
+
+    resp = client.post("/ask", json={"question": _SECRET_QUESTION})
+    assert resp.status_code == 200
+
+    data = get_metrics_snapshot()
+    all_attribute_values = {
+        str(value)
+        for resource_metrics in data.resource_metrics
+        for scope_metrics in resource_metrics.scope_metrics
+        for metric in scope_metrics.metrics
+        for point in metric.data.data_points
+        for value in point.attributes.values()
+    }
+    joined = " ".join(all_attribute_values)
+    assert _SECRET_QUESTION not in joined
+    assert _SECRET_EVIDENCE not in joined
+    assert _SECRET_ANSWER not in joined

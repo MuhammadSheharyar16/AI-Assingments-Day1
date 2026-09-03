@@ -66,6 +66,13 @@ log line once the typed result is known - `outcome` is the same
 already-safe `AskStatus` value the caller receives in the body, and
 `error_category` (when present) is `AskResponse.category` - never the
 question, the answer, or any raw pipeline content.
+
+Task 8 IS wired: `dependencies.get_answer_service` wraps the real
+gateway/retriever in `MetricsGateway`/`MetricsRetriever`
+(instrumentation.py) so gateway latency/tokens/retries and retrieval
+latency are recorded without touching Day 5. `/ask` itself records the
+end-to-end request outcome metric alongside its structured log line,
+from the same already-safe `AskResponse.status`/`.category` fields.
 """
 from __future__ import annotations
 
@@ -82,6 +89,7 @@ from aico.api.identity import TrustedIdentity, get_trusted_identity
 from aico.api.request_cancellation import run_cancellable
 from aico.api.request_protection import RequestProtectionMiddleware
 from aico.observability.logging import configure_logging, log_event
+from aico.observability.metrics import record_request_outcome
 from aico.rag.answer_service import GroundedAnswerService
 
 configure_logging()
@@ -135,13 +143,15 @@ async def ask(
     # response.status/.category are already the public, pre-sanitized
     # AskResponse fields (contracts.py) - never the question, the answer
     # text, or retrieved evidence.
+    latency_ms = (time.monotonic() - start) * 1000
     log_event(
         request_id=context.request_id,
         correlation_id=context.correlation_id,
         stage="ask_pipeline",
         outcome=response.status.value,
         error_category=response.category,
-        latency_ms=(time.monotonic() - start) * 1000,
+        latency_ms=latency_ms,
     )
+    record_request_outcome(response.status.value, response.category)
 
     return response
