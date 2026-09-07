@@ -41,12 +41,13 @@ hard requirement from the brief.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TypeVar
 
 from pydantic import BaseModel
 
 from aico.contracts.errors import ValidationFailure
-from aico.contracts.models import CitedAnswer
+from aico.contracts.models import CitedAnswer, ResponseEnvelope
 from aico.contracts.semantic import validate_semantic
 from aico.contracts.validator import parse_and_validate
 from aico.platform.errors import ModelGatewayError
@@ -69,15 +70,33 @@ def is_repairable(failure: ValidationFailure) -> bool:
     return failure.stage in _REPAIRABLE_STAGES
 
 
+def _prefix_field_path(failure: ValidationFailure, prefix: str) -> ValidationFailure:
+    """Re-home a nested-result semantic failure's `field_path` under
+    `prefix` (e.g. `"citations"` -> `"result.citations"`) so a caller
+    validating a `ResponseEnvelope` can still tell which part of the
+    envelope failed - never dropping the original stage/category/message,
+    only qualifying where it points."""
+    return replace(
+        failure,
+        field_path=f"{prefix}.{failure.field_path}" if failure.field_path else prefix,
+    )
+
+
 def validate_full(raw: str, model: type[T]) -> T | ValidationFailure:
     """The complete Day 4 validation pipeline for one raw response:
-    Task 2's parse/contract validation, then - only for `CitedAnswer`,
-    the one contract `data/day04_pack/semantic_rules.md` defines rules
-    for - Task 3's semantic validation. Composes the two stages'
-    functions without merging their implementations, so
-    contract/schema and semantic validation stay the separate, separately
-    tested functions the working rules require; this is only the call
-    site that chains them for a single response."""
+    Task 2's parse/contract validation, then Task 3's semantic validation
+    of whichever `CitedAnswer` the response resolves to - the top-level
+    object itself when `model` is `CitedAnswer`, or its nested `result`
+    when `model` is `ResponseEnvelope` (`semantic_rules.md`'s S1-S5 are
+    rules about a cited answer; an envelope is only semantically valid
+    when the cited answer it wraps is). Composes the two stages'
+    functions without merging their implementations, so contract/schema
+    and semantic validation stay the separate, separately tested
+    functions the working rules require; this is only the call site that
+    chains them for a single response - repair's revalidation pass
+    (`attempt_repair`) reuses this same function, so a repaired envelope's
+    nested result is never trusted without the same semantic check its
+    first pass got."""
     contract_result = parse_and_validate(raw, model)
     if isinstance(contract_result, ValidationFailure):
         return contract_result
@@ -85,6 +104,10 @@ def validate_full(raw: str, model: type[T]) -> T | ValidationFailure:
         semantic_result = validate_semantic(contract_result)
         if isinstance(semantic_result, ValidationFailure):
             return semantic_result
+    elif isinstance(contract_result, ResponseEnvelope):
+        semantic_result = validate_semantic(contract_result.result)
+        if isinstance(semantic_result, ValidationFailure):
+            return _prefix_field_path(semantic_result, "result")
     return contract_result
 
 

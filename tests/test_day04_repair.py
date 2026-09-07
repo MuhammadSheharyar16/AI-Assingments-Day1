@@ -39,7 +39,7 @@ from pathlib import Path
 import pytest
 
 from aico.contracts.errors import ValidationFailure
-from aico.contracts.models import AnswerStatus, CitedAnswer, ConfidenceLabel
+from aico.contracts.models import AnswerStatus, CitedAnswer, ConfidenceLabel, ResponseEnvelope
 from aico.contracts.repair import attempt_repair, build_repair_request, is_repairable, resolve, validate_full
 from aico.platform.config import (
     BudgetsConfig,
@@ -318,6 +318,94 @@ def test_validate_full_runs_both_contract_and_semantic_stages():
     semantic_bad = validate_full(semantic_bad_raw, CitedAnswer)
     assert isinstance(semantic_bad, ValidationFailure)
     assert semantic_bad.stage == "semantic"
+
+
+# ── validate_full on ResponseEnvelope: semantic rules apply to the ─────
+# ── nested `result`, not just a bare CitedAnswer ────────────────────────
+
+def _envelope_json(result: dict) -> str:
+    return json.dumps(
+        {
+            "schema_version": "1.0",
+            "request_id": "REQ-001",
+            "model_alias": "chat-primary",
+            "result": result,
+        }
+    )
+
+
+def test_validate_full_applies_semantic_rules_to_envelope_nested_result():
+    # Contract-valid ResponseEnvelope whose nested CitedAnswer violates S1
+    # (answered, zero citations) must not come back as a valid envelope -
+    # semantic_rules.md's rules are about the cited answer an envelope
+    # wraps, so the envelope is only as semantically valid as its result.
+    raw = _envelope_json(
+        {
+            "schema_version": "1.0",
+            "status": "answered",
+            "answer": "Supplier insurance is required.",
+            "citations": [],
+            "confidence_label": "medium",
+        }
+    )
+    result = validate_full(raw, ResponseEnvelope)
+    assert isinstance(result, ValidationFailure)
+    assert result.stage == "semantic"
+    assert result.category == "s1_answered_without_citation"
+    assert result.field_path == "result.citations"
+
+
+def test_validate_full_envelope_with_semantically_valid_result_passes():
+    raw = _envelope_json(
+        {
+            "schema_version": "1.0",
+            "status": "answered",
+            "answer": "Supplier insurance is required.",
+            "citations": [{"chunk_id": "CHK-001", "source_file": "DOC-001.md"}],
+            "confidence_label": "medium",
+        }
+    )
+    result = validate_full(raw, ResponseEnvelope)
+    assert isinstance(result, ResponseEnvelope)
+
+
+def test_repaired_envelope_is_revalidated_for_nested_semantic_failures():
+    # The repair fixes the envelope's own contract problem (missing
+    # request_id) but the repaired reply's nested result is semantically
+    # invalid (answered, no citation) - resolve() must catch that on the
+    # revalidation pass, not return the envelope trusted as-is.
+    gateway, transport = _gateway(
+        chat_result=_envelope_json(
+            {
+                "schema_version": "1.0",
+                "status": "answered",
+                "answer": "A fixed answer.",
+                "citations": [],
+                "confidence_label": "medium",
+            }
+        )
+    )
+    invalid_raw = json.dumps(
+        {
+            "schema_version": "1.0",
+            "model_alias": "chat-primary",
+            # missing "request_id" - a contract failure, repairable
+            "result": {
+                "schema_version": "1.0",
+                "status": "answered",
+                "answer": "Supplier insurance is required.",
+                "citations": [{"chunk_id": "CHK-001", "source_file": "DOC-001.md"}],
+                "confidence_label": "medium",
+            },
+        }
+    )
+
+    result = resolve(invalid_raw, ResponseEnvelope, gateway)
+
+    assert isinstance(result, ValidationFailure)
+    assert result.stage == "semantic"
+    assert result.category == "s1_answered_without_citation"
+    assert len(transport.chat_calls) == 1  # repair still capped at one attempt
 
 
 # ── driven by the supplied repair fixtures ──────────────────────────────

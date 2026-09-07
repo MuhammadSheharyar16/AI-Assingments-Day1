@@ -28,8 +28,12 @@ rules, not contract/schema rules - see `data/day04_pack/semantic_rules.md` and
 Task 3's `semantic.py`. Enforcing them here would collapse the
 schema-valid-but-semantically-invalid distinction Task 3 depends on
 (fixture D04-09 in `structured_output_cases.json` relies on exactly that
-separation: empty `citations` with `status="answered"` must pass this
-module's validation and only fail later, at the semantic stage).
+separation: an explicitly-sent empty `citations: []` with `status="answered"`
+must pass this module's validation and only fail later, at the semantic
+stage). Note the distinction this draws: `citations` itself is a required
+field (a response that omits the key is a contract failure, per
+`contract_requirements.md`'s required-fields table) - only the
+*permissibility of an empty list for a given status* is semantic.
 """
 from __future__ import annotations
 
@@ -74,16 +78,23 @@ class Citation(BaseModel):
 class CitedAnswer(BaseModel):
     """Versioned cited-answer contract (`contract_requirements.md` #1).
 
-    `citations` defaults to empty - whether an empty list is *allowed*
-    for a given `status` is a semantic rule (S1/S4 in
-    `semantic_rules.md`), enforced in Task 3's `semantic.py`, not here."""
+    `citations` is a required field - `contract_requirements.md` lists it
+    in the same "Required fields" table as `schema_version`/`status`/
+    `answer`/`confidence_label`, so a response that omits the key entirely
+    is a contract/shape failure (`missing_field`), not something silently
+    defaulted. Whether an explicitly-supplied empty list (`"citations": []`)
+    is *allowed* for a given `status` is a separate, semantic rule (S1/S4
+    in `semantic_rules.md`), enforced in Task 3's `semantic.py`, not here -
+    that is the distinction fixture D04-09 relies on: it sends `citations`
+    explicitly as `[]`, so it still passes this module's validation and
+    only fails later, at the semantic stage."""
 
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal["1.0"] = Field(description="Cited-answer contract version.")
     status: AnswerStatus
     answer: str = Field(min_length=1, description="Non-empty answer text.")
-    citations: list[Citation] = Field(default_factory=list)
+    citations: list[Citation]
     confidence_label: ConfidenceLabel
 
 

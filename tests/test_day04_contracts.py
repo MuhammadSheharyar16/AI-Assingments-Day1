@@ -91,7 +91,7 @@ def test_cited_answer_valid_payload_becomes_typed_object():
 
 
 @pytest.mark.parametrize(
-    "missing_field", ["schema_version", "status", "answer", "confidence_label"]
+    "missing_field", ["schema_version", "status", "answer", "citations", "confidence_label"]
 )
 def test_cited_answer_missing_required_field_is_rejected(missing_field):
     payload = _valid_cited_answer()
@@ -100,9 +100,26 @@ def test_cited_answer_missing_required_field_is_rejected(missing_field):
         CitedAnswer.model_validate(payload)
 
 
-def test_cited_answer_citations_defaults_to_empty_list_when_omitted():
+def test_cited_answer_omitted_citations_key_is_rejected_not_defaulted():
+    # `citations` sits in contract_requirements.md's "Required fields"
+    # table alongside schema_version/status/answer/confidence_label - an
+    # omitted key is a contract/shape failure, not something silently
+    # defaulted to []. Contrast with the next test: an *explicitly* empty
+    # list is a different (semantic-stage) question, per models.py's
+    # CitedAnswer docstring and fixture D04-09.
     payload = _valid_cited_answer()
     del payload["citations"]
+    with pytest.raises(ValidationError) as exc_info:
+        CitedAnswer.model_validate(payload)
+    assert exc_info.value.errors()[0]["type"] == "missing"
+
+
+def test_cited_answer_explicit_empty_citations_list_still_validates_at_contract_stage():
+    # The field must be *present*; whether an empty value it holds is
+    # *allowed* for the given status is semantic.py's job (S1/S4), not
+    # this contract's.
+    payload = _valid_cited_answer()
+    payload["citations"] = []
     answer = CitedAnswer.model_validate(payload)
     assert answer.citations == []
 

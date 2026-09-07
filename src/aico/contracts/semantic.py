@@ -57,14 +57,21 @@ def _rule_s2(answer: CitedAnswer) -> ValidationFailure | None:
 
 
 def _rule_s3(answer: CitedAnswer) -> ValidationFailure | None:
-    """S3 — citation chunk_ids must be unique within the response."""
+    """S3 — citation chunk_ids must be unique within the response.
+
+    The failure message deliberately never echoes the offending
+    `chunk_id` value back out - `field_path` already names exactly which
+    citation duplicated an earlier one, the same "message says what was
+    wrong, `field_path` says where, neither echoes model-supplied content"
+    discipline `validator.py` applies to contract-stage failures (see
+    `errors.py`'s module docstring)."""
     seen: set[str] = set()
     for index, citation in enumerate(answer.citations):
         if citation.chunk_id in seen:
             return ValidationFailure(
                 stage="semantic",
                 category="s3_duplicate_citation",
-                message=f"duplicate chunk_id {citation.chunk_id!r} in citations",
+                message="duplicate chunk_id in citations",
                 field_path=f"citations.{index}.chunk_id",
             )
         seen.add(citation.chunk_id)

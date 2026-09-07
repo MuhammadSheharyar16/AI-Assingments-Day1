@@ -130,6 +130,25 @@ def test_s3_distinct_chunk_ids_pass():
     assert validate_semantic(answer) is answer
 
 
+def test_s3_failure_message_never_echoes_the_duplicated_chunk_id():
+    # Same discipline validator.py already applies to contract-stage
+    # messages (test_validate_contract_failure_message_never_contains_raw_
+    # payload_values in test_day04_contracts.py): the message says *what*
+    # was wrong, `field_path` says *where* - neither echoes the
+    # model-supplied value itself back into a string that could end up in
+    # an ordinary log line.
+    answer = _answered(
+        citations=[
+            Citation(chunk_id="SECRET-MARKER-DO-NOT-LEAK", source_file="DOC-001.md"),
+            Citation(chunk_id="SECRET-MARKER-DO-NOT-LEAK", source_file="DOC-002.md"),
+        ]
+    )
+    result = validate_semantic(answer)
+    assert isinstance(result, ValidationFailure)
+    assert "SECRET-MARKER-DO-NOT-LEAK" not in result.message
+    assert result.field_path == "citations.1.chunk_id"
+
+
 # ── S4 — insufficient_evidence must carry no citations ──────────────────
 
 def test_s4_insufficient_evidence_with_citations_fails():

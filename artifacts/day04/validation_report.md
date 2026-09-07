@@ -1,6 +1,6 @@
 # Day 4 Validation Report
 
-Generated 2026-09-01 by `scripts/day04_generate_validation_report.py` against `data/day04_pack/fixtures/`. Every result below comes from running the real `aico.contracts` pipeline against these fixtures and a fake Model Gateway - no real network call is made generating this report.
+Generated 2026-09-07 by `scripts/day04_generate_validation_report.py` against `data/day04_pack/fixtures/`. Every result below comes from running the real `aico.contracts` pipeline against these fixtures and a fake Model Gateway - no real network call is made generating this report.
 
 ## Contract/schema version
 

@@ -44,7 +44,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Versioned cited-answer contract (`contract_requirements.md` #1).\n\n`citations` defaults to empty - whether an empty list is *allowed*\nfor a given `status` is a semantic rule (S1/S4 in\n`semantic_rules.md`), enforced in Task 3's `semantic.py`, not here.",
+  "description": "Versioned cited-answer contract (`contract_requirements.md` #1).\n\n`citations` is a required field - `contract_requirements.md` lists it\nin the same \"Required fields\" table as `schema_version`/`status`/\n`answer`/`confidence_label`, so a response that omits the key entirely\nis a contract/shape failure (`missing_field`), not something silently\ndefaulted. Whether an explicitly-supplied empty list (`\"citations\": []`)\nis *allowed* for a given `status` is a separate, semantic rule (S1/S4\nin `semantic_rules.md`), enforced in Task 3's `semantic.py`, not here -\nthat is the distinction fixture D04-09 relies on: it sends `citations`\nexplicitly as `[]`, so it still passes this module's validation and\nonly fails later, at the semantic stage.",
   "properties": {
     "answer": {
       "description": "Non-empty answer text.",
@@ -76,6 +76,7 @@
     "schema_version",
     "status",
     "answer",
+    "citations",
     "confidence_label"
   ],
   "title": "CitedAnswer",
