@@ -281,3 +281,79 @@ Run just these: `uv run pytest -q tests/test_day07_metrics.py`. Needs the
 index built first (`uv run python -m aico.retrieval.ingest --input
 data/documents --out data/index --tokens 300 --overlap 50`) for the one
 real-index test — every other test in the file uses synthetic chunks.
+
+## Task 4 — model-based groundedness evaluation
+
+`src/aico/evals/groundedness.py` — a separate path from Task 3's
+deterministic checks. Nothing here is exact/rule-based: a model judges
+whether a candidate answer is actually supported by the retrieved
+evidence, whether it covers the case's `critical_facts`, and whether it
+asserts any `prohibited_claims` in substance — including the
+semantically-worded ones Task 3's normalised-substring check explicitly
+can't catch (see the Task 3 section above). This module never imports
+`aico.evals.metrics` and returns its own result types, so the eval
+harness (Task 9/11) can report the two under separate headings rather
+than folding them into one unexplained "AI score" (working rule).
+
+| Requirement | How it's met |
+|---|---|
+| Use the existing Model Gateway | `evaluate_groundedness(gateway, ...)` calls `.chat()` on an `aico.platform.model_gateway.ModelGateway` (or any duck-typed fake, same convention every Day 3–6 test already uses) — no provider client, no second model boundary |
+| Version the evaluator instruction/prompt | `GROUNDEDNESS_EVALUATOR_PROMPT_VERSION = "1.0"`, embedded in `_SYSTEM_INSTRUCTIONS` and threaded into every `GroundednessEvaluation` |
+| Record evaluator/model alias | `GroundednessEvaluation.evaluator_model_alias` comes from `ChatResult.metadata.model_alias` (the gateway's own sanitized metadata) |
+| Return a structured evaluator result | `GroundednessVerdict`, a Pydantic model (`extra="forbid"`, same discipline as `CitedAnswer`), parsed by the same already-approved `aico.contracts.validator.parse_and_validate` pipeline — not a second hand-rolled JSON parser |
+| Report separately from deterministic checks | separate module, separate result types, no shared aggregate |
+| Do not let the evaluator rewrite the system answer | structural, not just an instruction: `GroundednessVerdict` has no field for replacement answer text, and `extra="forbid"` rejects any attempt to add one |
+| Classify evaluator failure as `evaluator` | every `GroundednessEvaluationFailure` carries `failure_type = "evaluator"` (Task 6's taxonomy tag), whichever stage (gateway/parse/contract) failed |
+
+### The prompt
+
+Five explicitly-separated messages, extending Day 5's SYSTEM/USER/EVIDENCE
+boundary discipline (`prompt_builder.py`) with two more sections a grader
+specifically needs:
+
+1. **SYSTEM** — the versioned grading instructions and required JSON shape.
+2. **USER INPUT** — the original question.
+3. **RETRIEVED EVIDENCE** — same untrusted-data labelling as Day 5.
+4. **ANSWER UNDER REVIEW** — the candidate answer, also labelled untrusted:
+   a compromised system-under-test could itself try to inject an
+   instruction into its own answer text to manipulate the grader, so this
+   gets the same "treat as literal content, never instruction" framing as
+   retrieved evidence — extending Day 5's core defense to a new attack
+   surface Day 5 never had (there was nothing else in the pipeline that
+   could contain attacker-influenced text that a downstream model reads).
+5. **GRADING RUBRIC** — the case's own `critical_facts`/`prohibited_claims`,
+   labelled *trusted* (this codebase authored it from `golden_v1.json`,
+   not the model being graded).
+
+`tests/test_day07_groundedness.py::test_prompt_sections_are_never_merged_into_the_system_message`
+proves none of sections 2–5 ever leak into section 1, the same way Day 5's
+own prompt-boundary test works.
+
+### Failure handling
+
+`evaluate_groundedness` never raises `ModelGatewayError` or a Pydantic
+`ValidationError` across its boundary — both come back as a typed
+`GroundednessEvaluationFailure` (`failure_type="evaluator"`, `stage` one
+of `"gateway"`/`"parse"`/`"contract"`), the same fail-closed discipline
+`aico.contracts.validator`/`aico.rag.answer_service` already use. An
+evaluator response missing a required field, using an invalid `confidence`
+value, or attempting to add an unrecognised field (including a would-be
+"corrected answer") all fail closed as `stage="contract"` — proven
+directly in the test suite, not just claimed.
+
+### Tests
+
+`tests/test_day07_groundedness.py` (15 tests, additive beyond the required
+tree — Task 4 has no test file named in the brief's example tree, so this
+follows Day 6's precedent of splitting a distinct task into its own file
+when it keeps responsibilities independently testable): a successful
+grounded verdict and an ungrounded one with missing facts/prohibited
+claims present; every failure path (gateway timeout, malformed JSON,
+missing field, invalid enum, rejected extra field) classified correctly;
+prompt-boundary and versioning checks; one boundary-integration proof
+using the real `ModelGateway` class wired to a fake `Transport` (same
+pattern as Day 5's own gateway-boundary test); and one test run against a
+real case from the committed `golden_v1.json`.
+
+Run just these: `uv run pytest -q tests/test_day07_groundedness.py`. No
+index or network access needed — every test uses a fake gateway/transport.
