@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "baseline_id": "baseline_v1",
+  "dataset_version": "1.0",
+  "evaluator_prompt_version": "1.0",
+  "model_aliases": {
+    "chat": "fake:well-behaved-response-builder (scripts/day07_generate_failure_classification_report.py)",
+    "embedding": "n/a - retrieval is BM25 only, no embedding call in this baseline"
+  },
+  "retrieval_config": {
+    "mode": "bm25",
+    "top_k": 5,
+    "chunk_tokens": 300,
+    "chunk_overlap": 50,
+    "chunk_count": 23,
+    "ingestion_version": "day1-chunker-1.0"
+  },
+  "metrics": {
+    "hit_at_1": 0.6086956521739131,
+    "hit_at_k": 0.9130434782608695,
+    "mrr": 0.7347826086956522,
+    "citation_validity_rate": 1.0,
+    "refusal_accuracy_rate": 0.7407407407407407,
+    "groundedness_rate": null
+  },
+  "review": {
+    "reviewer": "khadija@quantl.ai",
+    "date": "2026-09-07",
+    "notes": "Initial reviewed baseline for Day 7 Task 8 - measured against the real GroundedAnswerService, real input policy, and real BM25Retriever (300/50 tokens, top_k=5) via the honest, non-per-case-scripted well-behaved gateway in scripts/day07_generate_failure_classification_report.py. groundedness_rate is not yet measured (no full-dataset grader run performed) and is left null pending a future update once one exists."
+  }
+}

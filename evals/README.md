@@ -676,3 +676,87 @@ real end-to-end pipeline proof above.
 Run just these: `uv run pytest -q tests/test_day07_safety_gate.py`. Needs
 the index built first (one real-pipeline test); every other test uses
 synthetic thresholds/summaries.
+
+## Task 8 — reviewed baseline
+
+`evals/baseline_v1.json` (developer-authored, no supplied pack) +
+`aico.evals.regression`'s baseline half (`load_baseline`,
+`compare_to_baseline`, `write_baseline`) — a reviewed, versioned record of
+expected performance that normal evaluation can read and compare against
+but never overwrite.
+
+### What the baseline identifies
+
+| requirement | field |
+|---|---|
+| dataset version | `dataset_version` (`golden_v1.json`'s own `version`) |
+| evaluator version | `evaluator_prompt_version` (`aico.evals.groundedness.GROUNDEDNESS_EVALUATOR_PROMPT_VERSION`) |
+| model/deployment aliases | `model_aliases` — recorded **honestly**: this baseline was measured with a scripted fake gateway, not a live deployment, so the field says exactly that (`"fake:well-behaved-response-builder (scripts/day07_generate_failure_classification_report.py)"`) rather than inventing an Azure-looking alias that never made a real call |
+| retrieval configuration/version | `retrieval_config` (mode, `top_k`, chunk tokens/overlap/count, `ingestion_version` — read from the real `data/index/index.json` manifest, not hand-typed) |
+| baseline metric values | `metrics` — the same six `aico.evals.regression.REQUIRED_METRIC_NAMES` Task 7's thresholds check |
+| baseline/review version metadata | `review.reviewer` / `review.date` / `review.notes` |
+
+Current committed values (all from one real run of the same honest,
+non-per-case-scripted pipeline `scripts/day07_generate_failure_classification_report.py`
+uses — no live model, but not scripted per case toward a chosen number
+either): `hit_at_1=0.6087`, `hit_at_k=0.9130`, `mrr=0.7348`,
+`citation_validity_rate=1.0`, `refusal_accuracy_rate=0.7407`,
+`groundedness_rate=null` (honestly not yet measured — no full-dataset
+grader run exists yet; see Task 7's `thresholds_v1.json` rationale for the
+same point). These match Task 7's `measured_baseline` fields exactly
+(`test_real_baseline_metrics_match_the_real_thresholds_measured_baselines`
+checks this directly) — both files describe the same evidence.
+
+### The update workflow — separate, deliberate, reviewable
+
+`scripts/day07_update_baseline.py` stands in for the brief's example `uv
+run python -m aico.evals.day07 --update-baseline` (the "or equivalent" it
+allows) — Task 9's harness will wire that flag to the exact same
+`aico.evals.regression.write_baseline` call this script makes, not a
+second implementation.
+
+- **Separate**: a distinct command, not a flag on anything that evaluates.
+  `write_baseline` is the **only** function in `aico.evals.regression`
+  that writes a file — `evaluate_gate`, `compare_to_baseline`, and every
+  read-side loader never do (`test_write_baseline_is_the_only_function_regression_module_exposes_that_writes`
+  checks this by source inspection, and
+  `test_normal_evaluation_never_writes_the_baseline_file` checks it
+  behaviorally: snapshots the file's exact bytes, runs a full real
+  evaluation three times over, and asserts neither the content nor the
+  mtime ever moved).
+- **Deliberate**: `--reviewer` and `--notes` are required arguments with
+  no default (`write_baseline` refuses empty values too, defense in
+  depth — a baseline update with no stated reviewer or reason never
+  happens by accident), and **without `--confirm` it is a dry run** —
+  it computes and prints the candidate metrics and a diff against the
+  current baseline, then exits 0 having written nothing.
+- **Reviewable**: the dry-run output *is* the review — a human sees
+  exactly what would change (`render_baseline_comparison`, flagging any
+  metric that would regress) before ever passing `--confirm`.
+- **Never from CI**: Task 13's workflow must never invoke this script —
+  noted here now, to be verified once that workflow file exists.
+
+```
+uv run python scripts/day07_update_baseline.py --reviewer "you@example.com" --notes "why"            # dry run
+uv run python scripts/day07_update_baseline.py --reviewer "you@example.com" --notes "why" --confirm   # writes evals/baseline_v1.json
+```
+
+### Tests
+
+`tests/test_day07_baseline_update.py` (29 tests): `load_baseline` against
+the real committed file (identifies everything Task 8 requires, agrees
+with Task 7's thresholds) and against hand-built broken dicts (one
+missing/invalid field at a time, including confirming a `null`
+`groundedness_rate` loads cleanly — that's the real file's own honest
+case, not an error); `compare_to_baseline` (better-than-baseline is not a
+regression, worse-than is, equal isn't, an unmeasured candidate against a
+real baseline value *is* a regression, an unestablished baseline metric is
+never flagged regardless of the candidate); `write_baseline`'s guards
+(missing metrics, empty reviewer/notes, both refused before any file is
+touched); and the two-part behavioral proof that normal evaluation never
+writes the baseline (source-inspection + a real three-times-over
+evaluation run with byte-for-byte and mtime checks before/after).
+
+Run just these: `uv run pytest -q tests/test_day07_baseline_update.py`.
+Needs the index built first (the behavioral proof runs the real
+pipeline); every other test uses synthetic/temp-file baselines.
