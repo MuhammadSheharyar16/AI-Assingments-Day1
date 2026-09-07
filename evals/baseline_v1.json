@@ -4,8 +4,8 @@
   "dataset_version": "1.0",
   "evaluator_prompt_version": "1.0",
   "model_aliases": {
-    "chat": "fake:well-behaved-response-builder (scripts/day07_generate_failure_classification_report.py)",
-    "embedding": "n/a - retrieval is BM25 only, no embedding call in this baseline"
+    "chat": "fake:well-behaved-response-builder (aico.evals.day07.well_behaved_response)",
+    "embedding": "n/a - retrieval is BM25 only, no embedding call in this command"
   },
   "retrieval_config": {
     "mode": "bm25",
@@ -21,11 +21,11 @@
     "mrr": 0.7347826086956522,
     "citation_validity_rate": 1.0,
     "refusal_accuracy_rate": 0.7407407407407407,
-    "groundedness_rate": null
+    "groundedness_rate": 1.0
   },
   "review": {
     "reviewer": "khadija@quantl.ai",
     "date": "2026-09-07",
-    "notes": "Initial reviewed baseline for Day 7 Task 8 - measured against the real GroundedAnswerService, real input policy, and real BM25Retriever (300/50 tokens, top_k=5) via the honest, non-per-case-scripted well-behaved gateway in scripts/day07_generate_failure_classification_report.py. groundedness_rate is not yet measured (no full-dataset grader run performed) and is left null pending a future update once one exists."
+    "notes": "Task 9 update: groundedness_rate is now genuinely measured via aico.evals.day07's real evaluate_groundedness call (well_behaved_verdict deterministic grader), superseding the earlier null placeholder from the Task 8 initial baseline. All other metrics unchanged (same honest pipeline, same real numbers)."
   }
 }

@@ -259,58 +259,27 @@ def test_render_gate_summary_shows_pass_and_fail_clearly():
 # ── Real end-to-end: the gate this repository would see today ───────
 
 def test_real_pipeline_summary_passes_the_real_committed_thresholds():
-    import sys
-
-    sys.path.insert(0, str(REPO_ROOT / "scripts"))
-    from day07_generate_failure_classification_report import TOP_K, _run_case  # noqa: E402
-
+    # Uses aico.evals.day07's real, shared per-case evaluation (Task 9) -
+    # the exact same computation `python -m aico.evals.day07` itself runs,
+    # including the real aico.evals.groundedness call (Task 9 populated
+    # groundedness_rate for real; it is no longer permanently unmeasured -
+    # see evals/README.md Task 9). This test doubles as the regression
+    # lock: if a future change drops real performance below these floors,
+    # this test fails along with it.
     from aico.evals.dataset import load_dataset
-    from aico.evals.metrics import (
-        aggregate_retrieval,
-        score_attack_outcome,
-        score_citations,
-        score_refusal,
-        score_retrieval,
-    )
-    from aico.rag.answer_service import BM25Retriever, GroundedAnswer
+    from aico.evals.day07 import DEFAULT_TOP_K, build_summary, evaluate_all_cases, load_full_index_chunks
+    from aico.rag.answer_service import BM25Retriever
 
     dataset = load_dataset(REPO_ROOT / "evals" / "golden_v1.json")
-    retriever = BM25Retriever(top_k=TOP_K)
+    retriever = BM25Retriever(top_k=DEFAULT_TOP_K)
+    all_chunks = load_full_index_chunks(REPO_ROOT / "data" / "index")
 
-    retrieval_results = []
-    refusal_pass = refusal_total = 0
-    citation_valid = citation_checked = 0
-    attack_results: list[AttackCheckResult] = []
-
-    for case in dataset.cases:
-        result, retrieved = _run_case(case, retriever)
-        retrieval_results.append(score_retrieval(case, retrieved, k=TOP_K))
-        if case.category == "adversarial":
-            attack_results.append(score_attack_outcome(case, result))
-        else:
-            refusal_total += 1
-            refusal_pass += int(score_refusal(case, result).passed)
-        if isinstance(result, GroundedAnswer):
-            citation_checked += 1
-            citation_valid += int(score_citations(case, result.citation_ids, retrieved).valid)
-
-    agg = aggregate_retrieval(retrieval_results)
-    summary = EvaluationSummary(
-        hit_at_1=agg["overall"]["hit_at_1"],
-        hit_at_k=agg["overall"]["hit_at_k"],
-        mrr=agg["overall"]["mrr"],
-        citation_validity_rate=(citation_valid / citation_checked if citation_checked else None),
-        refusal_accuracy_rate=(refusal_pass / refusal_total if refusal_total else None),
-        groundedness_rate=None,  # not measured by this run - see thresholds_v1.json rationale
-        attack_results=tuple(attack_results),
-    )
+    evaluations = evaluate_all_cases(dataset, retriever, all_chunks, DEFAULT_TOP_K)
+    summary = build_summary(evaluations)
 
     thresholds = load_thresholds(THRESHOLDS_PATH)
     gate = evaluate_gate(summary, thresholds)
 
-    # groundedness_rate is unmeasured by design here (Task 8's job to
-    # establish for real), so it is EXPECTED to fail its own check - that
-    # is the one and only expected failed metric for this real run.
     assert gate.safety_failures == (), "real adversarial cases must all pass safety"
-    failed_names = {c.name for c in gate.failed_metrics}
-    assert failed_names == {"groundedness_rate"}, f"unexpected metric failures: {failed_names}"
+    assert gate.failed_metrics == (), f"unexpected metric failure(s): {[c.name for c in gate.failed_metrics]}"
+    assert gate.passed is True

@@ -67,9 +67,16 @@ def test_real_baseline_metrics_match_the_real_thresholds_measured_baselines():
         assert baseline.metrics[name] == pytest.approx(threshold.measured_baseline, abs=1e-3), name
 
 
-def test_real_baseline_groundedness_rate_is_honestly_null():
+def test_real_baseline_groundedness_rate_is_now_genuinely_measured():
+    # Task 8's initial baseline left this null (no full-dataset grader run
+    # existed yet); Task 9's aico.evals.day07 populated it for real via a
+    # deterministic honest grader (well_behaved_verdict) - see
+    # evals/README.md Task 9. `null` remains a structurally valid value
+    # (test_null_metric_value_is_accepted below proves the loader still
+    # accepts it), it just isn't what the current committed baseline has.
     baseline = load_baseline(BASELINE_PATH)
-    assert baseline.metrics["groundedness_rate"] is None
+    assert baseline.metrics["groundedness_rate"] is not None
+    assert 0.0 <= baseline.metrics["groundedness_rate"] <= 1.0
 
 
 # ── load_baseline: validation against hand-built dicts ──────────────

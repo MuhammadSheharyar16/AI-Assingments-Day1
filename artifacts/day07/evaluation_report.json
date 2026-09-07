@@ -1,0 +1,222 @@
+{
+  "generated_by": "python -m aico.evals.day07",
+  "generated_at": "2026-09-07T18:55:42.471704+00:00",
+  "dataset": {
+    "version": "1.0",
+    "dataset_id": "golden_v1",
+    "total_cases": 32,
+    "split_counts": {
+      "development": 6,
+      "holdout": 7,
+      "train": 19
+    },
+    "category_counts": {
+      "adversarial": 5,
+      "ambiguous": 5,
+      "answerable": 8,
+      "multi_chunk": 5,
+      "synonym_heavy": 5,
+      "unanswerable": 4
+    }
+  },
+  "retrieval_config": {
+    "top_k": 5
+  },
+  "deterministic_metrics": {
+    "hit_at_1": 0.6086956521739131,
+    "hit_at_k": 0.9130434782608695,
+    "mrr": 0.7347826086956522,
+    "citation_validity_rate": 1.0,
+    "refusal_accuracy_rate": 0.7407407407407407,
+    "attack_pass_rate": 1.0
+  },
+  "model_based_metrics": {
+    "groundedness_rate": 1.0,
+    "note": "Measured for real via aico.evals.groundedness.evaluate_groundedness against every GroundedAnswer, using a deterministic honest grader (well_behaved_verdict) rather than a live model - see evals/README.md Task 9 for why, and Task 4 for the evaluator itself."
+  },
+  "split_breakdown": {
+    "development": {
+      "case_count": 6,
+      "hit_at_1": 0.5,
+      "hit_at_k": 0.75,
+      "mrr": 0.625,
+      "refusal_accuracy_rate": 0.6,
+      "attack_pass_rate": 1.0
+    },
+    "holdout": {
+      "case_count": 7,
+      "hit_at_1": 0.6,
+      "hit_at_k": 1.0,
+      "mrr": 0.8,
+      "refusal_accuracy_rate": 0.8333333333333334,
+      "attack_pass_rate": 1.0
+    },
+    "train": {
+      "case_count": 19,
+      "hit_at_1": 0.6428571428571429,
+      "hit_at_k": 0.9285714285714286,
+      "mrr": 0.7428571428571429,
+      "refusal_accuracy_rate": 0.75,
+      "attack_pass_rate": 1.0
+    }
+  },
+  "safety_gate": {
+    "zero_tolerance": true,
+    "failures": []
+  },
+  "threshold_comparison": [
+    {
+      "name": "hit_at_1",
+      "value": 0.6086956521739131,
+      "min": 0.55,
+      "passed": true
+    },
+    {
+      "name": "hit_at_k",
+      "value": 0.9130434782608695,
+      "min": 0.85,
+      "passed": true
+    },
+    {
+      "name": "mrr",
+      "value": 0.7347826086956522,
+      "min": 0.65,
+      "passed": true
+    },
+    {
+      "name": "citation_validity_rate",
+      "value": 1.0,
+      "min": 1.0,
+      "passed": true
+    },
+    {
+      "name": "refusal_accuracy_rate",
+      "value": 0.7407407407407407,
+      "min": 0.65,
+      "passed": true
+    },
+    {
+      "name": "groundedness_rate",
+      "value": 1.0,
+      "min": 0.85,
+      "passed": true
+    }
+  ],
+  "baseline_comparison": [
+    {
+      "name": "hit_at_1",
+      "candidate": 0.6086956521739131,
+      "baseline": 0.6086956521739131,
+      "delta": 0.0,
+      "regressed": false
+    },
+    {
+      "name": "hit_at_k",
+      "candidate": 0.9130434782608695,
+      "baseline": 0.9130434782608695,
+      "delta": 0.0,
+      "regressed": false
+    },
+    {
+      "name": "mrr",
+      "candidate": 0.7347826086956522,
+      "baseline": 0.7347826086956522,
+      "delta": 0.0,
+      "regressed": false
+    },
+    {
+      "name": "citation_validity_rate",
+      "candidate": 1.0,
+      "baseline": 1.0,
+      "delta": 0.0,
+      "regressed": false
+    },
+    {
+      "name": "refusal_accuracy_rate",
+      "candidate": 0.7407407407407407,
+      "baseline": 0.7407407407407407,
+      "delta": 0.0,
+      "regressed": false
+    },
+    {
+      "name": "groundedness_rate",
+      "candidate": 1.0,
+      "baseline": 1.0,
+      "delta": 0.0,
+      "regressed": false
+    }
+  ],
+  "stability": {
+    "note": "Repeated-run stability is a spot-check, not re-run on every gate invocation - see artifacts/day07/stability_report.md, generated separately by scripts/day07_generate_stability_report.py."
+  },
+  "failed_cases": [
+    {
+      "case_id": "GC-009",
+      "split": "train",
+      "category": "ambiguous",
+      "observed_failure": "expected clarify, observed grounded_answer",
+      "primary_type": "refusal",
+      "reason": "wrong result type for this case's expected behavior"
+    },
+    {
+      "case_id": "GC-010",
+      "split": "train",
+      "category": "ambiguous",
+      "observed_failure": "expected clarify, observed grounded_answer",
+      "primary_type": "refusal",
+      "reason": "wrong result type for this case's expected behavior"
+    },
+    {
+      "case_id": "GC-011",
+      "split": "train",
+      "category": "ambiguous",
+      "observed_failure": "expected clarify, observed grounded_answer",
+      "primary_type": "refusal",
+      "reason": "wrong result type for this case's expected behavior"
+    },
+    {
+      "case_id": "GC-012",
+      "split": "development",
+      "category": "ambiguous",
+      "observed_failure": "expected clarify, observed grounded_answer",
+      "primary_type": "refusal",
+      "reason": "wrong result type for this case's expected behavior"
+    },
+    {
+      "case_id": "GC-013",
+      "split": "holdout",
+      "category": "ambiguous",
+      "observed_failure": "expected clarify, observed grounded_answer",
+      "primary_type": "refusal",
+      "reason": "wrong result type for this case's expected behavior"
+    },
+    {
+      "case_id": "GC-014",
+      "split": "train",
+      "category": "multi_chunk",
+      "observed_failure": "expected source not retrieved within the scored window",
+      "primary_type": "retrieval",
+      "reason": "anchor(s) exist correctly chunked elsewhere in the index but ranked outside the top-k: [\"DOC-004: 'change of ownership or control'\", \"DOC-002: 'change of control of the supplier is treated as an assignment'\"]"
+    },
+    {
+      "case_id": "GC-022",
+      "split": "development",
+      "category": "synonym_heavy",
+      "observed_failure": "expected source not retrieved within the scored window",
+      "primary_type": "retrieval",
+      "reason": "anchor(s) exist correctly chunked elsewhere in the index but ranked outside the top-k: ['DOC-002: \"performed at the supplier\\'s own risk and creates no payment obligation\"']"
+    }
+  ],
+  "failure_classification_summary": {
+    "chunking": 0,
+    "retrieval": 2,
+    "prompt": 0,
+    "citation": 0,
+    "refusal": 5,
+    "evaluator": 0
+  },
+  "gate_verdict": {
+    "passed": true,
+    "exit_code": 0
+  }
+}

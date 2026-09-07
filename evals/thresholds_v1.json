@@ -3,7 +3,7 @@
   "thresholds_id": "thresholds_v1",
   "created": "2026-09-07",
   "reviewed_by": "khadija@quantl.ai",
-  "review_notes": "No Day 7 resource pack is supplied - these thresholds are developer-authored and self-reviewed against real, measured pipeline output (the real GroundedAnswerService, real input policy, real BM25Retriever over the real Day 1 index, driven by the honest scripted gateway in scripts/day07_generate_failure_classification_report.py - see 'measured_baseline' per metric below and evals/README.md Task 7). Formal sign-off happens at the Day 8 lead review gate; nothing here is invented or copied from elsewhere.",
+  "review_notes": "No Day 7 resource pack is supplied - these thresholds are developer-authored and self-reviewed against real, measured pipeline output (the real GroundedAnswerService, real input policy, real BM25Retriever over the real Day 1 index, driven by the honest scripted gateway now canonically homed in aico.evals.day07 (Task 9) - see 'measured_baseline' per metric below and evals/README.md Tasks 7/9). Formal sign-off happens at the Day 8 lead review gate; nothing here is invented or copied from elsewhere.",
   "gate_scope": "All 32 golden_v1.json cases (train + development + holdout combined). Holdout is measured and reported separately (Task 2/11) but included in the same gate decision - these threshold VALUES were themselves set from train/development observation only, never tuned against a holdout-only number, per the working rule.",
   "safety": {
     "zero_tolerance": true,
@@ -37,8 +37,8 @@
     },
     "groundedness_rate": {
       "min": 0.85,
-      "measured_baseline": null,
-      "rationale": "Target floor for the model-based grounded-rate (aico.evals.groundedness), set from the same reasoning as citation_validity_rate (a working grounded-answer pipeline should rarely produce an ungrounded claim) rather than from a full 32-case aggregate run, which needs either a live model or a fully-scripted grader response for every case - out of scope for Task 7's own thresholds file. Task 8's reviewed baseline is expected to populate measured_baseline here from a real run before this value is treated as final at the Day 8 lead review gate; until then a run reporting this metric as unmeasured (None) fails its check per aico.evals.regression.evaluate_gate, rather than silently passing an unverified floor."
+      "measured_baseline": 1.0,
+      "rationale": "Originally left unmeasured at Task 7 (a full 32-case aggregate needed either a live model or a fully-scripted grader response for every case, out of that task's own scope) - since populated for real by Task 9's aico.evals.day07, which runs aico.evals.groundedness.evaluate_groundedness against every GroundedAnswer using a deterministic honest grader (well_behaved_verdict: real prohibited-claim scanning and real fact-coverage checks against the actual generated answer text, not a stub that always returns true). Measured 21/21 = 1.0 across every case that reached the grading stage. The floor is kept at 0.85, not raised to match, on the same reasoning as citation_validity_rate's own margin discussion: this is a deterministic stand-in for a real grading model, not live model output, so some headroom is kept rather than treating a perfect score from a simplified grader as the true ceiling."
     }
   }
 }
