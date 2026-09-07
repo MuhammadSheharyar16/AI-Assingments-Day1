@@ -38,7 +38,12 @@ from aico.platform.config import (
     RouteEndpoint,
     RoutingPolicy,
 )
-from aico.platform.errors import GatewayFallbackBlockedError, GatewayServerError
+from aico.platform.errors import (
+    GatewayAuthenticationError,
+    GatewayBadRequestError,
+    GatewayFallbackBlockedError,
+    GatewayServerError,
+)
 from aico.platform.model_gateway import (
     CancellationToken,
     ChatMessage,
@@ -283,6 +288,105 @@ def test_cancellation_is_never_treated_as_a_trigger_for_fallback():
         gateway.embed(EmbedRequest(texts=["x"], cancellation=token))
     assert primary.calls == 0
     assert fallback.calls == 0
+
+
+class AuthFailingTransport:
+    """Primary transport that always fails with a non-retryable
+    authentication error - the credential is wrong, not the route."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def embed(self, *, model_alias, texts, timeout_seconds):
+        self.calls += 1
+        raise GatewayAuthenticationError("primary rejected the identity's token")
+
+    def chat(self, *, model_alias, messages, max_output_tokens, timeout_seconds):
+        self.calls += 1
+        raise GatewayAuthenticationError("primary rejected the identity's token")
+
+
+class BadRequestFailingTransport:
+    """Primary transport that always fails with a non-retryable bad-request
+    error - the request itself is malformed, not the route."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def embed(self, *, model_alias, texts, timeout_seconds):
+        self.calls += 1
+        raise GatewayBadRequestError("primary rejected the request as malformed")
+
+    def chat(self, *, model_alias, messages, max_output_tokens, timeout_seconds):
+        self.calls += 1
+        raise GatewayBadRequestError("primary rejected the request as malformed")
+
+
+# ── 7. non-retryable primary failure is never a fallback candidate ─────
+
+def test_authentication_failure_at_primary_never_triggers_fallback():
+    # Fallback is fully compatible and enabled - a non-retryable
+    # authentication failure must still never be handed to it. Switching
+    # routes cannot fix a rejected credential.
+    primary = AuthFailingTransport()
+    fallback = SucceedingTransport()
+    config = _make_config(fallback_enabled=True, fallback_route=FULLY_COMPATIBLE_FALLBACK_ROUTE)
+    gateway = ModelGateway(config, primary, fallback_transport=fallback, sleep=lambda s: None)
+
+    with pytest.raises(GatewayAuthenticationError):
+        gateway.chat(ChatRequest(messages=[ChatMessage(role="user", content="hi")]))
+
+    assert primary.calls == 1  # non-retryable - no retry either
+    assert fallback.calls == 0  # never even considered
+
+
+def test_bad_request_failure_at_primary_never_triggers_fallback():
+    primary = BadRequestFailingTransport()
+    fallback = SucceedingTransport()
+    config = _make_config(fallback_enabled=True, fallback_route=FULLY_COMPATIBLE_FALLBACK_ROUTE)
+    gateway = ModelGateway(config, primary, fallback_transport=fallback, sleep=lambda s: None)
+
+    with pytest.raises(GatewayBadRequestError):
+        gateway.embed(EmbedRequest(texts=["x"]))
+
+    assert primary.calls == 1
+    assert fallback.calls == 0
+
+
+# ── 8. aggregated retry_count reflects both legs, never an undercount ──
+
+def test_fallback_retry_count_folds_in_the_primarys_spent_attempts():
+    # Primary is retryable (server_error) and exhausts its own ceiling
+    # (max_attempts=2 in _make_config -> 2 failed primary calls); fallback
+    # then needs one retry of its own before succeeding. The final
+    # retry_count must account for every call made, not just the
+    # fallback leg's own count.
+    primary = FailingTransport()
+
+    class FlakyOnceThenSucceedFallback:
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, *, model_alias, messages, max_output_tokens, timeout_seconds):
+            self.calls += 1
+            if self.calls < 2:
+                raise GatewayServerError("fallback flaky once")
+            return TransportResult(content="fallback ok", dimensions=None, token_usage=None)
+
+        def embed(self, *, model_alias, texts, timeout_seconds):
+            raise AssertionError("not exercised by this test")
+
+    fallback = FlakyOnceThenSucceedFallback()
+    config = _make_config(fallback_enabled=True, fallback_route=FULLY_COMPATIBLE_FALLBACK_ROUTE)
+    gateway = ModelGateway(config, primary, fallback_transport=fallback, sleep=lambda s: None)
+
+    result = gateway.chat(ChatRequest(messages=[ChatMessage(role="user", content="hi")]))
+
+    assert result.content == "fallback ok"
+    assert primary.calls == 2  # exhausted its own 2-attempt ceiling
+    assert fallback.calls == 2  # one retry, then success
+    # 2 spent primary attempts + 1 fallback retry = 3
+    assert result.metadata.retry_count == 3
 
 
 def test_successful_primary_call_never_touches_the_fallback_transport():

@@ -108,8 +108,15 @@ on a provider-specific exception class.
 ### Routing and fallback
 
 Fallback to a second `Transport` (`fallback_transport`) happens **only**
-when all of: (a) a fallback transport is actually configured - policy alone
-never conjures one up, (b) `routing.fallback.enabled` is `true`, and (c)
+when all of: (a) the primary failure is `GatewayRetryCeilingExceededError`
+- i.e. a *retryable* category (`timeout`/`rate_limit`/`server_error`) that
+exhausted its own retry ceiling. A non-retryable primary failure
+(`authentication`, `bad_request`, or an unnormalized transport bug) is
+never even a fallback candidate: the credential or the request itself is
+wrong, not the route, so no compatibility check can make switching routes
+the right move - this is checked *before* any policy/compatibility
+evaluation, (b) a fallback transport is actually configured - policy alone
+never conjures one up, (c) `routing.fallback.enabled` is `true`, and (d)
 every axis `routing.fallback.require_compatibility` marks as required
 (`provider`, `region`, `data_boundary`, `risk`, `budget`) is actually
 compatible between `routing.primary` and `routing.fallback`'s declared
@@ -121,6 +128,19 @@ condition raises `GatewayFallbackBlockedError`, chaining the primary
 failure as `cause` - the caller always gets a deterministic, explainable
 result. Cancellation is never treated as a trigger for fallback; it always
 propagates as itself.
+
+**Correction (2026-09-07)**: an earlier version of this gateway evaluated
+only the four compatibility axes before falling back, without first
+checking whether the primary's failure was retryable at all - so a
+non-retryable `authentication`/`bad_request` failure at the primary could
+still succeed silently through a policy-compatible fallback, masking a
+credential or request problem as a routing detail. `_call_with_fallback`
+now gates on `isinstance(primary_error, GatewayRetryCeilingExceededError)`
+first, before any compatibility check runs. See
+`tests/test_model_gateway_routing.py`'s
+`test_authentication_failure_at_primary_never_triggers_fallback` and
+`test_bad_request_failure_at_primary_never_triggers_fallback`, and
+`artifacts/day03/gateway_demo.md` scenario 7.
 
 **Why silent cross-provider/data-boundary fallback is prohibited**: a
 data-residency or risk-classification requirement that holds for the
@@ -143,6 +163,17 @@ report one - never invented), `budget_status`
 (`within_budget`/`exceeded`/`unknown`), `used_fallback`. Never prompt or
 completion text - by construction, `CallMetadata` has no field that could
 hold either.
+
+`retry_count` on a fallback-served result folds in *both* legs: the
+attempts the primary actually spent before exhausting its own ceiling
+(`GatewayRetryCeilingExceededError.attempts_made`) plus however many
+retries the fallback leg itself needed. **Correction (2026-09-07)**: this
+used to report only the fallback leg's own count, silently discarding the
+primary's spent attempts - e.g. a primary that failed 3 times before
+falling back, followed by 1 fallback retry, previously reported
+`retry_count=1` instead of `4`, even though 5 transport calls were
+actually made. See
+`test_fallback_retry_count_folds_in_the_primarys_spent_attempts`.
 
 ### Logging
 

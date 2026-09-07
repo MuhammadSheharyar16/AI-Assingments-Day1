@@ -81,10 +81,26 @@ class GatewayServerError(ModelGatewayError):
 
 class GatewayRetryCeilingExceededError(ModelGatewayError):
     """A retryable failure kept failing until the configured attempt
-    ceiling was reached. Carries the last underlying error as `cause`."""
+    ceiling was reached. Carries the last underlying error as `cause`, and
+    how many attempts were actually made as `attempts_made` - the gateway
+    uses that count both to decide fallback eligibility (only a primary
+    failure of this type is ever a fallback candidate - see
+    ModelGateway._call_with_fallback) and to fold the primary's spent
+    attempts into the final CallMetadata.retry_count when a fallback goes
+    on to serve the call."""
 
     category = "retry_ceiling_exceeded"
     retryable = False
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        cause: BaseException | None = None,
+        attempts_made: int | None = None,
+    ):
+        super().__init__(message, cause=cause)
+        self.attempts_made = attempts_made
 
 
 class GatewayFallbackBlockedError(ModelGatewayError):

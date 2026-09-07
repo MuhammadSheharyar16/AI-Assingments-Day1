@@ -26,16 +26,25 @@ Responsibilities:
   a caller of this module never needs to know what raised the underlying
   exception.
 - Routing/fallback (Task 4): fallback to a second `Transport` happens ONLY
-  when (a) a `fallback_transport` is actually configured, (b)
-  `config.routing.fallback.enabled` is true, and (c) every axis
+  when (a) the primary failure is `GatewayRetryCeilingExceededError` -
+  i.e. a *retryable* category (timeout/rate_limit/server_error) that
+  exhausted its own retry ceiling; a non-retryable primary failure
+  (authentication/bad_request/an unnormalized transport bug) is never a
+  fallback candidate at all, because the credential or the request is
+  wrong, not the route, and no policy check can fix that, (b) a
+  `fallback_transport` is actually configured, (c)
+  `config.routing.fallback.enabled` is true, and (d) every axis
   `routing.fallback.require_compatibility` marks as required (provider/
   region/data_boundary/risk/budget) is actually compatible between the
   primary and fallback routes. Any missing condition raises
   `GatewayFallbackBlockedError` (chaining the primary failure) instead of
   silently trying a different provider/region/data boundary - never
   cancellation, which always propagates as itself. A successful fallback
-  call is marked `used_fallback=True` in its metadata, so the caller's
-  result is always explainable, never a silent switch.
+  call is marked `used_fallback=True` in its metadata, and its
+  `retry_count` folds in the attempts the primary already spent (via
+  `GatewayRetryCeilingExceededError.attempts_made`) plus whatever the
+  fallback leg itself needed - so the caller's result is always
+  explainable and its retry accounting is never an undercount.
 - Logging (Task 5): every call this module makes logs exactly one
   structured line via the `aico.platform.model_gateway` logger - success,
   a retry, hitting the retry ceiling, a non-retryable failure, an
@@ -417,6 +426,28 @@ class ModelGateway:
             if self._fallback_transport is None:
                 raise  # no fallback path configured - nothing to fall back to
 
+            if not isinstance(primary_error, GatewayRetryCeilingExceededError):
+                # The primary failed with a non-retryable category (auth,
+                # bad request, or an unnormalized transport bug) - that
+                # means the credential or the request itself is wrong,
+                # never the route, so switching routes cannot fix it.
+                # Fallback is never even considered for this, regardless
+                # of policy - only a retryable failure that exhausted its
+                # own retry ceiling (GatewayRetryCeilingExceededError) is
+                # ever a fallback candidate. See Task 4 / ADR-003.
+                logger.warning(
+                    "gateway.fallback_not_applicable operation=%s model_alias=%s "
+                    "reason=primary_failure_not_retryable category=%s",
+                    operation, model_alias, primary_error.category,
+                )
+                raise
+
+            # attempts actually spent on the primary before giving up on
+            # it - folded into the final retry_count below so a caller
+            # that only sees the fallback leg's own count never
+            # under-reports how many transport calls the operation took.
+            primary_attempts = primary_error.attempts_made or 0
+
             policy = self._config.routing.fallback
             if not policy.enabled:
                 logger.warning(
@@ -444,8 +475,8 @@ class ModelGateway:
                 "gateway.fallback_attempt operation=%s model_alias=%s primary_failure_category=%s",
                 operation, model_alias, primary_error.category,
             )
-            result, retry_count = self._call_with_retry(fallback_call, cancellation, operation, model_alias)
-            return result, retry_count, True
+            result, fallback_retry_count = self._call_with_retry(fallback_call, cancellation, operation, model_alias)
+            return result, primary_attempts + fallback_retry_count, True
 
     def _evaluate_fallback_compatibility(self, *, budget_compatible: bool) -> FallbackCompatibility:
         policy = self._config.routing.fallback
@@ -510,6 +541,7 @@ class ModelGateway:
                         f"{operation} did not succeed within {retry_cfg.max_attempts} attempt(s) "
                         f"(last failure category: {exc.category})",
                         cause=exc,
+                        attempts_made=attempt + 1,
                     ) from exc
                 delay_seconds = self._backoff_delay_seconds(attempt, retry_cfg)
                 logger.info(

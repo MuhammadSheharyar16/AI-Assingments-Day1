@@ -1,11 +1,31 @@
 # Day 3 Gateway Demonstration
 
 All output below is copy/pasted from an actual run in this checkout on
-2026-08-31, not hand-transcribed. Regenerate scenarios 1-6 with:
+2026-09-07, not hand-transcribed. Regenerate scenarios 1-7 with:
 
 ```
 python scripts/day03_gateway_demo.py
 ```
+
+**Correction (2026-09-07)**: a validation pass found that a non-retryable
+primary failure (`authentication`/`bad_request`) could still trigger a
+policy-compatible fallback - the fallback gate checked the five
+compatibility axes but never whether the primary failure was retryable in
+the first place, so an identity/credential problem at the primary could
+silently succeed through a different route. `ModelGateway._call_with_fallback`
+now only ever considers fallback when the primary failure is
+`GatewayRetryCeilingExceededError` (a retryable category that exhausted its
+own retry ceiling) - never for a non-retryable category. The same pass
+found `retry_count` undercounted: a successful fallback reported only the
+fallback leg's own retry count, discarding however many attempts the
+primary spent before giving up. `GatewayRetryCeilingExceededError` now
+carries `attempts_made`, and a successful fallback's `retry_count` is
+`primary_attempts_made + fallback_retry_count`. Scenario 7 below and
+`tests/test_model_gateway_routing.py`'s three new tests
+(`test_authentication_failure_at_primary_never_triggers_fallback`,
+`test_bad_request_failure_at_primary_never_triggers_fallback`,
+`test_fallback_retry_count_folds_in_the_primarys_spent_attempts`) cover
+both fixes.
 
 **Environment note**: this checkout has no lead-provided Microsoft Foundry
 endpoint or identity (`config/model-routing.yaml` still carries the pack's
@@ -34,7 +54,7 @@ its docstring).
 [embed] success - sanitized metadata:
     operation = 'embed'
     model_alias = 'demo-embed-alias'
-    latency_ms = 0.008
+    latency_ms = 0.01
     retry_count = 0
     token_usage = None
     budget_status = 'within_budget'
@@ -53,7 +73,7 @@ completion content itself is never printed.
 [chat] success - sanitized metadata:
     operation = 'chat'
     model_alias = 'demo-chat-alias'
-    latency_ms = 0.006
+    latency_ms = 0.008
     retry_count = 0
     token_usage = {'prompt_tokens': 42, 'completion_tokens': 17}
     budget_status = 'within_budget'
@@ -72,7 +92,7 @@ transport calls actually made.
 [embed] success - sanitized metadata:
     operation = 'embed'
     model_alias = 'demo-embed-alias'
-    latency_ms = 92.85
+    latency_ms = 228.192
     retry_count = 1
     token_usage = None
     budget_status = 'within_budget'
@@ -124,7 +144,25 @@ gateway.fallback_blocked operation=chat model_alias=demo-chat-alias blocked_axes
     fallback transport call count: 0 (never invoked)
 ```
 
-## 7. Repository SDK-import check
+## 7. Non-retryable primary failure is never a fallback candidate
+
+Fallback is fully **compatible and enabled** here - the only thing that
+would previously have let this succeed via fallback. `authentication` is a
+non-retryable category, so `GatewayAuthenticationError` propagates
+unchanged and the (never-invoked) fallback transport's call count stays at
+zero, exactly like scenario 5's `bad_request` case (immediate failure, no
+retry) but now also proven never to reach the fallback gate at all.
+
+```
+== 7. Non-retryable primary failure is never a fallback candidate ==
+gateway.call_failed operation=chat model_alias=demo-chat-alias category=authentication retryable=False
+gateway.fallback_not_applicable operation=chat model_alias=demo-chat-alias reason=primary_failure_not_retryable category=authentication
+[chat] failed - GatewayAuthenticationError (category=authentication, retryable=False)
+    primary transport calls: 1 (non-retryable - no retry either)
+    fallback transport call count: 0 (never even considered - fallback is compatible AND enabled, but the primary failure category is non-retryable)
+```
+
+## 8. Repository SDK-import check
 
 ```
 $ grep -rn "^\s*import requests\|^\s*from requests" src | grep -v platform
@@ -139,7 +177,7 @@ exactly one file in the repository, and it is inside the platform package -
 matching the acceptance target "No model SDK import outside the platform
 package."
 
-## 8. Day 2 regression result
+## 9. Day 2 regression result
 
 Live Hit@1/Hit@5/MRR numbers against the real Foundry endpoint aren't
 reproducible in this checkout (no lead-provided access - see the
@@ -168,10 +206,21 @@ tests\test_search.py ........                                            [100%]
 77 passed in 0.39s
 ```
 
-Full suite, for completeness (includes every Day 3 gateway/adapter test
-from Tasks 1-6 as well):
+Day 3 gateway/adapter suite, for completeness (includes every Day 3 test
+from Tasks 1-6, plus the three added by the fallback-eligibility/retry-count
+correction above):
 
 ```
-$ pytest -q
-149 passed in 0.53s
+$ pytest -q tests/test_model_gateway.py tests/test_model_gateway_retry.py \
+    tests/test_model_gateway_routing.py tests/test_model_gateway_logging.py \
+    tests/test_foundry_adapter_identity.py tests/test_foundry_adapter_normalization.py \
+    tests/test_day2_regression.py tests/test_embed.py tests/test_embedding_provider.py \
+    tests/test_chunker.py tests/test_bm25.py tests/test_ingest.py tests/test_day01_eval.py \
+    tests/test_vector_index.py tests/test_hybrid.py tests/test_search.py
+152 passed in 1.13s
 ```
+
+Note: this checkout has since grown past Day 3 (Days 4-6 are also present),
+so a bare `pytest -q` here now runs the whole repository's suite, not just
+Day 3's - `493 passed` at time of writing. The `149`/`152` counts above are
+the Day-3-scoped subset specifically, which is what this artifact is about.

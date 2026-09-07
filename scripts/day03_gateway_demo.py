@@ -43,7 +43,7 @@ from aico.platform.config import (
     RouteEndpoint,
     RoutingPolicy,
 )
-from aico.platform.errors import GatewayFallbackBlockedError, error_for_category
+from aico.platform.errors import GatewayAuthenticationError, GatewayFallbackBlockedError, error_for_category
 from aico.platform.model_gateway import (
     ChatMessage,
     ChatRequest,
@@ -195,6 +195,27 @@ def scenario_blocked_fallback() -> None:
         print(f"    fallback transport call count: {fallback.call_count} (never invoked)")
 
 
+def scenario_non_retryable_never_falls_back() -> None:
+    print("\n== 7. Non-retryable primary failure is never a fallback candidate ==")
+    # Fallback is fully compatible AND enabled - the only thing standing
+    # between the primary's failure and a fallback-served success is that
+    # authentication is non-retryable. It must never even be considered.
+    compatible_fallback_route = RouteEndpoint(
+        provider="microsoft-foundry", region="uk-south", data_boundary="uk", risk_class="standard"
+    )
+    config = make_config(fallback_enabled=True, fallback_route=compatible_fallback_route)
+    primary = ScriptedTransport(["authentication"])
+    fallback = ScriptedTransport(["success"])  # must never be called
+    gateway = ModelGateway(config, primary, fallback_transport=fallback)
+    try:
+        gateway.chat(ChatRequest(messages=[ChatMessage(role="user", content="<prompt intentionally not printed>")]))
+    except GatewayAuthenticationError as exc:
+        print_error("chat", exc)
+        print(f"    primary transport calls: {primary.call_count} (non-retryable - no retry either)")
+        print(f"    fallback transport call count: {fallback.call_count} (never even considered - "
+              f"fallback is compatible AND enabled, but the primary failure category is non-retryable)")
+
+
 def main() -> None:
     scenario_embed_success()
     scenario_chat_success()
@@ -202,6 +223,7 @@ def main() -> None:
     scenario_timeout()
     scenario_non_retryable_failure()
     scenario_blocked_fallback()
+    scenario_non_retryable_never_falls_back()
 
 
 if __name__ == "__main__":
