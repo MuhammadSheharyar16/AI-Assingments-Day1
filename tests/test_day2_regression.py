@@ -144,7 +144,7 @@ def test_gateway_backed_provider_preserves_batch_order():
     direct = _direct_provider()
     via_gateway = _gateway_backed_provider()
 
-    for text, vector in zip(texts, via_gateway.embed(texts)):
+    for text, vector in zip(texts, via_gateway.embed(texts), strict=True):
         assert direct.embed([text])[0] == vector
 
 

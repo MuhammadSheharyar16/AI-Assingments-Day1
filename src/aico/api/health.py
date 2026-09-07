@@ -56,8 +56,8 @@ or, at most, an exception's class name.
 from __future__ import annotations
 
 import pathlib
+from collections.abc import Callable
 from enum import Enum
-from typing import Callable
 
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, ConfigDict

@@ -14,7 +14,7 @@ Responsibilities:
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -50,9 +50,9 @@ def embed_chunks(
         batch = to_embed[start:start + EMBED_BATCH_SIZE]
         vectors = provider.embed([c["text"] for c in batch])
         call_count += 1
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = datetime.now(UTC).isoformat()
 
-        for chunk, vector in zip(batch, vectors):
+        for chunk, vector in zip(batch, vectors, strict=True):
             if len(vector) != provider.dimensions:
                 raise ValueError(
                     f"provider {provider.model_alias!r} returned a "

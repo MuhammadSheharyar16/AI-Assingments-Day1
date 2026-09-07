@@ -217,10 +217,6 @@ def _run_refusal_stability(dataset: GoldenDataset):
 def _run_groundedness_stability(dataset: GoldenDataset, cases_by_id: dict):
     results = []
 
-    grader_plans: dict[str, tuple[str, list[str]]] = {
-        # case_id: (fixed answer under review, list of verdict JSON strings, one per run)
-    }
-
     case = cases_by_id["GC-002"]
     chunks = _retrieve(case.question)
     answer = "Either party may terminate for convenience by giving sixty days written notice."

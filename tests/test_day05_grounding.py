@@ -33,7 +33,7 @@ from aico.rag.answer_service import (
 )
 from aico.rag.citation_validator import EvidenceChunk
 from aico.rag.prompt_builder import build_prompt
-from aico.security.input_policy import PolicyOutcome, evaluate_policy
+from aico.security.input_policy import evaluate_policy
 from aico.security.normalization import normalize_input
 
 PACK_DIR = pathlib.Path(__file__).resolve().parent.parent / "data" / "day05_pack"
@@ -449,7 +449,6 @@ def test_supplied_answer_cases_produce_their_expected_result_type(case):
     chunks = [EvidenceChunk(chunk_id=c["chunk_id"], source_file="synthetic.md", text=c["text"]) for c in case["retrieved"]]
 
     if case["expected_result"] == "grounded_answer":
-        answer_text = case.get("supported_fact", case.get("expected_citation_ids") and "supported.") or "supported."
         gateway = FakeGateway(
             _cited_answer_json(
                 answer=case.get("supported_fact", "Synthetic supplier invoices must be submitted within 30 calendar days of delivery."),
@@ -510,8 +509,16 @@ def test_day2_retrieval_path_evidence_comes_from_the_real_bm25_index():
 
 def test_day3_gateway_path_model_call_goes_through_the_real_model_gateway_class():
     from aico.platform.config import (
-        BudgetsConfig, ChatBudget, EmbeddingBudget, FallbackPolicy, GatewayConfig,
-        ModelAliases, ResilienceConfig, RetryConfig, RouteEndpoint, RoutingPolicy,
+        BudgetsConfig,
+        ChatBudget,
+        EmbeddingBudget,
+        FallbackPolicy,
+        GatewayConfig,
+        ModelAliases,
+        ResilienceConfig,
+        RetryConfig,
+        RouteEndpoint,
+        RoutingPolicy,
     )
     from aico.platform.model_gateway import ModelGateway, TransportResult
 

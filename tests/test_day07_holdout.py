@@ -20,7 +20,6 @@ from aico.evals.dataset import (
     group_by_split,
     holdout_cases,
     load_dataset,
-    parse_dataset,
     tunable_cases,
 )
 

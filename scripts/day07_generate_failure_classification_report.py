@@ -31,8 +31,6 @@ from aico.evals.dataset import load_dataset
 from aico.evals.day07 import DEFAULT_TOP_K as TOP_K
 from aico.evals.day07 import ScriptedGateway as _ScriptedGateway
 from aico.evals.day07 import evaluate_all_cases, load_full_index_chunks
-from aico.evals.day07 import run_case as _run_case
-from aico.evals.day07 import well_behaved_response as _well_behaved_response
 from aico.evals.failure_classifier import classify_failure, render_failure_classification_report
 from aico.evals.groundedness import evaluate_groundedness
 from aico.rag.answer_service import BM25Retriever, GroundedAnswer

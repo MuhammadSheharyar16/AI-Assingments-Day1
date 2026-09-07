@@ -36,7 +36,8 @@ already rely on, and does not exhibit that hang.
 """
 from __future__ import annotations
 
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 import anyio
 from starlette.requests import Request

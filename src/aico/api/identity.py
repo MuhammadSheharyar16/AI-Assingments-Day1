@@ -37,8 +37,8 @@ boundary itself. Tests do not need a real token at all - they override
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 import jwt
 from fastapi import Request

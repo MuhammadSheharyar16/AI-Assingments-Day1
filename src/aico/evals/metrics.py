@@ -66,7 +66,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from aico.evals.dataset import GoldenCase, GoldenDataset, group_by_split, load_dataset
+from aico.evals.dataset import GoldenCase, group_by_split, load_dataset
 from aico.evals.day01 import normalise
 from aico.rag.answer_service import (
     AnswerResult,

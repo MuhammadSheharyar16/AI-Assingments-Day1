@@ -38,7 +38,7 @@ field (a response that omits the key is a contract failure, per
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -114,5 +114,5 @@ class ResponseEnvelope(BaseModel):
     request_id: str = Field(min_length=1, description="Non-empty caller-supplied request id.")
     result: CitedAnswer
     model_alias: str = Field(min_length=1, description="Non-empty model alias that produced the result.")
-    trace_id: Optional[str] = Field(default=None, min_length=1)
-    warning: Optional[str] = Field(default=None, min_length=1)
+    trace_id: str | None = Field(default=None, min_length=1)
+    warning: str | None = Field(default=None, min_length=1)

@@ -18,7 +18,13 @@ import pytest
 from aico.evals.dataset import GoldenCase
 from aico.evals.failure_classifier import FAILURE_TAXONOMY, classify_failure, render_failure_classification_report
 from aico.evals.groundedness import GroundednessEvaluation, GroundednessEvaluationFailure, GroundednessVerdict
-from aico.evals.metrics import AttackCheckResult, CitationCheckResult, RefusalCheckResult, RetrievalCaseResult, SourceMatch
+from aico.evals.metrics import (
+    AttackCheckResult,
+    CitationCheckResult,
+    RefusalCheckResult,
+    RetrievalCaseResult,
+    SourceMatch,
+)
 from aico.rag.answer_service import GroundedAnswer, TypedFailure
 
 

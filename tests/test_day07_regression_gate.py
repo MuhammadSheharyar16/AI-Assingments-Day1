@@ -14,8 +14,6 @@ from __future__ import annotations
 import json
 import pathlib
 
-import pytest
-
 from aico.evals import day07
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]

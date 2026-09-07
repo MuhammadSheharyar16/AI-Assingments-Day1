@@ -24,7 +24,7 @@ from aico.evals.metrics import (
     score_refusal,
     score_retrieval,
 )
-from aico.rag.answer_service import BM25Retriever, Blocked, Clarify, GroundedAnswer, InsufficientEvidence, TypedFailure
+from aico.rag.answer_service import Blocked, BM25Retriever, Clarify, GroundedAnswer, InsufficientEvidence, TypedFailure
 from aico.rag.citation_validator import EvidenceChunk
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]

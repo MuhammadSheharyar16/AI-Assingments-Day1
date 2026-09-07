@@ -23,7 +23,6 @@ from aico.evals.metrics import AttackCheckResult
 from aico.evals.regression import (
     REQUIRED_METRIC_NAMES,
     EvaluationSummary,
-    GateResult,
     MetricThreshold,
     Thresholds,
     ThresholdValidationError,

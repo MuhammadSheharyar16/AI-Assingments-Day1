@@ -29,7 +29,7 @@ from fastapi.testclient import TestClient
 
 from aico.api.app import app
 from aico.api.dependencies import get_model_gateway_health_check, get_retrieval_health_check
-from aico.api.health import DependencyCheckResult, DependencyStatus, READINESS_POLICY
+from aico.api.health import READINESS_POLICY, DependencyCheckResult, DependencyStatus
 
 FIXTURES_DIR = pathlib.Path(__file__).resolve().parent / "fixtures" / "day06"
 HEALTH_CASES = {

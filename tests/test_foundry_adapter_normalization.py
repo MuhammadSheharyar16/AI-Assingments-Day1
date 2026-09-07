@@ -15,7 +15,9 @@ unexpected status code that isn't one of the specifically-handled ones.
 """
 from __future__ import annotations
 
+import pytest
 import requests
+from azure.core.credentials import AccessToken
 
 from aico.platform.config import (
     BudgetsConfig,
@@ -38,9 +40,6 @@ from aico.platform.errors import (
     ModelGatewayError,
 )
 from aico.platform.foundry_adapter import FoundryAdapter
-
-import pytest
-from azure.core.credentials import AccessToken
 
 
 def _make_config() -> GatewayConfig:

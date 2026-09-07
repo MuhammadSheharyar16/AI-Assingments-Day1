@@ -47,7 +47,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from typing import Any, Optional
+from typing import Any
 
 API_LOGGER_NAME = "aico.api"
 
@@ -74,12 +74,12 @@ def configure_logging(level: int = logging.INFO) -> None:
 
 def log_event(
     *,
-    request_id: Optional[str],
-    correlation_id: Optional[str],
+    request_id: str | None,
+    correlation_id: str | None,
     stage: str,
     outcome: str,
-    latency_ms: Optional[float] = None,
-    error_category: Optional[str] = None,
+    latency_ms: float | None = None,
+    error_category: str | None = None,
     level: int = logging.INFO,
     **safe_fields: Any,
 ) -> None:

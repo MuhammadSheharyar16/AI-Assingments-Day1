@@ -1,0 +1,96 @@
+# Day 7 Task 13 — CI quality gate.
+#
+# Required pipeline, in order, none of it optional and none of it allowed
+# to soft-fail (working rule: no allow_failure/continue-on-error on the
+# evaluation step):
+#
+#     uv sync --frozen
+#  -> uv run ruff check .
+#  -> uv run pytest -q
+#  -> uv run python -m aico.evals.day07
+#
+# Runs from a clean GitHub-hosted runner every time (no self-hosted state,
+# no cache of anything this workflow doesn't itself create) - "run in CI
+# from a clean environment" is not aspirational here, it's what a fresh
+# `ubuntu-latest` VM already gives for free.
+name: Day 7 Quality Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    name: Lint, test, and regression gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Pinned to an exact release (not a floating major tag - none is
+      # published for this action) for the same reproducibility reason
+      # uv.lock and the Dockerfile's uv:0.5.11 base image are pinned.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Set up Python (from .python-version)
+        run: uv python install
+
+      # Required step 1, exact command: uv sync --frozen. Installs exactly
+      # what uv.lock records - never re-resolves, never touches a version
+      # newer than what's committed. Includes the dev group (ruff/pytest),
+      # since both later steps need it.
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      # Required step 2, exact command: uv run ruff check . - see
+      # pyproject.toml's [tool.ruff] and docs/adr/ADR-005-ruff-adoption.md
+      # for the reviewed rule selection this checks against.
+      - name: Lint
+        run: uv run ruff check .
+
+      # Not one of the four required commands, but a necessary
+      # precondition for both of them: data/index/ is a gitignored build
+      # output (never committed - see README "Run the tests"), and two
+      # existing test files plus the Day 7 regression gate itself all need
+      # the real index. A clean checkout has none, so it is built here,
+      # identically to the documented local command.
+      - name: Build the retrieval index
+        run: uv run python -m aico.retrieval.ingest --input data/documents --out data/index --tokens 300 --overlap 50
+
+      # Required step 3, exact command: uv run pytest -q
+      - name: Run tests
+        run: uv run pytest -q
+
+      # Required step 4, exact command: uv run python -m aico.evals.day07
+      # Deliberately no `continue-on-error`, no `allow_failure` equivalent,
+      # and no `--update-baseline` flag anywhere in this workflow - the
+      # working rule is explicit that a failed regression gate must fail
+      # CI, and that CI must never update the approved baseline (that is
+      # a separate, deliberate, human-run workflow - see
+      # scripts/day07_update_baseline.py / evals/README.md Task 8). A
+      # non-zero exit from this step fails this job and this workflow run,
+      # exactly as every other step already does by GitHub Actions'
+      # ordinary default behavior - nothing here needs to override that.
+      - name: Day 7 regression gate
+        run: uv run python -m aico.evals.day07
+
+      # Diagnostic only - runs whether the gate above passed or failed, so
+      # a failed run's actual reports are still inspectable from the
+      # workflow run page. This step cannot change whether the job/run is
+      # reported as failed; that was already decided by the step above.
+      - name: Upload evaluation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day07-evaluation-artifacts
+          path: artifacts/day07/
+          if-no-files-found: warn

@@ -43,7 +43,7 @@ def test_embed_preserves_input_order():
     provider = FakeEmbeddingProvider()
     texts = ["first text", "second text", "third text"]
     vectors = provider.embed(texts)
-    for text, vector in zip(texts, vectors):
+    for text, vector in zip(texts, vectors, strict=True):
         assert provider.embed([text])[0] == vector
 
 

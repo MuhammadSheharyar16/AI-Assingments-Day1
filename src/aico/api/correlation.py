@@ -68,7 +68,6 @@ import contextvars
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Optional
 
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
@@ -85,8 +84,8 @@ CORRELATION_ID_HEADER = "X-Correlation-ID"
 # signature in aico.rag/aico.platform. Each request gets its own value -
 # contextvars are per-async-task, so concurrent requests never see each
 # other's IDs.
-_request_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("aico_request_id", default=None)
-_correlation_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+_request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("aico_request_id", default=None)
+_correlation_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "aico_correlation_id", default=None
 )
 
@@ -95,13 +94,13 @@ def new_id() -> str:
     return str(uuid.uuid4())
 
 
-def current_request_id() -> Optional[str]:
+def current_request_id() -> str | None:
     """The current request's request_id, or None outside a request
     (e.g. a unit test that never went through `CorrelationMiddleware`)."""
     return _request_id_var.get()
 
 
-def current_correlation_id() -> Optional[str]:
+def current_correlation_id() -> str | None:
     """The current request's correlation_id, or None outside a request."""
     return _correlation_id_var.get()
 
@@ -112,7 +111,7 @@ class RequestContext:
     correlation_id: str
 
 
-def _clean_id(value: Optional[str]) -> Optional[str]:
+def _clean_id(value: str | None) -> str | None:
     """A caller-supplied header value is accepted as-is once non-blank -
     unlike identity.py's trusted claims, an ID is safe operational
     context, never authorization, so there is nothing here to verify."""

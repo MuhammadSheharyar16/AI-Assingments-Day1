@@ -48,7 +48,7 @@ class VectorEntry:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "VectorEntry":
+    def from_dict(cls, d: dict) -> VectorEntry:
         return cls(
             chunk_id=d["chunk_id"],
             content_hash=d["content_hash"],
@@ -66,7 +66,7 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     if len(a) != len(b):
         raise ValueError(f"dimension mismatch: {len(a)} vs {len(b)}")
 
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(y * y for y in b))
     if norm_a == 0.0 or norm_b == 0.0:
@@ -83,7 +83,7 @@ class VectorCache:
         self._entries: dict[str, VectorEntry] = entries or {}
 
     @classmethod
-    def load(cls, path: Path) -> "VectorCache":
+    def load(cls, path: Path) -> VectorCache:
         cache_file = path / CACHE_FILENAME
         if not cache_file.exists():
             return cls()

@@ -35,7 +35,6 @@ Field names are this project's implementation choice (contract_guidance.md
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -95,7 +94,7 @@ class CitationOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     chunk_id: str
-    source_file: Optional[str] = None
+    source_file: str | None = None
 
 
 class AskResponse(BaseModel):
@@ -108,13 +107,13 @@ class AskResponse(BaseModel):
     request_id: str = Field(description="Server-generated or caller-supplied request identifier.")
     correlation_id: str = Field(description="Correlation identifier shared with logs/spans for this operation.")
     status: AskStatus
-    answer: Optional[str] = Field(default=None, description="The answer text, present only when status=answered.")
+    answer: str | None = Field(default=None, description="The answer text, present only when status=answered.")
     citations: list[CitationOut] = Field(default_factory=list)
-    confidence_label: Optional[str] = None
-    category: Optional[str] = Field(
+    confidence_label: str | None = None
+    category: str | None = Field(
         default=None, description="Stable policy/failure category for a non-answered status."
     )
-    message: Optional[str] = Field(default=None, description="Safe, human-readable explanation.")
+    message: str | None = Field(default=None, description="Safe, human-readable explanation.")
 
 
 def ask_response_from_result(

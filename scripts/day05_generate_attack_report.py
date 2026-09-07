@@ -229,7 +229,7 @@ def render_report(rows: list[FixtureRow]) -> str:
         "empty retrieval) and asserted to agree with the standalone policy call: a `block`/`clarify` outcome "
         "reaches the Model Gateway **zero** times (policy short-circuits before retrieval, prompt-building, or "
         "any model call), and an `allow` outcome reaches it **exactly once**. This run raised no assertion "
-        "failure, so that agreement holds for all {n} fixtures.".format(n=len(rows))
+        f"failure, so that agreement holds for all {len(rows)} fixtures."
     )
     lines.append("")
 

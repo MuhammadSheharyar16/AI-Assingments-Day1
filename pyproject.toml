@@ -22,6 +22,7 @@ dev = [
     "httpx>=0.28.1",
     "pytest>=9.1.1",
     "pytest-timeout>=2.4.0",
+    "ruff>=0.16.6",
 ]
 
 [build-system]
@@ -33,3 +34,47 @@ packages = ["src/aico"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+# Explicit, not ruff's own version-dependent implicit default (working
+# rule: thresholds/config should be explicit and reviewed, not whatever a
+# tool happens to default to today) - Day 7 Task 13 is the first time this
+# repository runs a linter at all, over six days of prior, already-
+# accepted code, so the rule selection below is deliberately the common,
+# widely-adopted "real bug or genuine readability" set (pyflakes,
+# pycodestyle, import sorting, bugbear, pyupgrade) rather than every rule
+# set ruff ships - see docs/adr/ADR-005-ruff-adoption.md for the full
+# rationale, what was fixed vs. suppressed and why, one rule at a time.
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = [
+    "E501",  # line-too-long - this codebase's docstrings/comments are
+             # deliberately long-form narrative prose across all six prior
+             # days (a consistent, already-reviewed style choice, not
+             # something Task 13 should force a mechanical rewrap of), and
+             # no formatter (black/ruff format) is configured to wrap them.
+    "B008",  # function-call-in-default-argument - FastAPI's own Depends(...)
+             # pattern (Day 6, src/aico/api/*.py) is exactly this shape by
+             # design; the framework, not this codebase, calls the
+             # function once per request, not once at import time.
+    "UP042", # replace-str-enum - every enum in this codebase is
+             # deliberately `class X(str, Enum)`, not `StrEnum`, because it
+             # predates this rule and changing the base class touches
+             # Pydantic v2 (de)serialization and isinstance/equality
+             # behavior already exercised by six days of accepted tests -
+             # a modernization, not a bug, and not one to retrofit onto
+             # previously-accepted code as a side effect of adding a linter.
+    "UP047", # non-pep695-generic-function - same reasoning as UP042: a
+             # Python 3.12+ generic-syntax modernization for existing
+             # TypeVar-based generics, not a defect.
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test files intentionally build literal nested config objects (Day 3's
+# GatewayConfig fixtures) inline for readability at the call site, and
+# f-strings with no placeholder are used a few places purely for
+# consistent quoting with an adjacent f-string in the same literal.
+"tests/*" = ["F541"]

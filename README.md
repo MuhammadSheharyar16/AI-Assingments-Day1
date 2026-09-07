@@ -904,6 +904,63 @@ non-zero fail — so this doubles as a containerized quality gate a CI
 runner could invoke directly instead of (or alongside) `uv run` on the
 runner itself.
 
+### CI — `.github/workflows/day07-quality-gate.yml`
+
+GitHub Actions (this repository's real platform — `git remote -v` points
+at `github.com`; no second, fake CI config was added just to match the
+brief's example tree). One job, the exact required pipeline in order:
+
+```
+uv sync --frozen
+→ uv run ruff check .
+→ uv run pytest -q
+→ uv run python -m aico.evals.day07
+```
+
+(`data/index/` is built between the lint step and `pytest -q` — a
+necessary precondition, not one of the four required commands: it's a
+gitignored build output two existing test files and the regression gate
+itself all need, and a clean CI checkout starts with none.)
+
+**None of the four required steps carries `continue-on-error` or an
+`allow_failure` equivalent** — a failed `ruff check`, a failed test, or a
+failed regression gate all fail the job and the workflow run, using
+GitHub Actions' own ordinary default behavior (nothing here needed to
+override it to get that guarantee). **No step ever passes
+`--update-baseline`** — updating the reviewed baseline is a separate,
+deliberate, human-run command (`scripts/day07_update_baseline.py` /
+`python -m aico.evals.day07 --update-baseline`, both requiring
+`--reviewer`/`--notes` and defaulting to a dry run), never something CI
+performs on its own.
+
+Verified as close to a real CI run as this environment allows: `.venv`,
+`data/index/`, and `data/vectors/` were all deleted and every one of the
+four required commands (plus the index-build precondition) was re-run in
+the exact documented order against that clean state — `uv sync --frozen`
+resolves and installs from the lockfile alone, `ruff check .` passes with
+zero findings, all 716 tests pass, and the regression gate passes with
+exit `0`, matching the committed `artifacts/day07/` reports exactly.
+
+#### Adding `ruff` surfaced a real, first-time linting decision
+
+No linter had run over this repository before Task 13 — six days of
+already-accepted code had never been checked against one. Running
+`ruff check .` with no configuration at all found 138 issues on the first
+pass, entirely because ruff's own default rule selection had never been
+reviewed or agreed to, not because this codebase was suddenly worse than
+it was yesterday. `pyproject.toml`'s `[tool.ruff]` makes that rule
+selection explicit and reviewed instead of implicit (`select = ["E", "F",
+"I", "B", "UP"]`, with four narrow, individually-justified ignores — a
+consistent long-form-prose comment style predates this rule, FastAPI's
+own `Depends(...)` pattern, and two Python-version modernizations this
+task deliberately didn't retrofit onto already-accepted `Enum`/generic
+code). `ruff check .` now passes with zero findings and zero `# noqa`
+suppressions anywhere in the repository. Full rationale — what was
+autofixed, what was fixed by hand and why, and **a real regression the
+autofix itself caused** (it silently deleted a re-exported import a test
+still depended on, caught immediately by re-running the full suite) — is
+in `docs/adr/ADR-005-ruff-adoption.md`.
+
 ## Key design decisions
 
 **Day 1**

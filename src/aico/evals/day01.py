@@ -420,7 +420,7 @@ def render_report(
         lines.append("")
 
     winner = pick_winning_config(all_results)
-    others = [l for l in labels if l != winner]
+    others = [label for label in labels if label != winner]
     lines.append(f"## Winning configuration: **{winner}**")
     lines.append("")
     w = all_results[winner]["overall"]
@@ -475,7 +475,7 @@ def render_report(
         )
     lines.append("")
 
-    worst_label = min(labels, key=lambda l: all_results[l]["per_query"][worst_qid]["mrr"])
+    worst_label = min(labels, key=lambda label: all_results[label]["per_query"][worst_qid]["mrr"])
     worst_entry = all_results[worst_label]["per_query"][worst_qid]
     terms = worst_entry["top1_terms"]
     terms_desc = ", ".join(f"`{t['term']}` (tf={t['tf']}, idf={t['idf']})" for t in terms) if terms else "none"

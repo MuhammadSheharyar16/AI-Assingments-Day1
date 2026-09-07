@@ -26,7 +26,6 @@ import pathlib
 from fastapi.testclient import TestClient
 
 from aico.api.app import app
-from aico.api.correlation import CORRELATION_ID_HEADER, REQUEST_ID_HEADER
 from aico.api.dependencies import get_answer_service
 from aico.api.identity import TrustedIdentity, get_trusted_identity
 from aico.api.request_protection import MAX_REQUEST_BODY_BYTES

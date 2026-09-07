@@ -299,12 +299,12 @@ def render_report(rows: list[dict], compatibility: dict) -> str:
     lines.append("")
     lines.append(f"{len(final_failures)} of {len(rows)} fixtures end as a typed failure after this run:")
     lines.append("")
-    lines.append(f"- Non-repairable by policy (`stage=\"parse\"`, zero Model Gateway calls): "
+    lines.append("- Non-repairable by policy (`stage=\"parse\"`, zero Model Gateway calls): "
                   + (", ".join(f"`{r['id']}`" for r in non_repairable) or "none") + ".")
-    lines.append(f"- Repair-eligible but not exercised for repair in this fixture run (no "
-                  f"`fake_repair_response` supplied): "
+    lines.append("- Repair-eligible but not exercised for repair in this fixture run (no "
+                  "`fake_repair_response` supplied): "
                   + (", ".join(f"`{r['id']}`" for r in not_exercised_for_repair) or "none") + ".")
-    lines.append(f"- Repair attempted and still failed (repair capped at one call, never retried): "
+    lines.append("- Repair attempted and still failed (repair capped at one call, never retried): "
                   + (", ".join(f"`{r['id']}`" for r in repair_exhausted) or "none") + ".")
     lines.append("")
 

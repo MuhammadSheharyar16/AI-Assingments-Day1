@@ -122,7 +122,7 @@ def _generate_chunk_id(source_file: str, char_start: int, char_end: int) -> str:
     """
     Generate a stable, content-based chunk_id using SHA-256 hash of the text.
     """
-    return hashlib.sha256(f"{source_file}:{char_start}:{char_end}".encode('utf-8')).hexdigest()[:16]  # Use first 16 characters for brevity
+    return hashlib.sha256(f"{source_file}:{char_start}:{char_end}".encode()).hexdigest()[:16]  # Use first 16 characters for brevity
 
 def chunk_text(
    text: str, 

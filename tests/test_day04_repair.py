@@ -39,7 +39,7 @@ from pathlib import Path
 import pytest
 
 from aico.contracts.errors import ValidationFailure
-from aico.contracts.models import AnswerStatus, CitedAnswer, ConfidenceLabel, ResponseEnvelope
+from aico.contracts.models import CitedAnswer, ResponseEnvelope
 from aico.contracts.repair import attempt_repair, build_repair_request, is_repairable, resolve, validate_full
 from aico.platform.config import (
     BudgetsConfig,

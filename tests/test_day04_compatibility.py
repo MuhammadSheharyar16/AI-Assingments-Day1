@@ -25,7 +25,7 @@ import copy
 import json
 from enum import Enum
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -154,7 +154,7 @@ class _HypotheticalEnvelopeWarningRequired(BaseModel):
     request_id: str = Field(min_length=1)
     result: CitedAnswer
     model_alias: str = Field(min_length=1)
-    trace_id: Optional[str] = Field(default=None, min_length=1)
+    trace_id: str | None = Field(default=None, min_length=1)
     warning: str = Field(min_length=1)  # required here; Optional in the real contract
 
 

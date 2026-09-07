@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from aico.evals.dataset import GoldenCase
 from aico.evals.groundedness import (
@@ -179,7 +180,7 @@ def test_evaluator_cannot_rewrite_the_answer_extra_field_is_rejected():
 
 
 def test_groundedness_verdict_model_rejects_extra_fields_directly():
-    with pytest.raises(Exception):  # pydantic.ValidationError
+    with pytest.raises(ValidationError):
         GroundednessVerdict.model_validate({
             "grounded": True,
             "critical_facts_covered": [],
@@ -242,8 +243,16 @@ def test_to_chat_request_carries_every_section_as_a_message():
 
 def test_gateway_boundary_uses_the_real_model_gateway_class():
     from aico.platform.config import (
-        BudgetsConfig, ChatBudget, EmbeddingBudget, FallbackPolicy, GatewayConfig,
-        ModelAliases, ResilienceConfig, RetryConfig, RouteEndpoint, RoutingPolicy,
+        BudgetsConfig,
+        ChatBudget,
+        EmbeddingBudget,
+        FallbackPolicy,
+        GatewayConfig,
+        ModelAliases,
+        ResilienceConfig,
+        RetryConfig,
+        RouteEndpoint,
+        RoutingPolicy,
     )
     from aico.platform.model_gateway import ModelGateway, TransportResult
 

@@ -28,7 +28,6 @@ Deliberate, concretely (enforced by `aico.evals.day07`, not repeated here):
 from __future__ import annotations
 
 import argparse
-import sys
 
 from aico.evals.day07 import main as day07_main
 

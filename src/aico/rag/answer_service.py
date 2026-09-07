@@ -49,8 +49,9 @@ completion.
 from __future__ import annotations
 
 import pathlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Protocol, Union
+from typing import Protocol
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -152,7 +153,7 @@ class TypedFailure:
     message: str
 
 
-AnswerResult = Union[GroundedAnswer, InsufficientEvidence, Clarify, Blocked, TypedFailure]
+AnswerResult = GroundedAnswer | InsufficientEvidence | Clarify | Blocked | TypedFailure
 
 
 # ── Orchestration ─────────────────────────────────────────────────────

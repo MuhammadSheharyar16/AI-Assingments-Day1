@@ -47,7 +47,7 @@ from aico.platform.model_gateway import (
     ModelGateway,
     TransportResult,
 )
-from aico.retrieval.embedding_provider import EmbeddingProvider, AzureEmbeddingProvider
+from aico.retrieval.embedding_provider import AzureEmbeddingProvider, EmbeddingProvider
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SDK_IMPORT_PATTERN = re.compile(r"^\s*(import requests\b|from requests\b)", re.MULTILINE)

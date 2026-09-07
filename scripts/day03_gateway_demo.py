@@ -159,7 +159,7 @@ def scenario_retryable_then_success() -> None:
     print("\n== 3. Retryable failure that later succeeds (rate_limit -> success) ==")
     gateway = ModelGateway(make_config(), ScriptedTransport(["rate_limit", "success"]))
     result = gateway.embed(EmbedRequest(texts=["x"]))
-    print(f"    transport calls made: 2 (1 retryable failure + 1 success)")
+    print("    transport calls made: 2 (1 retryable failure + 1 success)")
     print_metadata("embed", result.metadata)
 
 

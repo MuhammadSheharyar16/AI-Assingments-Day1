@@ -22,8 +22,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from aico.platform.model_gateway import CallMetadata, ChatRequest, ChatResult
 from aico.rag.answer_service import GroundedAnswer, GroundedAnswerService, TypedFailure
 from aico.rag.citation_validator import EvidenceChunk

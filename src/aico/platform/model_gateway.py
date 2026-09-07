@@ -90,8 +90,9 @@ import queue
 import random
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Protocol
 
 from aico.platform.config import GatewayConfig, RetryConfig, RouteEndpoint, load_gateway_config
 from aico.platform.errors import (
@@ -337,7 +338,7 @@ class ModelGateway:
         self._cancellation_poll_interval_seconds = cancellation_poll_interval_seconds
 
     @classmethod
-    def from_config(cls, path: str | None = None) -> "ModelGateway":
+    def from_config(cls, path: str | None = None) -> ModelGateway:
         config = load_gateway_config(path) if path is not None else load_gateway_config()
         # No fallback endpoint/deployment is part of config/model-routing.yaml
         # today (routing.fallback only describes compatibility metadata, not

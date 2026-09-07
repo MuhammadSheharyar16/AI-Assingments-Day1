@@ -155,7 +155,7 @@ def render_supported(case: dict, chunks: list[EvidenceChunk], result: GroundedAn
 
     lines.append("## Final typed answer")
     lines.append("")
-    lines.append(f"- **Result type:** `GroundedAnswer`")
+    lines.append("- **Result type:** `GroundedAnswer`")
     lines.append(f"- **Answer:** {result.answer}")
     lines.append(f"- **Confidence label:** `{result.confidence_label}`")
     lines.append("")
@@ -226,7 +226,7 @@ def render_insufficient(case: dict, chunks: list[EvidenceChunk], result: Insuffi
 
     lines.append("## Insufficient-evidence result")
     lines.append("")
-    lines.append(f"- **Result type:** `InsufficientEvidence`")
+    lines.append("- **Result type:** `InsufficientEvidence`")
     lines.append(f"- **Explanation:** {result.explanation}")
     lines.append(f"- **Retrieved IDs carried on the result:** `{list(result.retrieved_ids)}`")
     lines.append("")

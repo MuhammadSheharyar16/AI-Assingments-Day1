@@ -26,7 +26,6 @@ from aico.evals.stability import (
 )
 from aico.rag.answer_service import Blocked, GroundedAnswer, InsufficientEvidence
 
-
 # ── Design decision sanity ────────────────────────────────────────────
 
 def test_repeat_count_is_greater_than_one_and_matches_module_default():

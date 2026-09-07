@@ -17,7 +17,6 @@ import pathlib
 
 import pytest
 
-from aico.evals.metrics import AttackCheckResult
 from aico.evals.regression import (
     REQUIRED_METRIC_NAMES,
     Baseline,
@@ -290,55 +289,23 @@ def test_normal_evaluation_never_writes_the_baseline_file():
     evaluation (loading the baseline, comparing against it, evaluating the
     gate) several times over, and confirm the file on disk never moved -
     not even its mtime, let alone its content."""
-    import sys
+    from aico.evals.dataset import load_dataset
+    from aico.evals.day07 import DEFAULT_TOP_K, build_summary, evaluate_all_cases, load_full_index_chunks
+    from aico.evals.regression import evaluate_gate
+    from aico.rag.answer_service import BM25Retriever
 
     before_bytes = BASELINE_PATH.read_bytes()
     before_mtime = BASELINE_PATH.stat().st_mtime_ns
 
-    sys.path.insert(0, str(REPO_ROOT / "scripts"))
-    from day07_generate_failure_classification_report import TOP_K, _run_case  # noqa: E402
-
-    from aico.evals.dataset import load_dataset
-    from aico.evals.metrics import (
-        aggregate_retrieval,
-        score_attack_outcome,
-        score_citations,
-        score_refusal,
-        score_retrieval,
-    )
-    from aico.evals.regression import evaluate_gate
-    from aico.rag.answer_service import BM25Retriever, GroundedAnswer
-
     dataset = load_dataset(REPO_ROOT / "evals" / "golden_v1.json")
-    retriever = BM25Retriever(top_k=TOP_K)
+    retriever = BM25Retriever(top_k=DEFAULT_TOP_K)
+    all_chunks = load_full_index_chunks(REPO_ROOT / "data" / "index")
     thresholds = load_thresholds(THRESHOLDS_PATH)
 
     for _ in range(3):  # run the full evaluation more than once - never once writes
         baseline = load_baseline(BASELINE_PATH)  # reading, never writing
-
-        retrieval_results = []
-        refusal_pass = refusal_total = 0
-        citation_valid = citation_checked = 0
-        attack_results: list[AttackCheckResult] = []
-        for case in dataset.cases:
-            result, retrieved = _run_case(case, retriever)
-            retrieval_results.append(score_retrieval(case, retrieved, k=TOP_K))
-            if case.category == "adversarial":
-                attack_results.append(score_attack_outcome(case, result))
-            else:
-                refusal_total += 1
-                refusal_pass += int(score_refusal(case, result).passed)
-            if isinstance(result, GroundedAnswer):
-                citation_checked += 1
-                citation_valid += int(score_citations(case, result.citation_ids, retrieved).valid)
-
-        agg = aggregate_retrieval(retrieval_results)
-        summary = EvaluationSummary(
-            hit_at_1=agg["overall"]["hit_at_1"], hit_at_k=agg["overall"]["hit_at_k"], mrr=agg["overall"]["mrr"],
-            citation_validity_rate=(citation_valid / citation_checked if citation_checked else None),
-            refusal_accuracy_rate=(refusal_pass / refusal_total if refusal_total else None),
-            groundedness_rate=None, attack_results=tuple(attack_results),
-        )
+        evaluations = evaluate_all_cases(dataset, retriever, all_chunks, DEFAULT_TOP_K)
+        summary = build_summary(evaluations)
         evaluate_gate(summary, thresholds)  # the gate itself
         compare_to_baseline(summary, baseline)  # the baseline comparison
 

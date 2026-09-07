@@ -100,7 +100,7 @@ def get_answer_service(
     )
 
 
-def get_retrieval_health_check() -> "DependencyCheck":
+def get_retrieval_health_check() -> DependencyCheck:
     """Default provider: the real retrieval/index health check
     (health.py). Tests override this to force a deterministic
     healthy/unavailable result without touching `data/index` on disk.
@@ -113,7 +113,7 @@ def get_retrieval_health_check() -> "DependencyCheck":
     return check_retrieval_health
 
 
-def get_model_gateway_health_check() -> "DependencyCheck":
+def get_model_gateway_health_check() -> DependencyCheck:
     """Default provider: the real Model Gateway configuration health
     check (health.py). Tests override this to force a deterministic
     healthy/unavailable result without depending on `config/model-routing.yaml`

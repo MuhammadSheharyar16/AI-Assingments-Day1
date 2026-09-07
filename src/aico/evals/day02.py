@@ -27,7 +27,6 @@ import json
 import pathlib
 import time
 from collections import defaultdict
-from dataclasses import dataclass
 
 from dotenv import load_dotenv
 

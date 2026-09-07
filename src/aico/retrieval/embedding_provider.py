@@ -66,7 +66,7 @@ class AzureEmbeddingProvider(EmbeddingProvider):
     aico.platform.foundry_adapter.
     """
 
-    def __init__(self, gateway: "ModelGateway | None" = None, dimensions: int | None = None):
+    def __init__(self, gateway: ModelGateway | None = None, dimensions: int | None = None):
         if gateway is None:
             from aico.platform.model_gateway import ModelGateway  # local: avoid import at module load time
 

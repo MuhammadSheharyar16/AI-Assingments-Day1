@@ -38,8 +38,6 @@ high-cardinality labels such as full user questions").
 """
 from __future__ import annotations
 
-from typing import Optional
-
 from opentelemetry import metrics as otel_metrics
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
@@ -79,7 +77,7 @@ def record_request_latency(latency_ms: float, *, status_code: int) -> None:
     _request_latency_ms.record(latency_ms, {"status_code": str(status_code)})
 
 
-def record_request_outcome(status: str, category: Optional[str] = None) -> None:
+def record_request_outcome(status: str, category: str | None = None) -> None:
     _request_outcome_total.add(1, {"status": status, "category": category or "none"})
 
 

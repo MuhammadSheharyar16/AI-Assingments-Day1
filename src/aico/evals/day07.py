@@ -70,8 +70,8 @@ from aico.evals.dataset import (
 )
 from aico.evals.day01 import normalise
 from aico.evals.failure_classifier import (
-    FailureClassification,
     FAILURE_TAXONOMY,
+    FailureClassification,
     classify_failure,
     render_failure_classification_report,
 )
@@ -410,7 +410,7 @@ def build_evaluation_report_json(
 
     return {
         "generated_by": generated_by,
-        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "generated_at": datetime.datetime.now(datetime.UTC).isoformat(),
         "dataset": {
             "version": dataset.version, "dataset_id": dataset.dataset_id, "total_cases": len(dataset),
             "split_counts": _split_counts(dataset), "category_counts": category_counts(dataset),

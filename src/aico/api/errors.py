@@ -28,8 +28,6 @@ response shape.
 """
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -47,8 +45,8 @@ class ErrorResponse(BaseModel):
 
     error_code: str = Field(description="Stable, machine-readable error category.")
     message: str = Field(description="Safe, human-readable explanation.")
-    request_id: Optional[str] = None
-    correlation_id: Optional[str] = None
+    request_id: str | None = None
+    correlation_id: str | None = None
 
 
 class ApiError(Exception):
@@ -66,7 +64,7 @@ class ApiError(Exception):
         super().__init__(message)
 
 
-def request_ids(request: Request) -> tuple[Optional[str], Optional[str]]:
+def request_ids(request: Request) -> tuple[str | None, str | None]:
     """Read the request_id/correlation_id `CorrelationMiddleware` (Task 3)
     already decided for this request. `getattr` with a default because a
     failure can in principle occur before that middleware runs (e.g. it is
@@ -80,8 +78,8 @@ def error_response(
     status_code: int,
     error_code: str,
     message: str,
-    request_id: Optional[str] = None,
-    correlation_id: Optional[str] = None,
+    request_id: str | None = None,
+    correlation_id: str | None = None,
 ) -> JSONResponse:
     """The one place an `ErrorResponse` becomes an actual HTTP response.
     Also echoes request_id/correlation_id as headers (Task 3 convention -

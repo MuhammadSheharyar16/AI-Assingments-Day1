@@ -109,7 +109,7 @@ def test_no_match_queries_are_reported_separately_with_a_named_floor():
     assert set(RESULT["no_match"].keys()) == {"Q09", "Q10"}
     # they must not leak into the scored categories or the overall average
     assert "no_match" not in RESULT["by_category"]
-    for qid, nm in RESULT["no_match"].items():
+    for _qid, nm in RESULT["no_match"].items():
         assert isinstance(nm["top_score"], float)
         assert isinstance(nm["phrase_support"], bool)
         assert isinstance(nm["correctly_abstained"], bool)
