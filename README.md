@@ -779,6 +779,131 @@ against. Its synthetic validation fixtures (`api_cases.json`,
 to `tests/fixtures/`" convention Day 5's `attack_fixtures.json` already
 established.
 
+## Day 7 — Evaluation harness and regression gate
+
+Turns the Day 1–6 RAG service into a measured engineering baseline: a
+developer-created golden dataset (`evals/golden_v1.json`, 32 cases across
+six required categories, split train/development/holdout), deterministic
+evaluation (`aico.evals.metrics` — Hit@K, MRR, citation validity, refusal
+accuracy, attack outcome), model-based groundedness evaluation
+(`aico.evals.groundedness`, reported separately, never merged into one
+score), repeated-run stability spot-checks, failure classification into a
+fixed six-value taxonomy, explicit thresholds with a zero-tolerance safety
+gate, a reviewed baseline with a separate deliberate update workflow, and
+one complete regression-gate command:
+
+```
+uv run python -m aico.retrieval.ingest --input data/documents --out data/index --tokens 300 --overlap 50
+uv run python -m aico.evals.day07
+```
+
+Exits `0` on pass, non-zero on fail, and writes
+`artifacts/day07/evaluation_report.json`/`.md` and
+`artifacts/day07/failure_classification.md`. Full design rationale, every
+threshold/baseline number's justification, and the controlled-regression
+proof (a deliberately weakened `--top-k` failing the gate, then a restored
+configuration passing again) are documented in `evals/README.md` — the
+Day 7 companion to this file, in the same spirit as `data/day05_pack/README.md`
+and `data/day06_pack/README.md` for their own days.
+
+### Docker
+
+`Dockerfile` is a two-stage build: a `builder` stage installs the exact,
+locked dependency set with `uv sync --frozen` (never re-resolving against
+`pyproject.toml`, never touching the network beyond what `uv.lock` already
+pinned) and installs the `aico` package itself from `src/`; a `runtime`
+stage starts from a fresh `python:3.13-slim` and copies over only the
+built `.venv` and `src/` — no `uv` binary, no dev dependencies (`pytest`/
+`httpx`), no `.git`, no local `.venv` (that directory never enters the
+build context at all — see `.dockerignore`), and no credentials or
+environment-specific config (`config/model-routing.yaml`, `.env`,
+`data/`, `evals/` are never copied in; they're supplied at `docker run`
+time instead, exactly like the Model Gateway's own
+`DefaultAzureCredential`-based identity — see "Setup" above).
+
+`docker-entrypoint.sh` starts every container as root, `chown`s
+`/app/data`/`/app/artifacts` when a bind-mounted host directory is
+actually present at either path, then always execs the real command via
+`gosu appuser` before it ever runs — so the application process itself
+(the API server, or the eval harness) is fully unprivileged in every case,
+the same guarantee a static `USER appuser` would give for a container with
+no mounts, but without failing closed the moment a mounted host directory
+happens to be owned by a uid the container doesn't recognize (a real,
+verified failure mode of the plain `USER appuser` version of this
+Dockerfile — see "A real fix, not a workaround" below). `docker exec`ing
+into a running container still defaults to root — the same trade-off
+official images like `postgres` make with this exact pattern — but that
+never affects what the container's own actual process runs as.
+
+Build:
+
+```powershell
+docker build -t aico:day7 .
+```
+
+Run the API service (the default `CMD`) — needs `AICO_AUTH_JWT_SECRET` to
+accept any `/ask` request, and a mounted `config/model-routing.yaml` plus
+a real Azure identity to actually reach a model (unset, `/health/live`
+still responds and `/ask` still fails closed with 401, exactly as
+un-containerized — see "Setup"). No `--user` flag needed — the entrypoint
+already drops to `appuser` before `uvicorn` ever starts:
+
+```powershell
+docker run --rm -p 8000:8000 `
+  -e AICO_AUTH_JWT_SECRET="a-local-signing-secret" `
+  -v ${PWD}/config:/app/config:ro `
+  aico:day7
+```
+
+Run the Day 7 regression gate inside the same image instead (mount the
+golden dataset/thresholds/baseline, the document corpus, and an
+artifacts/index directory the container can write to; build the index
+once inside the container first since `data/index/` is a build output,
+not something baked into the image). Also no `--user` flag needed — the
+entrypoint fixes ownership of the mounted `data`/`artifacts` directories
+before dropping to `appuser`:
+
+```powershell
+docker run --rm `
+  -v ${PWD}/evals:/app/evals `
+  -v ${PWD}/data:/app/data `
+  -v ${PWD}/artifacts:/app/artifacts `
+  aico:day7 sh -c "
+    python -m aico.retrieval.ingest --input data/documents --out data/index --tokens 300 --overlap 50 &&
+    python -m aico.evals.day07
+  "
+```
+
+Verified end to end (`docker build` + both `docker run` forms above,
+Docker Desktop): the image builds clean, `/health/live` responds
+`{"status":"alive"}`, `/ask` fails closed 401 without
+`AICO_AUTH_JWT_SECRET` exactly as un-containerized, `docker top` on the
+running API container shows the actual `uvicorn` process at uid 1000 (not
+root) with neither `docker run` command ever passing `--user`,
+`pytest`/`httpx` (the dev dependency group) and the `uv` binary are both
+confirmed absent from the runtime image, and the mounted-volume gate run
+writes real files back onto the host and reproduces the exact host
+result — `GATE: PASS`, exit `0`.
+
+#### A real fix, not a workaround
+
+The first version of this Dockerfile used a static `USER appuser` with no
+entrypoint script. Verified directly against the exact `docker run`
+command above: it failed closed with `PermissionError`, then
+`FileNotFoundError`, the moment `/app/data`/`/app/artifacts` were bound to
+host directories `appuser` (uid 1000) didn't own — a real, reproducible
+bug, not a hypothetical one. The tempting quick fix was documenting
+`--user root` on that one command; the actual fix is
+`docker-entrypoint.sh` above, verified to restore the mounted-volume
+workflow to working *and* keep every real application process
+unprivileged — no `docker run` in this README needs `--user` for anything,
+including the one that regressed first.
+
+The container exits with the gate's own exit code either way — `0` pass,
+non-zero fail — so this doubles as a containerized quality gate a CI
+runner could invoke directly instead of (or alongside) `uv run` on the
+runner itself.
+
 ## Key design decisions
 
 **Day 1**
