@@ -1,7 +1,7 @@
 # Day 3 Gateway Demonstration
 
 All output below is copy/pasted from an actual run in this checkout on
-2026-09-07, not hand-transcribed. Regenerate scenarios 1-7 with:
+2026-09-07, not hand-transcribed. Regenerate scenarios 1-9 with:
 
 ```
 python scripts/day03_gateway_demo.py
@@ -27,11 +27,27 @@ carries `attempts_made`, and a successful fallback's `retry_count` is
 `test_fallback_retry_count_folds_in_the_primarys_spent_attempts`) cover
 both fixes.
 
+**Correction (2026-09-07, second pass)**: the same validation pass also
+found that `routing.fallback.require_compatibility` let a specific axis be
+turned off in config, tolerating a mismatch on it (e.g. `region: false`
+would let a region mismatch through) - and that `CancellationToken` was
+only checked before dispatch and during backoff, so cancellation set
+*while a call was already in flight* had no effect until the call finished
+on its own. All five compatibility axes are now unconditionally mandatory
+(`load_gateway_config()` rejects a `false` value outright; the gateway no
+longer even reads the flags), and `ModelGateway._dispatch_with_cancellation`
+now runs a call on a background daemon thread and polls the token, so
+`.cancel()` unblocks the caller mid-call instead of only between attempts
+(it still can't force the transport call itself to stop - see that
+method's docstring). Scenarios 8-9 below and
+`test_cancellation_during_an_in_flight_call_unblocks_the_caller_without_waiting_for_it`,
+`test_require_compatibility_false_never_relaxes_a_mismatch_all_axes_are_mandatory`,
+`test_load_gateway_config_rejects_a_disabled_compatibility_axis` cover
+both.
+
 **Environment note**: this checkout has no lead-provided Microsoft Foundry
-endpoint or identity (`config/model-routing.yaml` still carries the pack's
-placeholder aliases - see Task 2's config validation, which rejects them by
-design rather than silently accepting them to make a demo run). Scenarios
-1-6 below therefore run against a fake transport, exercising the exact same
+endpoint/identity, so scenarios 1-9 below run against a fake transport,
+exercising the exact same
 `ModelGateway`/`CallMetadata`/retry/fallback code path a real
 `FoundryAdapter` response would - substituting only the network call
 itself, which is also how every automated test in this repository proves
@@ -54,7 +70,7 @@ its docstring).
 [embed] success - sanitized metadata:
     operation = 'embed'
     model_alias = 'demo-embed-alias'
-    latency_ms = 0.01
+    latency_ms = 0.03
     retry_count = 0
     token_usage = None
     budget_status = 'within_budget'
@@ -73,7 +89,7 @@ completion content itself is never printed.
 [chat] success - sanitized metadata:
     operation = 'chat'
     model_alias = 'demo-chat-alias'
-    latency_ms = 0.008
+    latency_ms = 0.021
     retry_count = 0
     token_usage = {'prompt_tokens': 42, 'completion_tokens': 17}
     budget_status = 'within_budget'
@@ -92,7 +108,7 @@ transport calls actually made.
 [embed] success - sanitized metadata:
     operation = 'embed'
     model_alias = 'demo-embed-alias'
-    latency_ms = 228.192
+    latency_ms = 77.986
     retry_count = 1
     token_usage = None
     budget_status = 'within_budget'
@@ -162,7 +178,35 @@ gateway.fallback_not_applicable operation=chat model_alias=demo-chat-alias reaso
     fallback transport call count: 0 (never even considered - fallback is compatible AND enabled, but the primary failure category is non-retryable)
 ```
 
-## 8. Repository SDK-import check
+## 8. Cancellation while a call is actually in flight
+
+The transport call itself takes 300ms; cancellation fires shortly after it
+starts. The caller is unblocked in ~15ms - it does not wait for the full
+300ms - while the abandoned call keeps running in the background (a daemon
+thread) and does complete on its own afterward, proving cancellation stops
+the *caller* from waiting without claiming to forcibly kill the in-flight
+call itself (see `ModelGateway._dispatch_with_cancellation`'s docstring).
+
+```
+== 8. Cancellation while a call is actually in flight ==
+[embed] failed - GatewayCancelledError (category=cancelled, retryable=False)
+    caller unblocked after 14.6ms (the transport call itself takes 300ms)
+    abandoned call still running in background: True
+    abandoned call completed on its own afterward: True
+```
+
+## 9. A disabled compatibility axis is rejected at config load
+
+All five compatibility axes (provider/region/data_boundary/risk/budget)
+are unconditionally mandatory - a config that tries to set one to `false`
+is rejected outright by `load_gateway_config()`, not silently honored.
+
+```
+== 9. A disabled compatibility axis is rejected at config load, not silently honored ==
+    config with require_compatibility.region=false was rejected: routing.fallback.require_compatibility has axis(es) set to false: region - all five compatibility axes (provider, region, data_boundary, risk, budget) are mandatory and can never be disabled; remove the override rather than turning an axis off
+```
+
+## 10. Repository SDK-import check
 
 ```
 $ grep -rn "^\s*import requests\|^\s*from requests" src | grep -v platform
@@ -177,7 +221,7 @@ exactly one file in the repository, and it is inside the platform package -
 matching the acceptance target "No model SDK import outside the platform
 package."
 
-## 9. Day 2 regression result
+## 11. Day 2 regression result
 
 Live Hit@1/Hit@5/MRR numbers against the real Foundry endpoint aren't
 reproducible in this checkout (no lead-provided access - see the
@@ -207,8 +251,9 @@ tests\test_search.py ........                                            [100%]
 ```
 
 Day 3 gateway/adapter suite, for completeness (includes every Day 3 test
-from Tasks 1-6, plus the three added by the fallback-eligibility/retry-count
-correction above):
+from Tasks 1-6, plus the six added across both correction passes -
+fallback-eligibility/retry-count, then mandatory-compatibility-axes/
+in-flight-cancellation):
 
 ```
 $ pytest -q tests/test_model_gateway.py tests/test_model_gateway_retry.py \
@@ -217,10 +262,14 @@ $ pytest -q tests/test_model_gateway.py tests/test_model_gateway_retry.py \
     tests/test_day2_regression.py tests/test_embed.py tests/test_embedding_provider.py \
     tests/test_chunker.py tests/test_bm25.py tests/test_ingest.py tests/test_day01_eval.py \
     tests/test_vector_index.py tests/test_hybrid.py tests/test_search.py
-152 passed in 1.13s
+155 passed in 5.00s
 ```
 
 Note: this checkout has since grown past Day 3 (Days 4-6 are also present),
 so a bare `pytest -q` here now runs the whole repository's suite, not just
-Day 3's - `493 passed` at time of writing. The `149`/`152` counts above are
-the Day-3-scoped subset specifically, which is what this artifact is about.
+Day 3's - `496 passed` at time of writing. The `149`/`152`/`155` counts
+above are the Day-3-scoped subset specifically, which is what this
+artifact is about. The ~5s (vs. sub-second before) is expected: the
+in-flight-cancellation test and its transport double now genuinely sleep
+real wall-clock time (0.3s) to simulate a call actually in flight - every
+other test remains instant, fake-clock-driven, and offline.

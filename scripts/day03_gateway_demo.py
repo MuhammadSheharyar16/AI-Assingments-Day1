@@ -30,6 +30,8 @@ instead of a fake).
 from __future__ import annotations
 
 import dataclasses
+import threading
+import time
 
 from aico.platform.config import (
     BudgetsConfig,
@@ -42,9 +44,17 @@ from aico.platform.config import (
     RetryConfig,
     RouteEndpoint,
     RoutingPolicy,
+    load_gateway_config,
 )
-from aico.platform.errors import GatewayAuthenticationError, GatewayFallbackBlockedError, error_for_category
+from aico.platform.errors import (
+    GatewayAuthenticationError,
+    GatewayCancelledError,
+    GatewayConfigurationError,
+    GatewayFallbackBlockedError,
+    error_for_category,
+)
 from aico.platform.model_gateway import (
+    CancellationToken,
     ChatMessage,
     ChatRequest,
     EmbedRequest,
@@ -216,6 +226,97 @@ def scenario_non_retryable_never_falls_back() -> None:
               f"fallback is compatible AND enabled, but the primary failure category is non-retryable)")
 
 
+def scenario_in_flight_cancellation() -> None:
+    print("\n== 8. Cancellation while a call is actually in flight ==")
+    call_started = threading.Event()
+    call_finished = threading.Event()
+
+    class SlowTransport:
+        def embed(self, *, model_alias, texts, timeout_seconds):
+            call_started.set()
+            time.sleep(0.3)  # stands in for an in-flight HTTP call
+            call_finished.set()
+            return TransportResult(content=[[0.0]], dimensions=1, token_usage=None)
+
+        def chat(self, *, model_alias, messages, max_output_tokens, timeout_seconds):
+            raise AssertionError("not exercised by this scenario")
+
+    token = CancellationToken()
+    gateway = ModelGateway(make_config(), SlowTransport(), cancellation_poll_interval_seconds=0.01)
+
+    def cancel_once_running() -> None:
+        call_started.wait(timeout=2)
+        token.cancel()
+
+    threading.Thread(target=cancel_once_running).start()
+
+    started_at = time.monotonic()
+    try:
+        gateway.embed(EmbedRequest(texts=["x"], cancellation=token))
+    except GatewayCancelledError as exc:
+        elapsed = time.monotonic() - started_at
+        print_error("embed", exc)
+        print(f"    caller unblocked after {elapsed*1000:.1f}ms (the transport call itself takes 300ms)")
+        print(f"    abandoned call still running in background: {not call_finished.is_set()}")
+        call_finished.wait(timeout=2)
+        print(f"    abandoned call completed on its own afterward: {call_finished.is_set()}")
+
+
+def scenario_disabled_compatibility_axis_rejected() -> None:
+    print("\n== 9. A disabled compatibility axis is rejected at config load, not silently honored ==")
+    import tempfile
+    from pathlib import Path
+
+    bad_config_yaml = """
+version: "1.0"
+foundry:
+  endpoint_env: "AICO_DEMO_ENDPOINT"
+models:
+  chat:
+    alias: "demo-chat-alias"
+  embedding:
+    alias: "demo-embed-alias"
+resilience:
+  timeout_seconds: 20
+  retry:
+    max_attempts: 3
+    base_delay_ms: 250
+    max_delay_ms: 2000
+    jitter: true
+budgets:
+  chat:
+    max_input_tokens: 8000
+    max_output_tokens: 1000
+  embedding:
+    max_items_per_call: 32
+routing:
+  primary:
+    provider: "microsoft-foundry"
+    region: "uk-south"
+    data_boundary: "uk"
+    risk_class: "standard"
+  fallback:
+    enabled: false
+    provider: "n/a"
+    region: "n/a"
+    data_boundary: "n/a"
+    risk_class: "standard"
+    require_compatibility:
+      provider: true
+      region: false
+      data_boundary: true
+      risk: true
+      budget: true
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "model-routing.yaml"
+        path.write_text(bad_config_yaml, encoding="utf-8")
+        try:
+            load_gateway_config(path)
+        except GatewayConfigurationError as exc:
+            print(f"    config with require_compatibility.region=false was rejected: {exc}")
+
+
 def main() -> None:
     scenario_embed_success()
     scenario_chat_success()
@@ -224,6 +325,8 @@ def main() -> None:
     scenario_non_retryable_failure()
     scenario_blocked_fallback()
     scenario_non_retryable_never_falls_back()
+    scenario_in_flight_cancellation()
+    scenario_disabled_compatibility_axis_rejected()
 
 
 if __name__ == "__main__":

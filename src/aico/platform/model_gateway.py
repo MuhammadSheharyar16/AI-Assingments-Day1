@@ -12,7 +12,13 @@ Responsibilities:
   token usage (where available), latency, retry count, budget status.
   Prompt/completion text is never put inside metadata.
 - A cancellation/timeout seam every call goes through (`CancellationToken`,
-  `timeout_seconds`).
+  `timeout_seconds`) - including while a call is actually in flight
+  against the transport, not only in the gaps before dispatch and between
+  retries: `_dispatch_with_cancellation` runs the transport call on a
+  background thread and polls the token, so `.cancel()` unblocks the
+  caller within one `cancellation_poll_interval_seconds` tick instead of
+  making it wait out the whole call. See `CancellationToken`'s docstring
+  for exactly what that does and doesn't guarantee.
 - Bounded exponential retry with jitter (Task 3): a retryable failure
   (`ModelGatewayError.retryable`) is retried up to
   `config.resilience.retry.max_attempts` times, waiting
@@ -36,7 +42,11 @@ Responsibilities:
   `config.routing.fallback.enabled` is true, and (d) every axis
   `routing.fallback.require_compatibility` marks as required (provider/
   region/data_boundary/risk/budget) is actually compatible between the
-  primary and fallback routes. Any missing condition raises
+  primary and fallback routes - unconditionally: every axis is mandatory,
+  there is no config-driven way to relax one (see `_evaluate_fallback_
+  compatibility`; `config.routing.fallback.require_compatibility` is
+  validated at load time to be all-true - see aico.platform.config).
+  Any missing condition raises
   `GatewayFallbackBlockedError` (chaining the primary failure) instead of
   silently trying a different provider/region/data boundary - never
   cancellation, which always propagates as itself. A successful fallback
@@ -76,6 +86,7 @@ the registry's docstring for how to add one.
 from __future__ import annotations
 
 import logging
+import queue
 import random
 import threading
 import time
@@ -104,13 +115,24 @@ class CancellationToken:
     """Cooperative cancellation signal. A caller holds the token, passes it
     into a request, and calls `.cancel()` (from another thread, or on its
     own deadline) to ask an in-flight or not-yet-started call to stop
-    instead of running to completion. The gateway checks it before
-    dispatching a call and, in the bounded-retry loop, before every retry
-    attempt (including while waiting out the backoff delay, in effect,
-    since the check happens the moment that wait returns) - it cannot
-    interrupt a single HTTP call already in flight against a transport
-    that does not support that itself, but it does stop the operation
-    from retrying or from ever starting."""
+    instead of running to completion. The gateway checks it:
+    - before dispatching a call at all,
+    - in the bounded-retry loop, before every retry attempt (including
+      while waiting out the backoff delay, in effect, since the check
+      happens the moment that wait returns), and
+    - while a call is actually in flight against the transport
+      (`ModelGateway._dispatch_with_cancellation`): `.cancel()` there
+      unblocks the caller within one `cancellation_poll_interval_seconds`
+      tick, rather than making it wait for the transport call to finish
+      on its own.
+
+    What it still cannot do: force the transport call itself to stop.
+    Python has no safe way to abort an arbitrary blocking call running on
+    another thread, so an in-flight call that gets cancelled keeps running
+    to completion in the background and its result is discarded - exactly
+    like a caller abandoning an HTTP request whose response it no longer
+    wants. What's guaranteed is that the *caller* is never left waiting on
+    it."""
 
     def __init__(self) -> None:
         self._event = threading.Event()
@@ -292,6 +314,7 @@ class ModelGateway:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         random_factor: Callable[[], float] = random.random,
+        cancellation_poll_interval_seconds: float = 0.02,
     ):
         self._config = config
         self._transport = transport
@@ -308,6 +331,10 @@ class ModelGateway:
         # delays would, and without depending on real randomness.
         self._sleep = sleep
         self._random_factor = random_factor
+        # How often _dispatch_with_cancellation re-checks the token while
+        # a call is in flight - small enough that cancellation feels
+        # immediate, injectable so tests don't have to wait a full tick.
+        self._cancellation_poll_interval_seconds = cancellation_poll_interval_seconds
 
     @classmethod
     def from_config(cls, path: str | None = None) -> "ModelGateway":
@@ -479,30 +506,79 @@ class ModelGateway:
             return result, primary_attempts + fallback_retry_count, True
 
     def _evaluate_fallback_compatibility(self, *, budget_compatible: bool) -> FallbackCompatibility:
+        # All five axes are unconditionally mandatory (Task 4 / ADR-003) -
+        # routing.fallback.require_compatibility is validated at config
+        # load time to be all-true (see aico.platform.config) and is
+        # never consulted here: even a GatewayConfig built directly in
+        # Python (bypassing that YAML-level validation, as most tests do)
+        # can never relax a compatibility axis. A mismatch on any axis
+        # always blocks fallback - there is no config-driven way around
+        # that.
         policy = self._config.routing.fallback
         primary = self._config.routing.primary
         route: RouteEndpoint | None = policy.route
-        require = policy.require_compatibility
-
-        def axis_ok(axis: str, matches_primary: bool) -> bool:
-            # An axis config doesn't mark required is never a reason to
-            # block - only axes routing.fallback.require_compatibility
-            # actually names are checked, per Task 4.
-            return (not require.get(axis, True)) or matches_primary
 
         return FallbackCompatibility(
-            provider_compatible=axis_ok("provider", route is not None and route.provider == primary.provider),
-            region_compatible=axis_ok("region", route is not None and route.region == primary.region),
-            data_boundary_compatible=axis_ok(
-                "data_boundary", route is not None and route.data_boundary == primary.data_boundary
-            ),
-            risk_compatible=axis_ok("risk", route is not None and route.risk_class == primary.risk_class),
-            budget_compatible=axis_ok("budget", budget_compatible),
+            provider_compatible=route is not None and route.provider == primary.provider,
+            region_compatible=route is not None and route.region == primary.region,
+            data_boundary_compatible=route is not None and route.data_boundary == primary.data_boundary,
+            risk_compatible=route is not None and route.risk_class == primary.risk_class,
+            budget_compatible=budget_compatible,
         )
 
     def _check_cancellation(self, token: CancellationToken | None, operation: str) -> None:
         if token is not None and token.is_cancelled():
             raise GatewayCancelledError(f"{operation} was cancelled")
+
+    def _dispatch_with_cancellation(
+        self,
+        call: Callable[[], TransportResult],
+        cancellation: CancellationToken | None,
+        operation: str,
+    ) -> TransportResult:
+        """Run `call()`, and - only when a CancellationToken is actually
+        attached - make waiting for it interruptible: `.cancel()` reaching
+        in *while the call is already in flight* now unblocks the caller
+        within one `_cancellation_poll_interval_seconds` tick, instead of
+        only being noticed before the next attempt. No token, no thread
+        hop: the overwhelming majority of calls (nothing passes
+        `cancellation=`) go straight through `call()` with zero added
+        overhead or timing change.
+
+        How: `call()` runs on a daemon background thread; this method
+        polls the token and the thread's result queue in a loop. Python
+        has no safe way to forcibly abort an arbitrary blocking call
+        running on another thread, so cancelling does not stop the
+        transport call itself - it keeps running to completion in the
+        background (harmlessly, since it's a daemon thread - it is never
+        a reason the interpreter hangs on exit) and its result is
+        discarded, exactly like a caller abandoning an HTTP request whose
+        response it no longer wants. What IS guaranteed: the *caller* is
+        unblocked the moment cancellation fires, not after the call
+        finishes on its own."""
+        if cancellation is None:
+            return call()
+
+        outcome: queue.Queue = queue.Queue(maxsize=1)
+
+        def _run() -> None:
+            try:
+                outcome.put(("result", call()))
+            except BaseException as exc:  # forwarded to the waiting thread as-is
+                outcome.put(("error", exc))
+
+        threading.Thread(target=_run, daemon=True, name=f"gateway-{operation}-call").start()
+
+        while True:
+            if cancellation.is_cancelled():
+                raise GatewayCancelledError(f"{operation} was cancelled while in flight")
+            try:
+                kind, payload = outcome.get(timeout=self._cancellation_poll_interval_seconds)
+            except queue.Empty:
+                continue
+            if kind == "error":
+                raise payload
+            return payload
 
     def _call_with_retry(
         self,
@@ -516,15 +592,24 @@ class ModelGateway:
         `config.resilience.retry.max_attempts` attempts total. Returns the
         successful TransportResult and how many retries it took (0 on a
         first-try success). A non-retryable error, an unnormalized
-        exception, cancellation, or exhausting the attempt ceiling all end
-        the loop - it never runs unbounded."""
+        exception, cancellation (before dispatch, during backoff, or while
+        a call is actually in flight - see `_dispatch_with_cancellation`),
+        or exhausting the attempt ceiling all end the loop - it never runs
+        unbounded."""
         retry_cfg = self._config.resilience.retry
         attempt = 0  # number of retries already taken (0 == first attempt in flight)
 
         while True:
             self._check_cancellation(cancellation, operation)
             try:
-                return call(), attempt
+                result = self._dispatch_with_cancellation(call, cancellation, operation)
+                return result, attempt
+            except GatewayCancelledError:
+                # Never logged as a call failure and never retried -
+                # propagates as itself, whether cancellation fired before
+                # dispatch, during backoff, or while the call was in
+                # flight.
+                raise
             except ModelGatewayError as exc:
                 if not exc.retryable:
                     logger.warning(

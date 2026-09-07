@@ -1,13 +1,16 @@
 """
 Task 4 — routing policy and safe fallback.
 
-Fallback is never automatic: it only happens when (a) a fallback transport
-is actually configured, (b) `routing.fallback.enabled` is true, and (c)
-every compatibility axis `routing.fallback.require_compatibility` marks as
-required (provider/region/data_boundary/risk/budget) actually matches
-between the primary and fallback routes. Scenarios mirror
-day03_pack/fixtures/gateway_cases.json's fallback cases (G10-G14) without
-depending on that file's exact shape.
+Fallback is never automatic: it only happens when (a) the primary failure
+is retryable and exhausted its own retry ceiling (GatewayRetryCeilingExceededError)
+- never for a non-retryable authentication/bad_request failure, (b) a
+fallback transport is actually configured, (c) `routing.fallback.enabled`
+is true, and (d) every one of the five compatibility axes (provider/
+region/data_boundary/risk/budget) actually matches between the primary and
+fallback routes - unconditionally; there is no config-driven way to relax
+one (see `test_require_compatibility_false_never_relaxes_a_mismatch_all_axes_are_mandatory`).
+Scenarios mirror day03_pack/fixtures/gateway_cases.json's fallback cases
+(G10-G14) without depending on that file's exact shape.
 
 Required test cases, one function each:
 1. allowed route proceeds (fully-compatible fallback serves a failed primary)
@@ -248,19 +251,29 @@ def test_provider_mismatch_blocks_fallback():
     assert fallback.calls == 0
 
 
-def test_an_axis_not_marked_required_is_never_a_reason_to_block():
+def test_require_compatibility_false_never_relaxes_a_mismatch_all_axes_are_mandatory():
+    # Correction: routing.fallback.require_compatibility used to let a
+    # specific axis be turned off, tolerating a mismatch on it. All five
+    # axes are now unconditionally mandatory (Task 4 / ADR-003) - a False
+    # entry here (which load_gateway_config() rejects outright at YAML
+    # load time - see test_model_gateway.py's
+    # test_load_gateway_config_rejects_a_disabled_compatibility_axis)
+    # must still block a mismatch even when a GatewayConfig is built
+    # directly in Python, bypassing that YAML-level validation, exactly
+    # as every test in this file does.
     primary = FailingTransport()
     fallback = SucceedingTransport()
     mismatched_region_route = RouteEndpoint(
         provider="microsoft-foundry", region="us-east", data_boundary="uk", risk_class="standard"
     )
     relaxed_requirements = dict(ALL_REQUIRED)
-    relaxed_requirements["region"] = False  # region mismatch tolerated for this policy
+    relaxed_requirements["region"] = False  # would have tolerated this before the correction
     config = _make_config(fallback_enabled=True, fallback_route=mismatched_region_route, require=relaxed_requirements)
     gateway = ModelGateway(config, primary, fallback_transport=fallback, sleep=lambda s: None)
 
-    result = gateway.embed(EmbedRequest(texts=["x"]))
-    assert result.metadata.used_fallback is True
+    with pytest.raises(GatewayFallbackBlockedError, match="region"):
+        gateway.embed(EmbedRequest(texts=["x"]))
+    assert fallback.calls == 0
 
 
 def test_no_fallback_transport_configured_lets_the_primary_error_propagate_unchanged():

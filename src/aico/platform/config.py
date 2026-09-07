@@ -333,6 +333,19 @@ def _build_config(raw: dict, *, source: Path) -> GatewayConfig:
         key: _require_bool(compat_raw, key, "routing.fallback.require_compatibility")
         for key in REQUIRED_COMPATIBILITY_KEYS
     }
+    # All five axes are unconditionally mandatory (Task 4 / ADR-003) - the
+    # gateway itself no longer even reads these values to decide whether
+    # to check an axis (see ModelGateway._evaluate_fallback_compatibility),
+    # but a config that still tries to turn one off is a configuration
+    # mistake worth failing loudly on, not silently ignoring.
+    disabled_axes = [key for key, required in require_compatibility.items() if not required]
+    if disabled_axes:
+        raise GatewayConfigurationError(
+            "routing.fallback.require_compatibility has axis(es) set to false: "
+            f"{', '.join(disabled_axes)} - all five compatibility axes (provider, region, "
+            "data_boundary, risk, budget) are mandatory and can never be disabled; remove the "
+            "override rather than turning an axis off"
+        )
 
     fallback_route: RouteEndpoint | None = None
     if fallback_enabled:

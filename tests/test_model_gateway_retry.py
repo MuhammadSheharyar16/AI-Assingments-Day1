@@ -20,10 +20,16 @@ What's proven:
   attempt, with no sleep call at all
 - cancellation, set during the backoff wait between attempts, stops the
   retry loop before the next attempt is dispatched
+- cancellation, set while a call is actually in flight (not just before
+  dispatch or during backoff), still unblocks the caller promptly - see
+  ModelGateway._dispatch_with_cancellation
 - backoff grows exponentially and is capped at max_delay_ms; jitter (when
   enabled) scales the delay by the injected random factor
 """
 from __future__ import annotations
+
+import threading
+import time
 
 import pytest
 
@@ -243,6 +249,66 @@ def test_cancellation_before_the_call_starts_makes_no_transport_call():
     with pytest.raises(GatewayCancelledError):
         gateway.chat(ChatRequest(messages=[ChatMessage(role="user", content="hi")], cancellation=token))
     assert transport.call_count == 0
+
+
+# ── Correction: cancellation while a call is actually in flight ───────────
+
+def test_cancellation_during_an_in_flight_call_unblocks_the_caller_without_waiting_for_it():
+    # Prior gap: CancellationToken was only checked before dispatch and
+    # during the backoff wait between attempts - it could not stop a
+    # caller from waiting out a call already handed to the transport.
+    # ModelGateway._dispatch_with_cancellation now runs the transport call
+    # on a background daemon thread and polls the token, so cancelling
+    # mid-call unblocks the caller promptly. It still cannot force the
+    # transport call itself to stop (Python has no safe way to abort an
+    # arbitrary blocking call on another thread) - proven here by
+    # asserting the abandoned call does eventually finish, just that the
+    # caller was never made to wait for it.
+    call_started = threading.Event()
+    call_finished = threading.Event()
+
+    class SlowTransport:
+        def embed(self, *, model_alias, texts, timeout_seconds):
+            call_started.set()
+            time.sleep(0.3)  # stands in for an in-flight HTTP call
+            call_finished.set()
+            return TransportResult(content=[[0.0]], dimensions=1, token_usage=None)
+
+        def chat(self, *, model_alias, messages, max_output_tokens, timeout_seconds):
+            raise AssertionError("not exercised by this test")
+
+    token = CancellationToken()
+    gateway = ModelGateway(
+        _make_config(), SlowTransport(), sleep=lambda s: None, cancellation_poll_interval_seconds=0.01,
+    )
+
+    def cancel_once_the_call_is_actually_running() -> None:
+        assert call_started.wait(timeout=2), "transport call never started"
+        token.cancel()
+
+    canceller = threading.Thread(target=cancel_once_the_call_is_actually_running)
+    canceller.start()
+
+    started_at = time.monotonic()
+    with pytest.raises(GatewayCancelledError):
+        gateway.embed(EmbedRequest(texts=["x"], cancellation=token))
+    elapsed = time.monotonic() - started_at
+    canceller.join()
+
+    assert elapsed < 0.3, f"caller waited {elapsed:.3f}s - should be unblocked well before the 0.3s call finishes"
+    assert call_finished.wait(timeout=2), "the abandoned transport call should still complete in the background"
+
+
+def test_cancellation_with_no_token_never_pays_for_the_background_thread():
+    # No cancellation= means nothing to poll - _dispatch_with_cancellation
+    # must call the transport directly, not spin up a thread for it.
+    transport = SequencedFakeTransport(["success"])
+    gateway = ModelGateway(_make_config(), transport, sleep=lambda s: None)
+
+    result = gateway.embed(EmbedRequest(texts=["x"]))  # no cancellation token at all
+
+    assert result.metadata.retry_count == 0
+    assert transport.call_count == 1
 
 
 # ── Backoff ceiling/growth and jitter are visible, provable behavior ──────

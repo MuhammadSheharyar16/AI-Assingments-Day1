@@ -328,6 +328,61 @@ routing:
         load_gateway_config(config_path)
 
 
+def test_load_gateway_config_rejects_a_disabled_compatibility_axis(tmp_path):
+    # Correction: all five routing.fallback.require_compatibility axes are
+    # unconditionally mandatory (Task 4 / ADR-003) - a config that tries to
+    # turn one off must fail loudly at load time, not be silently accepted.
+    from aico.platform.config import load_gateway_config
+
+    config_path = tmp_path / "model-routing.yaml"
+    config_path.write_text(
+        """
+version: "1.0"
+foundry:
+  endpoint_env: "AICO_TEST_ENDPOINT"
+models:
+  chat:
+    alias: "chat-alias"
+  embedding:
+    alias: "embed-alias"
+resilience:
+  timeout_seconds: 20
+  retry:
+    max_attempts: 3
+    base_delay_ms: 250
+    max_delay_ms: 2000
+    jitter: true
+budgets:
+  chat:
+    max_input_tokens: 8000
+    max_output_tokens: 1000
+  embedding:
+    max_items_per_call: 32
+routing:
+  primary:
+    provider: "microsoft-foundry"
+    region: "uk-south"
+    data_boundary: "uk"
+    risk_class: "standard"
+  fallback:
+    enabled: false
+    provider: "n/a"
+    region: "n/a"
+    data_boundary: "n/a"
+    risk_class: "standard"
+    require_compatibility:
+      provider: true
+      region: false
+      data_boundary: true
+      risk: true
+      budget: true
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(GatewayConfigurationError, match="mandatory"):
+        load_gateway_config(config_path)
+
+
 def test_load_gateway_config_accepts_a_fully_filled_in_file(tmp_path):
     from aico.platform.config import load_gateway_config
 

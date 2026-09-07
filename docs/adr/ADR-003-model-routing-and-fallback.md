@@ -66,12 +66,28 @@ Every `EmbedRequest`/`ChatRequest` carries `timeout_seconds` (defaulting to
 `requests.post(..., timeout=...)` in the adapter - so a call has a hard
 deadline even without cancellation. `CancellationToken` is a cooperative
 `threading.Event` wrapper a caller can `.cancel()` from another thread or
-its own deadline; the gateway checks it before dispatching a call and again
+its own deadline; the gateway checks it before dispatching a call, again
 before every retry attempt (including the moment a backoff wait returns),
-so cancellation stops the operation from ever starting or from retrying
-again - it cannot interrupt one HTTP call already in flight against a
-transport that doesn't support that itself, but it does guarantee no
-further attempt follows.
+and - via `ModelGateway._dispatch_with_cancellation` - while a call is
+actually in flight against the transport: that method runs the transport
+call on a background daemon thread and polls the token, so `.cancel()`
+unblocks the *caller* within one `cancellation_poll_interval_seconds` tick
+(default 20ms) instead of making it wait out the whole call. This does not
+force the transport call itself to stop - Python has no safe way to abort
+an arbitrary blocking call running on another thread - so an abandoned
+call keeps running to completion in the background and its result is
+discarded, exactly like a caller abandoning an HTTP request whose response
+it no longer wants; the daemon flag means an abandoned call is never a
+reason the interpreter hangs on exit. Only requests that actually pass a
+`CancellationToken` pay for the thread hop at all - the common case (no
+token) calls the transport directly, with zero added overhead or timing
+change.
+
+**Correction (2026-09-07)**: an earlier version only checked the token
+before dispatch and during backoff, so cancellation set *while a call was
+already in flight* had no effect until the call finished on its own - the
+caller was left waiting regardless. See
+`test_cancellation_during_an_in_flight_call_unblocks_the_caller_without_waiting_for_it`.
 
 ### Retry policy
 
@@ -117,10 +133,17 @@ wrong, not the route, so no compatibility check can make switching routes
 the right move - this is checked *before* any policy/compatibility
 evaluation, (b) a fallback transport is actually configured - policy alone
 never conjures one up, (c) `routing.fallback.enabled` is `true`, and (d)
-every axis `routing.fallback.require_compatibility` marks as required
-(`provider`, `region`, `data_boundary`, `risk`, `budget`) is actually
-compatible between `routing.primary` and `routing.fallback`'s declared
-route. `budget` compatibility is evaluated pre-flight from the request
+every one of the five compatibility axes (`provider`, `region`,
+`data_boundary`, `risk`, `budget`) actually matches between
+`routing.primary` and `routing.fallback`'s declared route -
+**unconditionally**: there is no config-driven way to relax an axis.
+`config/model-routing.yaml`'s `routing.fallback.require_compatibility`
+keys are still required to be present, but `load_gateway_config()` rejects
+the file outright if any of them is `false`, and
+`ModelGateway._evaluate_fallback_compatibility` no longer even reads their
+values - a mismatch on any axis always blocks, whether the `GatewayConfig`
+came from YAML or was built directly in Python (as every test does).
+`budget` compatibility is evaluated pre-flight from the request
 itself (item count vs. `budgets.embedding.max_items_per_call`, or requested
 `max_output_tokens` vs. `budgets.chat.max_output_tokens`) - not silently
 retried on a request already known to exceed the limit. Any missing
@@ -141,6 +164,16 @@ first, before any compatibility check runs. See
 `test_authentication_failure_at_primary_never_triggers_fallback` and
 `test_bad_request_failure_at_primary_never_triggers_fallback`, and
 `artifacts/day03/gateway_demo.md` scenario 7.
+
+**Correction (2026-09-07)**: `routing.fallback.require_compatibility` used
+to let a specific axis be individually turned off in config, tolerating a
+mismatch on it (e.g. `region: false` would let a region mismatch through).
+All five axes are now unconditionally mandatory: `load_gateway_config()`
+rejects a config with any axis set to `false`, and
+`_evaluate_fallback_compatibility` no longer reads the flags at all - even
+a `GatewayConfig` built directly in Python cannot relax an axis anymore.
+See `test_load_gateway_config_rejects_a_disabled_compatibility_axis` and
+`test_require_compatibility_false_never_relaxes_a_mismatch_all_axes_are_mandatory`.
 
 **Why silent cross-provider/data-boundary fallback is prohibited**: a
 data-residency or risk-classification requirement that holds for the
@@ -195,7 +228,9 @@ never a candidate for a log line either.
 rules instead of N call sites; every failure a caller sees is one of five
 typed categories, never a provider-specific exception; fallback requires an
 explicit, auditable policy decision instead of "whatever happens on
-failure"; the full test suite is deterministic and offline (149 tests, no
+failure"; the full test suite is deterministic and offline (155 Day
+3-scoped tests at time of writing - this checkout has since grown past
+Day 3, so `pytest -q` on the whole repository runs more than that - no
 network call, no real cloud provider used to manufacture a failure case).
 
 **Trade-offs/limitations**: `config/model-routing.yaml` has no second
