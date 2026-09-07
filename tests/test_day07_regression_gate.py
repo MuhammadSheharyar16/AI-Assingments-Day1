@@ -173,6 +173,31 @@ def test_weakened_retrieval_top_k_makes_the_gate_fail(tmp_path):
     assert any(not c["passed"] for c in report["threshold_comparison"])
 
 
+def test_controlled_regression_full_sequence_pass_fail_pass(tmp_path):
+    # Task 10's full required sequence, driven directly (not via the
+    # demonstration script): the exact same approved configuration must
+    # pass, a deliberately weakened one must fail with a non-zero exit,
+    # and restoring the exact same approved configuration must pass again
+    # - proving the weakening was reversible, not a change to what
+    # "approved" means.
+    normal_exit_1, normal_artifacts_1 = _run(tmp_path / "normal_1", top_k=day07.DEFAULT_TOP_K)
+    weakened_exit, weakened_artifacts = _run(tmp_path / "weakened", top_k=1)
+    normal_exit_2, normal_artifacts_2 = _run(tmp_path / "normal_2", top_k=day07.DEFAULT_TOP_K)
+
+    normal_report_1 = json.loads((normal_artifacts_1 / "evaluation_report.json").read_text(encoding="utf-8"))
+    weakened_report = json.loads((weakened_artifacts / "evaluation_report.json").read_text(encoding="utf-8"))
+    normal_report_2 = json.loads((normal_artifacts_2 / "evaluation_report.json").read_text(encoding="utf-8"))
+
+    assert normal_exit_1 == 0 and normal_report_1["gate_verdict"]["passed"] is True
+    assert weakened_exit != 0 and weakened_report["gate_verdict"]["passed"] is False
+    assert normal_exit_2 == 0 and normal_report_2["gate_verdict"]["passed"] is True
+
+    # restoring the identical configuration reproduces the identical
+    # verdict, not just "some" pass - the deterministic pipeline means
+    # the two normal runs' metrics match exactly.
+    assert normal_report_1["deterministic_metrics"] == normal_report_2["deterministic_metrics"]
+
+
 def test_a_stricter_threshold_file_fails_the_gate_even_when_the_run_is_unchanged(tmp_path):
     strict = json.loads(THRESHOLDS_PATH.read_text(encoding="utf-8"))
     strict["metrics"]["hit_at_1"]["min"] = 0.999

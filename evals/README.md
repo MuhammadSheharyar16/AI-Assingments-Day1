@@ -911,3 +911,66 @@ touches the evaluation reports).
 
 Run just these: `uv run pytest -q tests/test_day07_regression_gate.py`.
 Needs the index built first.
+
+## Task 10 — controlled regression proof
+
+`scripts/day07_controlled_regression_proof.py` drives the real gate
+(`aico.evals.day07.main` — the exact command Task 9 built) three times in
+a row and writes `artifacts/day07/controlled_regression.md` from the
+three real results, nothing hand-transcribed:
+
+1. **normal approved configuration** (`--top-k 5`, the committed default) → **PASS**
+2. **weakened retrieval** (`--top-k 1`) → **FAIL**, non-zero exit
+3. **restored approved configuration** (`--top-k 5` again) → **PASS**
+
+### What "weakened" means here
+
+A single CLI flag — `--top-k`, the retrieval window size passed to
+`BM25Retriever` and to Task 3's scorers — turned down from 5 to 1 and back.
+No source file, threshold, or baseline is edited; nothing about what
+"approved" means changes. This is deliberately the brief's own first
+example ("smaller top-k"), and it's reversible by construction: restoring
+the flag reproduces the *exact* normal-run metrics
+(`test_controlled_regression_full_sequence_pass_fail_pass` asserts the two
+normal runs' `deterministic_metrics` dicts are identical, not just "both
+passed").
+
+`--top-k 1`, not 2 or 3, is used on purpose — it fails three independent
+thresholds at once (`hit_at_k`, `mrr`, `refusal_accuracy_rate`) rather than
+one metric sitting just barely under its floor, so the proof isn't
+sensitive to a single borderline number.
+
+### The real, committed proof
+
+```
+| phase | --top-k | verdict | exit code |
+| normal (baseline)     | 5 | PASS | 0 |
+| weakened (regressed)  | 1 | FAIL | 1 |
+| restored              | 5 | PASS | 0 |
+
+Failed threshold(s) under the weakened configuration: hit_at_k, mrr, refusal_accuracy_rate.
+```
+
+Every run uses its own isolated temp `--artifacts-dir` — this script never
+writes to (or reads back) the committed `artifacts/day07/evaluation_report.*`,
+so Task 10's demonstration can never leave a weakened-configuration report
+sitting where Task 9's real, canonical one belongs. The script also
+asserts its own expected PASS/FAIL/PASS sequence before writing
+`controlled_regression.md` at all — if a future change broke this
+guarantee, the script itself would fail loudly rather than silently
+committing a wrong narrative.
+
+Regenerate with `uv run python scripts/day07_controlled_regression_proof.py`
+(needs the index built first).
+
+### Tests
+
+`tests/test_day07_regression_gate.py::test_controlled_regression_full_sequence_pass_fail_pass`
+drives the same three-phase sequence directly through `aico.evals.day07.main`
+(not via the demonstration script) and asserts every part of it: the first
+normal run passes with exit 0, the weakened run fails with a non-zero
+exit, the second normal run passes with exit 0 again, and the two normal
+runs' deterministic metrics match exactly — the same proof the generated
+artifact documents, made into an executable regression test so a future
+change that breaks this guarantee fails CI, not just a manually-run
+script.
