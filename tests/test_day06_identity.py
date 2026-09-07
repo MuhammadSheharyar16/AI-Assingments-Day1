@@ -124,7 +124,13 @@ class FakeGateway:
 
 
 def _fake_retriever(question: str) -> list[EvidenceChunk]:
-    return [EvidenceChunk(chunk_id="DOC-003::chunk-0", source_file="DOC-003-pricing-payment.md", text="Payment is net 30.")]
+    return [
+        EvidenceChunk(
+            chunk_id="DOC-003::chunk-0",
+            source_file="DOC-003-pricing-payment.md",
+            text="Payment terms are net 30 days from invoice date.",
+        )
+    ]
 
 
 _ANSWERED_JSON = """

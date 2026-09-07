@@ -72,8 +72,15 @@ _VALID_IDENTITY = TrustedIdentity(tenant_id="TENANT-SYN-001", user_id="USER-SYN-
 # unlikely to collide with anything legitimately logged (status codes,
 # stage names, etc).
 _SECRET_QUESTION = "What are the CONFIDENTIAL-QUESTION-77821 payment terms?"
-_SECRET_EVIDENCE = "TOP-SECRET-EVIDENCE-99213: payment is net 30."
-_SECRET_ANSWER = "ANSWER-TEXT-55102: payment terms are net 30 days."
+# _SECRET_EVIDENCE and _SECRET_ANSWER stay distinct marker strings (so the
+# log-leak assertions below independently prove neither one leaks), but
+# now share real content words - aico.rag.support_validator's answer-
+# support check (post-review hardening) requires the answer to actually
+# overlap with its cited chunk's text, so a wholly unrelated pair of
+# marker sentences would (correctly) fail closed before reaching the
+# logging/tracing behavior these tests exist to check.
+_SECRET_EVIDENCE = "TOP-SECRET-EVIDENCE-99213: payment terms are net 30 calendar days."
+_SECRET_ANSWER = "ANSWER-TEXT-55102: payment terms are net 30 calendar days."
 # ATK-001 (tests/fixtures/day05/attacks/attack_fixtures.json) - a known,
 # already-validated policy-block case, reused here rather than a
 # hand-crafted phrase so this test's "blocked" outcome is proven to be a

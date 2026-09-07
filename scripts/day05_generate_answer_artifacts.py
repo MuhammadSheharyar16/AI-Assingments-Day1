@@ -33,6 +33,7 @@ from pathlib import Path
 from aico.platform.model_gateway import CallMetadata, ChatRequest, ChatResult
 from aico.rag.answer_service import GroundedAnswer, GroundedAnswerService, InsufficientEvidence
 from aico.rag.citation_validator import EvidenceChunk, validate_citations
+from aico.rag.support_validator import validate_support
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ANSWER_CASES_PATH = REPO_ROOT / "data" / "day05_pack" / "answer_cases.json"
@@ -175,6 +176,20 @@ def render_supported(case: dict, chunks: list[EvidenceChunk], result: GroundedAn
     lines.append(
         "Every cited chunk ID is a member of the chunk IDs actually retrieved and supplied to the model "
         "this turn (`cited_ids ⊆ retrieved_context_ids`) - see `aico.rag.citation_validator`."
+    )
+    lines.append("")
+
+    support_result = validate_support(result.answer, list(result.citation_ids), chunks)
+    lines.append("## Answer-support validation result")
+    lines.append("")
+    lines.append(f"- `supported`: `{support_result.supported}`")
+    lines.append(f"- `overlap_ratio`: `{support_result.overlap_ratio:.2f}`")
+    lines.append("")
+    lines.append(
+        "Post-review hardening (`aico.rag.support_validator`): citation-ID membership alone does not prove "
+        "the answer's claim is supported by its cited chunk's content, only that the chunk was genuinely "
+        "retrieved. This is a deterministic lexical-overlap check between the answer and the non-suspicious "
+        "text of its cited chunk(s), run only after citation validation already passed."
     )
     lines.append("")
 

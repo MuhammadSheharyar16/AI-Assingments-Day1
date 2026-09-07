@@ -108,6 +108,17 @@ _CLARIFY_RE = re.compile(
 )
 
 
+def matches_injection_pattern(text: str) -> bool:
+    """True if `text` matches any of the known instruction-injection
+    patterns this policy blocks user input on. Exposed (not `_`-prefixed)
+    for reuse by `aico.rag.support_validator`, which needs to recognize the
+    same injected-instruction shapes inside *retrieved evidence* - a
+    different problem from classifying *user* input (this module's actual
+    job), but built on the same underlying, fixture-derived pattern list
+    rather than a second copy of it."""
+    return any(pattern.search(text) for _category, pattern in _BLOCK_RULES)
+
+
 def evaluate_policy(normalized_text: str) -> PolicyDecision:
     """`normalized_text` must already have passed through
     `security.normalization.normalize_input` - this function does not

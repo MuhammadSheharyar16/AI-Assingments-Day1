@@ -548,7 +548,17 @@ def test_day3_gateway_path_model_call_goes_through_the_real_model_gateway_class(
 
     transport = _RecordingTransport()
     real_gateway = ModelGateway(config, transport)  # the actual Day 3 class, not a duck-typed fake
-    chunk = EvidenceChunk(chunk_id="CHUNK-101", source_file="synthetic.md", text="Some real evidence.")
+    # Text matches _cited_answer_json()'s default answer - this test proves
+    # the ModelGateway wiring (chat_calls == 1 below), not answer-support
+    # content matching, so the chunk needs to actually support that default
+    # answer rather than being an unrelated placeholder (aico.rag.
+    # support_validator, post-review hardening, would otherwise fail this
+    # closed for a reason unrelated to what this test checks).
+    chunk = EvidenceChunk(
+        chunk_id="CHUNK-101",
+        source_file="synthetic.md",
+        text="Synthetic supplier invoices must be submitted within 30 calendar days of delivery.",
+    )
     service = GroundedAnswerService(gateway=real_gateway, retriever=_fixed_retriever([chunk]))
 
     result = service.answer("What does the policy say?")

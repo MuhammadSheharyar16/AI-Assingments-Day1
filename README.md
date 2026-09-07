@@ -914,6 +914,9 @@ AI-Assignments-Day6/
       prompt_builder.py             Day 5 Task 2 — explicit SYSTEM / USER / EVIDENCE message separation;
                                      evidence is always labelled untrusted data, never merged into system
       citation_validator.py         Day 5 Task 3 — cited_ids ⊆ retrieved_context_ids, fails closed
+      support_validator.py          Day 5 (post-review hardening) — citation-ID membership does not prove
+                                     answer content is supported; bounded lexical-overlap check, run after
+                                     citation validation, catches fabrication and poisoned-directive claims
     security/                       Day 5 — input-side defense (Tasks 5-6)
       __init__.py
       normalization.py              Day 5 Task 5 — bounded, deterministic obfuscation normalization
@@ -1012,12 +1015,14 @@ AI-Assignments-Day6/
     test_day04_repair.py            Day 4 — bounded repair + gateway boundary (20)
     test_day04_broken_output_suite.py      Day 4 — all 12 fixture cases end to end (17)
     test_day04_compatibility.py     Day 4 — backward compatibility + versioning (10)
-    test_day05_grounding.py         Day 5 Task 1/2/10 — prompt boundaries, full orchestration, gateway/contract/retrieval path proofs (23)
+    test_day05_grounding.py         Day 5 Task 1/2/10 — prompt boundaries, full orchestration, gateway/contract/retrieval path proofs (25)
     test_day05_citations.py         Day 5 Task 3 — valid / forged / multiple-citation membership, fail-closed (11)
     test_day05_insufficient_evidence.py    Day 5 Task 4 — unsupported question invents no fact or citation (10)
     test_day05_normalization.py     Day 5 Task 5 — bounded obfuscation normalization, benign text untouched (12)
     test_day05_input_policy.py      Day 5 Task 6 — allow/clarify/block over all 9 supplied fixtures, determinism (18)
-    test_day05_poisoned_documents.py       Day 5 Task 7 — malicious retrieved text cannot override system behavior (12)
+    test_day05_poisoned_documents.py       Day 5 Task 7 — malicious retrieved text cannot override system behavior (13)
+    test_day05_answer_support.py    Day 5 (post-review hardening) — answer-support lexical-overlap validation,
+                                     including the fabrication and poisoned-directive probes (15)
     test_day06_api.py               Day 6 Task 1 — OpenAPI, typed /ask success, API/domain separation (5)
     test_day06_identity.py          Day 6 Task 2 — trusted identity, all identity_claim_cases.json fixtures (18)
     test_day06_correlation.py       Day 6 Task 3 — ID generation, header echo, contextvar propagation (7)
@@ -1028,17 +1033,23 @@ AI-Assignments-Day6/
     test_day06_dependency_injection.py     Day 6 Task 10 — every DI seam independently replaceable (5)
 ```
 
-490 tests pass in total (`uv run pytest -q`, verified 2026-09-03) — 74 of
-them are new Day 6 tests (`test_day06_*.py`); every Day 1-5 test listed
-above still passes unchanged (416 tests), satisfying the working-rule
-regression requirement.
+520 tests pass in total (`uv run pytest -q`, verified 2026-09-07, count
+includes parametrized cases as pytest reports them — the per-file counts
+in the tree above count test *functions*, so they don't sum to this
+number directly). `test_day05_answer_support.py` is new (post-review
+hardening — see `support_validator.py` above); every other Day 1-6 test
+still passes unchanged, satisfying the working-rule regression
+requirement.
 
 Note: the task brief's "Required structure" names `requirements.txt`; this
 repo uses `pyproject.toml` + `uv.lock` (via `uv`) instead, which is the
 documented dependency-management choice from Day 1 onward — see Setup
 above. Everything else in the brief's required tree (`src/aico/rag/`,
-`src/aico/security/`, `tests/fixtures/day05/attacks/`, the five
-`test_day05_*.py` files, and `artifacts/day05/*.md`) matches exactly.
+`src/aico/security/`, `tests/fixtures/day05/attacks/`, the required
+`test_day05_*.py` files, and `artifacts/day05/*.md`) matches exactly;
+`support_validator.py` and `test_day05_answer_support.py` are additive,
+post-review hardening beyond the brief's required tree, not a replacement
+for anything in it.
 
 Day 6's own required tree (`src/aico/api/`, `src/aico/observability/`,
 `test_day06_api.py` / `test_day06_identity.py` / `test_day06_cancellation.py`

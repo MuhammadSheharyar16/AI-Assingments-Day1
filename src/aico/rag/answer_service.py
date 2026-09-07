@@ -12,10 +12,13 @@ described in the assignment brief (build_outcome diagram):
 `GroundedAnswerService.answer()` is the single entry point. It never
 bypasses retrieval, the Model Gateway, Day 4 typed contract validation,
 Day 4 semantic validation (`aico.contracts.semantic.validate_semantic` -
-the complete S1-S5 path, not a partial reimplementation of it), or
-citation validation (working rules) - each stage below returns early only
-with one of the five typed result values, and every one of those returns
-happens *after* the stage responsible for it has actually run.
+the complete S1-S5 path, not a partial reimplementation of it), citation
+validation, or answer-support validation (`aico.rag.support_validator` -
+post-review hardening: citation-ID membership alone does not prove the
+answer's claim is actually supported by its cited chunk's content) -
+each stage below returns early only with one of the five typed result
+values, and every one of those returns happens *after* the stage
+responsible for it has actually run.
 
 Result paths (grounding_rules.md, Task 1):
     GroundedAnswer      - a typed, cited, evidence-supported answer
@@ -60,6 +63,7 @@ from aico.platform.errors import ModelGatewayError
 from aico.platform.model_gateway import CancellationToken, ModelGateway
 from aico.rag.citation_validator import EvidenceChunk, validate_citations
 from aico.rag.prompt_builder import build_prompt
+from aico.rag.support_validator import validate_support
 from aico.retrieval.bm25 import BM25Index
 from aico.retrieval.search import load_chunks
 from aico.security.input_policy import PolicyDecision, PolicyOutcome, evaluate_policy
@@ -143,7 +147,7 @@ class Blocked:
 @dataclass(frozen=True)
 class TypedFailure:
     question: str
-    stage: str  # "gateway" | "parse" | "contract" | "citation"
+    stage: str  # "gateway" | "parse" | "contract" | "semantic" | "citation" | "support"
     category: str
     message: str
 
@@ -330,6 +334,31 @@ class GroundedAnswerService:
                     stage="citation",
                     category="forged_citation",
                     message=f"citation(s) not present in retrieved context: {list(citation_result.forged_citation_ids)}",
+                )
+
+            # 7b. Answer-support validation (post-review hardening,
+            # aico.rag.support_validator) - citation membership alone
+            # proves a cited chunk_id was genuinely retrieved, not that
+            # the answer's claim is actually supported by that chunk's
+            # content. A model can cite a real, retrieved chunk while
+            # stating something the chunk never says (fabrication) or
+            # something that exists only inside an attacker-injected
+            # directive sentence within a poisoned chunk (poisoned-
+            # document compliance). Fail closed rather than trust either.
+            support_result = validate_support(parsed.answer, cited_ids, retrieved)
+            span.set_attribute("validation.support_overlap_ratio", support_result.overlap_ratio)
+            if not support_result.supported:
+                span.set_attribute("validation.result", "unsupported_claim")
+                span.set_status(Status(StatusCode.ERROR, "unsupported_claim"))
+                return TypedFailure(
+                    question=question,
+                    stage="support",
+                    category="unsupported_claim",
+                    message=(
+                        "answer content has insufficient lexical overlap with the non-suspicious text of "
+                        f"its cited chunk(s) (overlap_ratio={support_result.overlap_ratio:.2f}); citing a "
+                        "genuinely retrieved chunk_id does not by itself prove the claim is supported"
+                    ),
                 )
             span.set_attribute("validation.result", "valid")
 
