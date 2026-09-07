@@ -357,3 +357,126 @@ real case from the committed `golden_v1.json`.
 
 Run just these: `uv run pytest -q tests/test_day07_groundedness.py`. No
 index or network access needed — every test uses a fake gateway/transport.
+
+## Task 5 — stability / repeated runs
+
+`src/aico/evals/stability.py` — a generic, pure repetition/aggregation
+core (`run_repeated`, `RepeatedRunResult`), reusable for any
+model-dependent signal, plus two concrete observation shapes built on
+Tasks 3/4: `observe_refusal_run` (repeated system-under-test answers) and
+`observe_groundedness_run` (repeated evaluator verdicts).
+`scripts/day07_generate_stability_report.py` drives the real
+`GroundedAnswerService` and the real `evaluate_groundedness` N times each
+against a scripted fake gateway and writes
+`artifacts/day07/stability_report.md` — the module itself makes no model
+call and needs no index, so it stays as fast/testable as `metrics.py`.
+
+### The design decision (repetition count + subset), and why
+
+**`STABILITY_REPEAT_COUNT = 5`** — greater than one (working rule), and
+enough that a single flip is a visible 80% pass rate rather than noise
+lost in rounding, without the repeated-run section dominating a full
+32-case evaluation run in cost or length.
+
+**`STABILITY_SUBSET_CASE_IDS`** — one `train`/`development` case per
+non-`adversarial` category, each chosen to stress a different source of
+potential run-to-run variation:
+
+| case | category | what it stresses |
+|---|---|---|
+| `GC-002` | answerable | plain single-fact generation (the baseline) |
+| `GC-009` | ambiguous | a decision the model must make *consistently* under genuine ambiguity |
+| `GC-017` | multi_chunk | multi-fact completeness (does it drop one citation sometimes?) |
+| `GC-019` | synonym_heavy | the hardest retrieval+generation combination — paraphrase recognition |
+| `GC-024` | unanswerable | refusal consistency (never inventing a bulk-discount figure) |
+
+`adversarial` cases are excluded: they are blocked by the deterministic
+input-policy layer before any model call happens in the normal case, so
+there is nothing model-dependent to repeat — running them N times would
+just repeat one deterministic classification and report a meaningless
+"0% variance."
+
+`GC-017`, not `GC-015`, represents `multi_chunk` — building the script
+surfaced a real Task 3 finding: `GC-015`'s second expected source isn't
+actually in the real BM25 top-5 at all (`multi_chunk`'s `full_hit_rate` is
+0.60, not 1.00 — see the Task 3 section above), so a "both facts cited"
+repetition for it would require citing a chunk retrieval never returned.
+`GC-017` genuinely retrieves both its expected sources, so its
+citation-count variation is real completeness variance, not a forced
+workaround. `GC-017` is `development` split (still tunable, same as the
+rest of this subset) — nothing here reaches into `holdout`.
+
+### What "scripted" honestly means
+
+`scripts/day07_generate_stability_report.py`'s fake gateway returns a
+fixed, hand-written response plan per case and run index — not live model
+sampling, and not pseudo-random noise dressed up as if it were (said
+plainly in the script's own docstring). This demonstrates the stability
+*mechanism* deterministically and reproducibly; it does not characterize
+a real model's actual sampling variance. Swapping in a real
+`ModelGateway.from_config()` (live endpoint, temperature > 0) instead of
+the script's `_ScriptedGateway` would make the exact same harness measure
+genuine live variance — nothing in `aico.evals.stability` or the report
+renderer would need to change.
+
+### Real, generated evidence — `artifacts/day07/stability_report.md`
+
+Regenerate with `uv run python scripts/day07_generate_stability_report.py`
+(needs the index built first, same precondition as the two existing
+real-index tests). Last generated run:
+
+```
+System-under-test stability
+| case | category | repetitions | pass rate | result_kind distribution | stable? |
+| GC-002 | answerable | 5 | 100% | grounded_answer×5 | yes |
+| GC-009 | ambiguous | 5 | 0% | grounded_answer×5 | yes |
+| GC-017 | multi_chunk | 5 | 100% | grounded_answer×5 | yes |
+| GC-019 | synonym_heavy | 5 | 60% | grounded_answer×3, insufficient_evidence×2 | no |
+| GC-024 | unanswerable | 5 | 100% | insufficient_evidence×5 | yes |
+
+Evaluator stability
+| case | repetitions | grounded rate | confidence distribution | stable? |
+| GC-002 | 5 | 100% | high×4, medium×1 | yes |
+| GC-009 | 5 | 100% | high×5 | yes |
+| GC-017 | 5 | 100% | high×4, medium×1 | yes |
+| GC-019 | 5 | 60% | high×5 | no |
+| GC-024 | 5 | 100% | high×5 | yes |
+```
+
+`GC-019` is the flagship instability example (scripted deliberately, per
+the plan above) — both the system-under-test and the evaluator flip
+between two runs, exactly the "pass/fail variation where categorical"
+case the brief asks to be recorded, not hidden. `GC-017` shows the
+opposite: the typed result (`passed`) stays 100% stable while a numeric
+field (`citation_count`, in the per-case detail — mean=1.60, min=1, max=2)
+genuinely varies underneath it, proving stability tracking catches
+completeness drift a coarser pass/fail check alone would miss.
+
+`GC-009` is a deliberately uncomfortable, honestly-reported finding, not
+a report bug: the current system has no mechanism for the *model* to
+request clarification (only the deterministic input-policy layer can
+produce `Clarify`, and only for subjective "is X good/bad" style
+questions), so it stably (100% of runs) picks one interpretation and
+asserts it — `stable: yes` at 0% pass rate. This is exactly why
+deterministic and model-based results are never merged into one score
+(working rule): Task 3's scorer fails every `GC-009` run outright (wrong
+result type), while Task 4's grader can still mark the individual fact
+asserted `grounded=True` (it genuinely is supported by evidence) — both
+are correct about what they each measure.
+
+### Tests
+
+`tests/test_day07_stability.py` (17 tests, additive beyond the required
+tree — same rationale as Task 4's test file): the generic core
+(`run_repeated`'s call count and `repeat_count > 1` guard,
+`numeric_summary`/`rate_summary`/`categorical_summary` against known
+values, including the deliberate bool-exclusion from `numeric_summary`),
+both observation builders, an end-to-end `run_repeated` +
+`observe_refusal_run` example that detects instability from synthetic
+outcomes, and a check that the documented subset resolves against the
+real `golden_v1.json` with no `adversarial` case included.
+
+Run just these: `uv run pytest -q tests/test_day07_stability.py`. No
+index or network access needed — this file tests the library, not the
+artifact-generating script (which needs the index; run it directly to
+regenerate the report, as above).
