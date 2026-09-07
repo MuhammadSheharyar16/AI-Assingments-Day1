@@ -480,3 +480,121 @@ Run just these: `uv run pytest -q tests/test_day07_stability.py`. No
 index or network access needed — this file tests the library, not the
 artifact-generating script (which needs the index; run it directly to
 regenerate the report, as above).
+
+## Task 6 — failure classification
+
+`src/aico/evals/failure_classifier.py` — `classify_failure(case, ...)`
+takes one case's already-computed Task 3/Task 4 check results and returns
+either `None` (every applicable check passed) or a `FailureClassification`
+naming **exactly one** primary type from the required six-value taxonomy:
+
+```
+chunking | retrieval | prompt | citation | refusal | evaluator
+```
+
+### Deterministic precedence (how "exactly one" is decided)
+
+More than one check can fail on the same case at once (e.g. a retrieval
+miss *and* a downstream citation problem). `classify_failure` applies one
+fixed, most-upstream-cause-first order rather than picking arbitrarily:
+
+1. **`evaluator`** — only considered when the system-under-test's own
+   refusal/attack-outcome check *passed*. A broken grader never masks a
+   real system-under-test failure, and a real system-under-test failure
+   is never re-attributed to the grader (`tests/test_day07_failure_classification.py::test_evaluator_failure_never_masks_a_real_system_failure`
+   proves this both ways).
+2. **`chunking` vs `retrieval`** — only when the case has
+   `expected_sources` and the actual retrieval window missed all of them.
+   Disambiguated by re-scoring against the **full, untruncated index**
+   (reusing Task 3's own `score_retrieval`, just called with every chunk
+   instead of the top-k) rather than a separate check: anchor missing
+   *everywhere* → `chunking` (the source text never survived chunking as
+   one coherent, findable chunk); anchor present elsewhere in the index
+   but outside the scored window → `retrieval` (a ranking miss on
+   correctly-chunked content).
+3. **`citation`** — a forged/invalid citation, whether caught by Task 3's
+   membership check directly or surfaced as a citation-stage
+   `TypedFailure` from the pipeline itself.
+4. **`prompt`** — any other `TypedFailure` (gateway/parse/contract/
+   semantic stage) that isn't a citation-stage failure. Not a perfect
+   taxonomy fit for a raw gateway failure (there is no seventh
+   "infrastructure" bucket in the required six) — documented as the
+   closest available category, not claimed as a precise fit.
+5. **`refusal`** — whatever's left: the wrong `AnswerResult` *type* was
+   produced for this case's expected behavior (invented an answer instead
+   of refusing, answered instead of asking for clarification, or an
+   attack got a confident answer instead of a safe decline).
+
+### Real, generated evidence — `artifacts/day07/failure_classification.md`
+
+`scripts/day07_generate_failure_classification_report.py` runs the real
+`GroundedAnswerService`, the real (unmodified) input policy, and the real
+`BM25Retriever` once per case in `golden_v1.json` — only the Model Gateway
+is fake, and deliberately *not* scripted per case to produce a chosen
+verdict: one generic, honest rule (`_well_behaved_response`) answers and
+cites whatever retrieved evidence actually contains an expected source's
+anchor text, and declines otherwise. Every failure in the generated report
+is therefore a real consequence of real retrieval/policy behavior, not a
+manufactured example — with one clearly-marked exception
+(`EVALUATOR_DEMONSTRATION_CASE_ID`): a single forced grader failure on
+`GC-002` so the `evaluator` bucket has a reachable, real example in the
+report, since nothing in the normal run happens to break grading on its
+own.
+
+Regenerate with `uv run python
+scripts/day07_generate_failure_classification_report.py` (needs the index
+built first). Last generated run — **8 of 32 cases failed**:
+
+```
+| primary type | count |
+| chunking  | 0 |
+| retrieval | 2 |
+| prompt    | 0 |
+| citation  | 0 |
+| refusal   | 5 |
+| evaluator | 1 |
+```
+
+Every failure is a genuine, already-known finding from earlier tasks, not
+a new surprise:
+
+- **All 5 `ambiguous` cases fail `refusal`** — the same real capability
+  gap Task 5 already surfaced: the model has no way to request
+  clarification, so it always picks one interpretation and asserts it.
+- **`GC-014` and `GC-022` fail `retrieval`** — real BM25 ranking misses
+  (`GC-014`'s two `multi_chunk` anchors and `GC-022`'s `synonym_heavy`
+  anchor all exist correctly chunked in the index, just outside the
+  top-5 for these specific queries — consistent with Task 3's honestly-
+  reported lower `multi_chunk`/`synonym_heavy` Hit@1).
+- **`GC-002` fails `evaluator`** — the deliberately forced demonstration
+  above, not a real system-under-test problem (its own answer is fine).
+- **Zero `chunking`/`prompt`/`citation` failures** — reported as zero
+  because none occurred, not omitted or forced to appear for symmetry.
+
+One bug the *test harness itself* had, found and fixed while building
+this script: `_well_behaved_response` originally cited a chunk once per
+matched anchor, so a `multi_chunk` case whose two expected anchors
+happened to land in the *same* chunk cited that one chunk_id twice —
+tripping Day 4's real S3 semantic rule (`s3_duplicate_citation`) and
+misclassifying as a `prompt` failure that was actually a bug in the
+fake response builder, not a system-under-test or dataset finding. Fixed
+by deduplicating citation ids (`dict.fromkeys`, order-preserving) before
+building the response — a real model wouldn't cite the same chunk twice
+for two facts found in one passage, and now neither does the script's
+stand-in for one.
+
+### Tests
+
+`tests/test_day07_failure_classification.py` (22 tests): every one of the
+six taxonomy types reached with synthetic Task 3/4 results, the "case
+passed" (`None`) path, the evaluator-never-masks-a-real-failure guarantee
+(both directions), the chunking-vs-retrieval disambiguation via the
+full-index re-score, the retrieval-miss-beats-citation-problem precedence
+proof, both required-argument validations (`refusal` for non-adversarial,
+`attack` for adversarial), and report rendering (empty report, summary
+counts, sorted case order).
+
+Run just these: `uv run pytest -q tests/test_day07_failure_classification.py`.
+No index or network access needed — this file tests the classifier
+library, not the artifact-generating script (which needs the index; run
+it directly to regenerate the report, as above).
