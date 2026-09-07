@@ -1073,3 +1073,85 @@ sets, and no key anywhere in the JSON report contains `ai_score`,
 Run just these: `uv run pytest -q tests/test_day07_regression_gate.py
 tests/test_day07_stability.py`. Needs the index built first for the
 real-pipeline tests.
+
+## Task 14 — tests
+
+Every prior Day 7 task already built its own tests as it went (723 tests
+across `tests/test_day07_*.py` by this point) - Task 14's own job is
+auditing that against the brief's required-coverage table row by row and
+filling the two rows nothing else was responsible for. "Test behavior,
+not file existence" (the brief's own words) means this section cites
+*specific, real, currently-passing test names*, not a claim that a file
+exists.
+
+### Coverage map — every required row, cited
+
+| required test | what it proves | where |
+|---|---|---|
+| Dataset schema | Required fields and valid categories/splits | `test_day07_dataset.py::test_missing_required_field_is_rejected`, `::test_invalid_category_is_rejected`, `::test_invalid_answerability_is_rejected` |
+| Minimum case count | >= 25 | `test_day07_dataset.py::test_minimum_case_count_is_met`, `::test_below_minimum_case_count_is_rejected` |
+| Category coverage | All required categories | `test_day07_dataset.py::test_every_required_category_is_represented`, `::test_missing_category_coverage_is_rejected` |
+| Unique IDs | No duplicate case IDs | `test_day07_dataset.py::test_no_duplicate_case_ids`, `::test_duplicate_case_id_is_rejected` |
+| Split correctness | Exactly one valid split per case | `test_day07_dataset.py::test_every_case_has_a_valid_split`, `::test_invalid_split_is_rejected` |
+| Holdout separation | Holdout not used by tuning/update logic | `test_day07_holdout.py::test_tunable_cases_never_returns_a_holdout_case`, `::test_tunable_cases_and_holdout_cases_partition_the_dataset` |
+| Hit@K | Known result | `test_day07_metrics.py::test_hit_at_1_and_mrr_for_a_rank_one_match`, `::test_k_truncates_the_scored_window` |
+| MRR | Known reciprocal rank | `test_day07_metrics.py::test_known_reciprocal_rank_for_a_rank_three_match` (asserts exactly `1/3`), `::test_no_match_within_top_k_scores_zero_mrr_and_no_hit` |
+| Citation validity | Valid/forged citations | `test_day07_metrics.py::test_score_citations_agrees_with_the_day5_citation_fixture[CIT-001..004]` (parametrized against Day 5's own fixture), `::test_score_citations_reports_forged_ids` |
+| Refusal accuracy | Answerable/unanswerable scoring | `test_day07_metrics.py::test_answerable_case_passes_only_on_a_grounded_answer`, `::test_unanswerable_case_passes_only_on_insufficient_evidence` |
+| Safety zero tolerance | One safety failure fails gate | `test_day07_safety_gate.py::test_a_single_safety_failure_fails_the_gate_regardless_of_aggregate_score` |
+| Threshold comparison | Candidate comparison correct | `test_day07_safety_gate.py::test_metric_below_floor_fails_the_gate`, `::test_metric_exactly_at_the_floor_passes`, `::test_unmeasured_metric_fails_its_check_rather_than_being_skipped` |
+| Baseline immutability | Normal eval cannot rewrite baseline | `test_day07_baseline_update.py::test_normal_evaluation_never_writes_the_baseline_file`, `::test_write_baseline_is_the_only_function_regression_module_exposes_that_writes` |
+| Explicit baseline update | Separate update path | `test_day07_regression_gate.py::test_update_baseline_without_reviewer_or_notes_is_rejected`, `::test_update_baseline_dry_run_writes_nothing`, `::test_update_baseline_with_confirm_writes_a_valid_baseline`, `::test_update_baseline_never_writes_the_evaluation_reports` |
+| Regression exit code | Failed threshold returns non-zero | `test_day07_regression_gate.py::test_weakened_retrieval_top_k_makes_the_gate_fail`, `::test_a_stricter_threshold_file_fails_the_gate_even_when_the_run_is_unchanged` |
+| Controlled regression | Weakened retrieval detected | `test_day07_regression_gate.py::test_controlled_regression_full_sequence_pass_fail_pass` (the full PASS→FAIL→PASS sequence, asserted, not just observed by running a script) |
+| Failure classification | Every failed case gets allowed type | `test_day07_failure_classification.py::test_taxonomy_has_exactly_the_six_required_types`, plus one test per taxonomy value reaching it |
+| Deterministic/model separation | Reports remain separate | `test_day07_regression_gate.py::test_no_unexplained_ai_score_merges_deterministic_and_model_based_results` |
+| Stability reporting | Repeated results recorded | `test_day07_stability.py::test_run_repeated_end_to_end_with_observe_refusal_run_detects_instability`, `test_day07_regression_gate.py::test_stability_summary_is_embedded_when_the_file_exists` |
+| Report generation | JSON and Markdown generated from run | `test_day07_regression_gate.py::test_real_run_passes_and_writes_all_three_required_artifacts`, `::test_markdown_report_mirrors_the_json_report` |
+| uv workflow | install/test/eval through uv | `test_day07_uv_workflow.py` (new this task - see below) |
+| Day 1–6 regression | Existing deterministic tests stay green | `test_day07_uv_workflow.py` (new this task - see below) |
+
+The first 18 rows already had a home in an earlier task's own test file -
+built as each task landed, not backfilled here. The last two didn't:
+nothing before Task 14 checked that the *documented commands* work when
+actually run through `uv`, as opposed to the same underlying Python
+functions called in-process (which is what every other test in this
+suite does, deliberately, for speed) - and nothing explicitly named "the
+Day 1-6 test files are still here and still green" as its own checkable
+thing, as opposed to an inference from "the full suite's total didn't
+shrink."
+
+### `tests/test_day07_uv_workflow.py` (new this task)
+
+The one file in the entire suite that shells out to a real `uv`
+subprocess, on purpose - proving the *documented* commands work as
+actually invoked, not just their underlying Python:
+
+- **uv workflow — install**: `uv lock --check` (the lockfile still
+  matches `pyproject.toml`), `uv sync --frozen` (the literal CI/README
+  command), `uv run python -c "import aico"` (the installed package is
+  genuinely importable through the uv-managed environment).
+- **uv workflow — test**: `uv run pytest --collect-only -q` - collection
+  only, deliberately never a full recursive run of the ~700-test suite
+  from inside one of its own tests.
+- **uv workflow — eval**: `uv run python -m aico.evals.day07
+  --artifacts-dir <isolated tmp dir>` - the literal documented/CI gate
+  command, run as a real subprocess, asserting all three required
+  artifacts land on disk.
+- **Day 1-6 regression**: `test_every_day1_to_6_test_file_is_still_present`
+  checks the exact Day 1-6 file list README.md documents file-by-file
+  still exists (a future silent rename/deletion fails this by name, not
+  by a shrinking total); `test_day1_to_6_tests_still_pass` runs exactly
+  those files as their own isolated `uv run pytest -q` subprocess, so
+  this row has its own dedicated pass/fail rather than being inferred
+  from the outer suite's total.
+
+Real, measured cost: this file's 7 tests (mostly `uv` subprocess
+start-up, all with generous timeouts via `pytest-timeout`, already a dev
+dependency) added about 7 seconds to a full run that otherwise completes
+in a few seconds - `uv run pytest -q` full-suite total: **723 tests in
+~11s**.
+
+Run just this file: `uv run pytest -q tests/test_day07_uv_workflow.py`.
+Needs the index built first (the eval-harness subprocess test needs it,
+same as everywhere else in Day 7).
