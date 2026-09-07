@@ -220,6 +220,10 @@ def test_insufficient_evidence_result_has_no_invented_fact_or_citation():
             status="insufficient_evidence",
             answer="The retrieved evidence does not state the supplier CEO's date of birth.",
             citations=[],
+            # Day 4 semantic rule S2: insufficient_evidence must not claim
+            # high confidence - `_cited_answer_json`'s default is "high"
+            # (built for the "answered" case), so this override matters.
+            confidence_label="low",
         )
     )
     service = GroundedAnswerService(gateway=gateway, retriever=_fixed_retriever([chunk]))
@@ -280,6 +284,57 @@ def test_mixed_valid_and_forged_citation_fails_the_whole_answer_closed():
 
     assert isinstance(result, TypedFailure)
     assert result.stage == "citation"  # the one valid citation does not rescue the answer
+
+
+def test_duplicate_citation_fails_closed_via_day4_semantic_stage():
+    # Day 4 semantic rule S3: citation chunk_ids must be unique. A model
+    # that cites the same genuinely-retrieved chunk twice passes contract
+    # validation (well-typed CitedAnswer) and citation membership (the id
+    # really was retrieved) - without this rule wired in, it would reach
+    # GroundedAnswer with a duplicated citation. This is the concrete
+    # regression a validator run against this codebase found: the full Day
+    # 4 semantic-validation path (`aico.contracts.semantic.validate_semantic`)
+    # must run, not just contract/schema parsing.
+    chunk = EvidenceChunk(chunk_id="CHUNK-001", source_file="synthetic.md", text="Some real evidence.")
+    gateway = FakeGateway(
+        _cited_answer_json(
+            citations=[
+                {"chunk_id": "CHUNK-001", "source_file": "synthetic.md"},
+                {"chunk_id": "CHUNK-001", "source_file": "synthetic.md"},
+            ]
+        )
+    )
+    service = GroundedAnswerService(gateway=gateway, retriever=_fixed_retriever([chunk]))
+
+    result = service.answer("What does the policy say?")
+
+    assert isinstance(result, TypedFailure)
+    assert result.stage == "semantic"
+    assert result.category == "s3_duplicate_citation"
+
+
+def test_insufficient_evidence_with_high_confidence_fails_closed_via_day4_semantic_stage():
+    # Day 4 semantic rule S2: an insufficient_evidence response must not
+    # claim high confidence - a model admitting it can't answer while also
+    # claiming high confidence is contract-abuse, the same category of
+    # failure as claiming insufficiency while still citing (already
+    # covered above).
+    chunk = EvidenceChunk(chunk_id="CHUNK-102", source_file="synthetic.md", text="Unrelated evidence.")
+    gateway = FakeGateway(
+        _cited_answer_json(
+            status="insufficient_evidence",
+            answer="The retrieved evidence does not support the requested fact.",
+            citations=[],
+            confidence_label="high",
+        )
+    )
+    service = GroundedAnswerService(gateway=gateway, retriever=_fixed_retriever([chunk]))
+
+    result = service.answer("What is the requested fact?")
+
+    assert isinstance(result, TypedFailure)
+    assert result.stage == "semantic"
+    assert result.category == "s2_insufficient_evidence_high_confidence"
 
 
 def test_malformed_model_output_fails_closed_via_day4_contract_stage():
@@ -407,6 +462,8 @@ def test_supplied_answer_cases_produce_their_expected_result_type(case):
                 status="insufficient_evidence",
                 answer="The retrieved evidence does not support the requested fact.",
                 citations=[],
+                # Day 4 semantic rule S2 - see the same override above.
+                confidence_label="low",
             )
         )
 

@@ -6,13 +6,16 @@ described in the assignment brief (build_outcome diagram):
 
     user question -> normalize -> policy -> retrieve -> build prompt
                    -> Model Gateway -> Day 4 typed contract validation
-                   -> citation validation -> final result
+                   -> Day 4 semantic validation -> citation validation
+                   -> final result
 
 `GroundedAnswerService.answer()` is the single entry point. It never
-bypasses retrieval, the Model Gateway, Day 4 typed validation or citation
-validation (working rules) - each stage below returns early only with one
-of the five typed result values, and every one of those returns happens
-*after* the stage responsible for it has actually run.
+bypasses retrieval, the Model Gateway, Day 4 typed contract validation,
+Day 4 semantic validation (`aico.contracts.semantic.validate_semantic` -
+the complete S1-S5 path, not a partial reimplementation of it), or
+citation validation (working rules) - each stage below returns early only
+with one of the five typed result values, and every one of those returns
+happens *after* the stage responsible for it has actually run.
 
 Result paths (grounding_rules.md, Task 1):
     GroundedAnswer      - a typed, cited, evidence-supported answer
@@ -50,7 +53,8 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from aico.contracts.errors import ValidationFailure
-from aico.contracts.models import AnswerStatus, CitedAnswer
+from aico.contracts.models import AnswerStatus, CitedAnswer, ConfidenceLabel
+from aico.contracts.semantic import validate_semantic
 from aico.contracts.validator import parse_and_validate
 from aico.platform.errors import ModelGatewayError
 from aico.platform.model_gateway import CancellationToken, ModelGateway
@@ -243,6 +247,29 @@ class GroundedAnswerService:
                         category="insufficient_evidence_with_citations",
                         message="model returned status=insufficient_evidence but included citations",
                     )
+                # Day 4 Task 3 semantic rule S2 ("insufficient_evidence must
+                # not claim high confidence") - checked directly rather than
+                # via the full `validate_semantic` here, because that
+                # function's S5 also enforces the `INSUFFICIENT_EVIDENCE`
+                # text-prefix lab convention (semantic.py's own docstring:
+                # "how the Day 4 lab ties answer text to status ... that
+                # belongs to Day 5"). Day 5's real `InsufficientEvidence`
+                # carries the model's own free-text explanation (Task 4,
+                # grounding_rules.md), which is exactly the real reasoning
+                # that convention stands in for in Day 4's lab - not a
+                # violation of it. S1/S4 are already excluded by the branch
+                # we're in, so S2 is the only Day 4 semantic rule left to
+                # apply here.
+                if parsed.confidence_label is ConfidenceLabel.HIGH:
+                    span.set_attribute("validation.result", "semantic_failed")
+                    span.set_attribute("validation.category", "s2_insufficient_evidence_high_confidence")
+                    span.set_status(Status(StatusCode.ERROR, "s2_insufficient_evidence_high_confidence"))
+                    return TypedFailure(
+                        question=question,
+                        stage="semantic",
+                        category="s2_insufficient_evidence_high_confidence",
+                        message="status is 'insufficient_evidence' but confidence_label is 'high'",
+                    )
                 span.set_attribute("validation.result", "insufficient_evidence")
                 return InsufficientEvidence(question=question, explanation=parsed.answer, retrieved_ids=retrieved_ids)
 
@@ -265,6 +292,27 @@ class GroundedAnswerService:
                     stage="contract",
                     category="answered_without_citation",
                     message="model returned status=answered but citations is empty - an unsupported claim is not a grounded answer",
+                )
+
+            # 6c. Day 4 Task 3 semantic validation (the complete S1-S5 path).
+            # Reachable rules here are S3 ("citation chunk_ids must be unique")
+            # and S5 (answer text / status prefix agreement) - S1 is already
+            # excluded by the guard above. Without this call a model that
+            # cites the same real chunk_id twice passes contract validation
+            # (it is a well-typed CitedAnswer) and citation membership (every
+            # cited id is genuinely retrieved) and would otherwise reach
+            # GroundedAnswer with a duplicated citation - a real Day 4
+            # semantic violation this pipeline must not silently accept.
+            semantic_result = validate_semantic(parsed)
+            if isinstance(semantic_result, ValidationFailure):
+                span.set_attribute("validation.result", "semantic_failed")
+                span.set_attribute("validation.category", semantic_result.category)
+                span.set_status(Status(StatusCode.ERROR, semantic_result.category))
+                return TypedFailure(
+                    question=question,
+                    stage=semantic_result.stage,
+                    category=semantic_result.category,
+                    message=semantic_result.message,
                 )
 
             # 7. Citation validation (Task 3) - membership against the actual

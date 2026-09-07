@@ -100,9 +100,22 @@ gateway/retriever dependencies with fakes (Task 10, dependency injection).
 
 ## Run the tests
 
+`data/index/` is gitignored (build output, not source) but two tests
+deliberately use the *real* Day 1 index rather than a fake, to prove that
+boundary is still load-bearing:
+`tests/test_day05_grounding.py::test_day2_retrieval_path_evidence_comes_from_the_real_bm25_index`
+(the "Day 2/3/4 boundary integration proofs" section) and
+`tests/test_day06_health.py::test_real_retrieval_health_check_runs_without_raising`.
+On a fresh checkout, build the index once before running the suite:
+
 ```
+uv run python -m aico.retrieval.ingest --input data/documents --out data/index --tokens 300 --overlap 50
 uv run pytest -q
 ```
+
+Skipping the `ingest` step fails exactly those two tests with
+`FileNotFoundError: No index.json in data\index` — everything else in the
+suite uses fakes and does not need it.
 
 490 tests pass, across thirty-five files (416 from Days 1-5, unchanged, plus
 74 new Day 6 tests across eight `test_day06_*.py` files — see "Day 6" below).
