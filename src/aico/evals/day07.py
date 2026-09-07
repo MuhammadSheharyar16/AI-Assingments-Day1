@@ -396,7 +396,7 @@ def _retrieval_config(index_dir: pathlib.Path, top_k: int) -> dict:
 def build_evaluation_report_json(
     dataset: GoldenDataset, evaluations: Sequence[CaseEvaluation], summary: EvaluationSummary,
     thresholds: Thresholds, gate: GateResult, baseline: Baseline | None, comparison: BaselineComparison | None,
-    *, top_k: int, generated_by: str,
+    *, top_k: int, generated_by: str, stability_summary: dict | None = None,
 ) -> dict:
     from aico.evals.dataset import split_counts as _split_counts
 
@@ -457,6 +457,7 @@ def build_evaluation_report_json(
                 "artifacts/day07/stability_report.md, generated separately by "
                 "scripts/day07_generate_stability_report.py."
             ),
+            "summary": stability_summary,  # None if that script hasn't been run against this artifacts dir yet
         },
         "failed_cases": [
             {
@@ -551,6 +552,34 @@ def render_evaluation_report_md(report: dict) -> str:
     lines.append("## Stability")
     lines.append("")
     lines.append(report["stability"]["note"])
+    lines.append("")
+    stability_summary = report["stability"]["summary"]
+    if stability_summary is None:
+        lines.append(
+            "No `stability_summary.json` found in this run's artifacts directory - run "
+            "`scripts/day07_generate_stability_report.py` to populate it."
+        )
+    else:
+        lines.append(
+            f"Last generated summary — repeat count {stability_summary['repeat_count']}, "
+            f"subset: {', '.join(stability_summary['subset_case_ids'])}."
+        )
+        lines.append("")
+        lines.append("| case | system pass rate | system stable? | evaluator grounded rate | evaluator stable? |")
+        lines.append("|---|---|---|---|---|")
+        sut_by_id = {c["case_id"]: c for c in stability_summary["system_under_test"]}
+        eval_by_id = {c["case_id"]: c for c in stability_summary["evaluator"]}
+        for case_id in stability_summary["subset_case_ids"]:
+            sut = sut_by_id.get(case_id, {})
+            ev = eval_by_id.get(case_id, {})
+
+            def _pct(v):
+                return f"{v:.0%}" if v is not None else "n/a"
+
+            lines.append(
+                f"| `{case_id}` | {_pct(sut.get('pass_rate'))} | {'yes' if sut.get('stable') else '**no**'} | "
+                f"{_pct(ev.get('grounded_rate'))} | {'yes' if ev.get('stable') else '**no**'} |"
+            )
     lines.append("")
 
     lines.append("## Failed cases and classification")
@@ -700,9 +729,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         comparison = compare_to_baseline(summary, baseline)
 
     # 3/4. reports
+    stability_summary_path = args.artifacts_dir / "stability_summary.json"
+    stability_summary = (
+        json.loads(stability_summary_path.read_text(encoding="utf-8")) if stability_summary_path.exists() else None
+    )
     report_json = build_evaluation_report_json(
         dataset, evaluations, summary, thresholds, gate, baseline, comparison,
-        top_k=args.top_k, generated_by="python -m aico.evals.day07",
+        top_k=args.top_k, generated_by="python -m aico.evals.day07", stability_summary=stability_summary,
     )
     report_md = render_evaluation_report_md(report_json)
     classifications = [e.classification for e in evaluations if e.classification is not None]

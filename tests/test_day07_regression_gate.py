@@ -110,12 +110,61 @@ def test_json_report_has_every_required_task11_section(tmp_path):
     assert len(report["threshold_comparison"]) == 6
     assert report["baseline_comparison"] is not None
 
+    # stability summary
+    assert "note" in report["stability"]
+    assert "summary" in report["stability"]
+
     # failed cases, failure classification summary, final gate verdict
     assert isinstance(report["failed_cases"], list)
     assert set(report["failure_classification_summary"]) == {
         "chunking", "retrieval", "prompt", "citation", "refusal", "evaluator",
     }
     assert report["gate_verdict"]["passed"] in (True, False)
+
+
+def test_no_unexplained_ai_score_merges_deterministic_and_model_based_results(tmp_path):
+    # Working rule, verified structurally: deterministic and model-based
+    # results must never collapse into one combined/blended number.
+    _, artifacts_dir = _run(tmp_path)
+    report = json.loads((artifacts_dir / "evaluation_report.json").read_text(encoding="utf-8"))
+
+    assert "deterministic_metrics" in report
+    assert "model_based_metrics" in report
+    # no top-level or nested key anywhere suggests a merged score
+    forbidden_substrings = ("ai_score", "overall_score", "combined_score", "blended_score")
+    serialized_keys = json.dumps(report)
+    for forbidden in forbidden_substrings:
+        assert forbidden not in serialized_keys
+
+
+def test_stability_summary_is_embedded_when_the_file_exists(tmp_path):
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True)
+    fake_summary = {
+        "repeat_count": 5, "subset_case_ids": ["GC-002"],
+        "system_under_test": [{"case_id": "GC-002", "pass_rate": 1.0, "stable": True}],
+        "evaluator": [{"case_id": "GC-002", "grounded_rate": 1.0, "stable": True}],
+    }
+    (artifacts_dir / "stability_summary.json").write_text(json.dumps(fake_summary), encoding="utf-8")
+
+    exit_code = day07.main([
+        "--dataset", str(DATASET_PATH), "--thresholds", str(THRESHOLDS_PATH), "--baseline", str(BASELINE_PATH),
+        "--index", str(INDEX_DIR), "--artifacts-dir", str(artifacts_dir),
+    ])
+    assert exit_code == 0
+    report = json.loads((artifacts_dir / "evaluation_report.json").read_text(encoding="utf-8"))
+    assert report["stability"]["summary"] == fake_summary
+
+    md = (artifacts_dir / "evaluation_report.md").read_text(encoding="utf-8")
+    assert "GC-002" in md.split("## Stability")[1].split("## Failed cases")[0]
+
+
+def test_stability_summary_is_none_when_the_file_is_absent(tmp_path):
+    _, artifacts_dir = _run(tmp_path)
+    report = json.loads((artifacts_dir / "evaluation_report.json").read_text(encoding="utf-8"))
+    assert report["stability"]["summary"] is None
+    md = (artifacts_dir / "evaluation_report.md").read_text(encoding="utf-8")
+    assert "No `stability_summary.json` found" in md
 
 
 def test_markdown_report_mirrors_the_json_report(tmp_path):

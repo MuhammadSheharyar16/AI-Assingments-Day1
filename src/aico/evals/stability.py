@@ -167,6 +167,41 @@ def observe_groundedness_run(outcome: GroundednessOutcome) -> dict:
     return {"outcome_kind": "failure", "failure_category": outcome.category}
 
 
+# ── Structured summary (Task 11 — embedded in evaluation_report.json) ──
+
+def build_stability_summary(
+    refusal_results: Sequence[RepeatedRunResult], groundedness_results: Sequence[RepeatedRunResult]
+) -> dict:
+    """A condensed, JSON-serializable summary of one stability run — what
+    `aico.evals.day07`'s evaluation report embeds under `stability`
+    (Task 11 requires a "stability summary", not only a pointer to the
+    separate `stability_report.md`). Deliberately structured, not the
+    rendered markdown: `render_stability_report` stays the single source
+    of the human-readable report, this the single source of the
+    machine-readable one, and neither is derived from the other by
+    re-parsing text."""
+    return {
+        "repeat_count": STABILITY_REPEAT_COUNT,
+        "subset_case_ids": list(STABILITY_SUBSET_CASE_IDS),
+        "system_under_test": [
+            {
+                "case_id": r.case_id,
+                "pass_rate": (r.rate_summary("passed") or {}).get("rate"),
+                "stable": r.categorical_summary("result_kind")["stable"],
+            }
+            for r in refusal_results
+        ],
+        "evaluator": [
+            {
+                "case_id": r.case_id,
+                "grounded_rate": (r.rate_summary("grounded") or {}).get("rate"),
+                "stable": r.categorical_summary("grounded")["stable"],
+            }
+            for r in groundedness_results
+        ],
+    }
+
+
 # ── Report rendering ──────────────────────────────────────────────────
 
 def render_stability_report(

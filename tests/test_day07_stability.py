@@ -19,6 +19,7 @@ from aico.evals.stability import (
     STABILITY_REPEAT_COUNT,
     STABILITY_SUBSET_CASE_IDS,
     RepeatedRunResult,
+    build_stability_summary,
     observe_groundedness_run,
     observe_refusal_run,
     run_repeated,
@@ -196,3 +197,49 @@ def test_run_repeated_end_to_end_with_observe_refusal_run_detects_instability():
     assert rate["rate"] == pytest.approx(2 / 3)
     assert kind["stable"] is False
     assert kind["distinct"] == 2
+
+
+# ── build_stability_summary (Task 11 — embedded in evaluation_report.json) ──
+
+def test_build_stability_summary_reports_pass_rate_and_stability_per_case():
+    stable_result = RepeatedRunResult(case_id="A", repetitions=3, observations=(
+        {"result_kind": "grounded_answer", "passed": True},
+        {"result_kind": "grounded_answer", "passed": True},
+        {"result_kind": "grounded_answer", "passed": True},
+    ))
+    unstable_result = RepeatedRunResult(case_id="B", repetitions=3, observations=(
+        {"result_kind": "grounded_answer", "passed": True},
+        {"result_kind": "insufficient_evidence", "passed": False},
+        {"result_kind": "grounded_answer", "passed": True},
+    ))
+
+    summary = build_stability_summary([stable_result, unstable_result], [])
+    assert summary["repeat_count"] == STABILITY_REPEAT_COUNT
+    assert summary["subset_case_ids"] == list(STABILITY_SUBSET_CASE_IDS)
+    sut = {c["case_id"]: c for c in summary["system_under_test"]}
+    assert sut["A"] == {"case_id": "A", "pass_rate": 1.0, "stable": True}
+    assert sut["B"]["pass_rate"] == pytest.approx(2 / 3)
+    assert sut["B"]["stable"] is False
+
+
+def test_build_stability_summary_reports_grounded_rate_for_evaluator_results():
+    grounded_stable = RepeatedRunResult(case_id="C", repetitions=2, observations=(
+        {"grounded": True, "confidence": "high"}, {"grounded": True, "confidence": "high"},
+    ))
+    grounded_unstable = RepeatedRunResult(case_id="D", repetitions=2, observations=(
+        {"grounded": True, "confidence": "high"}, {"grounded": False, "confidence": "high"},
+    ))
+
+    summary = build_stability_summary([], [grounded_stable, grounded_unstable])
+    ev = {c["case_id"]: c for c in summary["evaluator"]}
+    assert ev["C"] == {"case_id": "C", "grounded_rate": 1.0, "stable": True}
+    assert ev["D"]["grounded_rate"] == pytest.approx(0.5)
+    assert ev["D"]["stable"] is False
+
+
+def test_build_stability_summary_is_json_serializable():
+    import json
+
+    result = RepeatedRunResult(case_id="A", repetitions=1, observations=({"result_kind": "grounded_answer", "passed": True},))
+    summary = build_stability_summary([result], [])
+    json.dumps(summary)  # must not raise

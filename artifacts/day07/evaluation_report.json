@@ -1,6 +1,6 @@
 {
   "generated_by": "python -m aico.evals.day07",
-  "generated_at": "2026-09-07T18:59:23.949656+00:00",
+  "generated_at": "2026-09-07T19:04:51.257780+00:00",
   "dataset": {
     "version": "1.0",
     "dataset_id": "golden_v1",
@@ -147,7 +147,71 @@
     }
   ],
   "stability": {
-    "note": "Repeated-run stability is a spot-check, not re-run on every gate invocation - see artifacts/day07/stability_report.md, generated separately by scripts/day07_generate_stability_report.py."
+    "note": "Repeated-run stability is a spot-check, not re-run on every gate invocation - see artifacts/day07/stability_report.md, generated separately by scripts/day07_generate_stability_report.py.",
+    "summary": {
+      "repeat_count": 5,
+      "subset_case_ids": [
+        "GC-002",
+        "GC-009",
+        "GC-017",
+        "GC-019",
+        "GC-024"
+      ],
+      "system_under_test": [
+        {
+          "case_id": "GC-002",
+          "pass_rate": 1.0,
+          "stable": true
+        },
+        {
+          "case_id": "GC-009",
+          "pass_rate": 0.0,
+          "stable": true
+        },
+        {
+          "case_id": "GC-017",
+          "pass_rate": 1.0,
+          "stable": true
+        },
+        {
+          "case_id": "GC-019",
+          "pass_rate": 0.6,
+          "stable": false
+        },
+        {
+          "case_id": "GC-024",
+          "pass_rate": 1.0,
+          "stable": true
+        }
+      ],
+      "evaluator": [
+        {
+          "case_id": "GC-002",
+          "grounded_rate": 1.0,
+          "stable": true
+        },
+        {
+          "case_id": "GC-009",
+          "grounded_rate": 1.0,
+          "stable": true
+        },
+        {
+          "case_id": "GC-017",
+          "grounded_rate": 1.0,
+          "stable": true
+        },
+        {
+          "case_id": "GC-019",
+          "grounded_rate": 0.6,
+          "stable": false
+        },
+        {
+          "case_id": "GC-024",
+          "grounded_rate": 1.0,
+          "stable": true
+        }
+      ]
+    }
   },
   "failed_cases": [
     {

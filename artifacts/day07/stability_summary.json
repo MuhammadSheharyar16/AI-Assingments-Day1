@@ -1,0 +1,64 @@
+{
+  "repeat_count": 5,
+  "subset_case_ids": [
+    "GC-002",
+    "GC-009",
+    "GC-017",
+    "GC-019",
+    "GC-024"
+  ],
+  "system_under_test": [
+    {
+      "case_id": "GC-002",
+      "pass_rate": 1.0,
+      "stable": true
+    },
+    {
+      "case_id": "GC-009",
+      "pass_rate": 0.0,
+      "stable": true
+    },
+    {
+      "case_id": "GC-017",
+      "pass_rate": 1.0,
+      "stable": true
+    },
+    {
+      "case_id": "GC-019",
+      "pass_rate": 0.6,
+      "stable": false
+    },
+    {
+      "case_id": "GC-024",
+      "pass_rate": 1.0,
+      "stable": true
+    }
+  ],
+  "evaluator": [
+    {
+      "case_id": "GC-002",
+      "grounded_rate": 1.0,
+      "stable": true
+    },
+    {
+      "case_id": "GC-009",
+      "grounded_rate": 1.0,
+      "stable": true
+    },
+    {
+      "case_id": "GC-017",
+      "grounded_rate": 1.0,
+      "stable": true
+    },
+    {
+      "case_id": "GC-019",
+      "grounded_rate": 0.6,
+      "stable": false
+    },
+    {
+      "case_id": "GC-024",
+      "grounded_rate": 1.0,
+      "stable": true
+    }
+  ]
+}

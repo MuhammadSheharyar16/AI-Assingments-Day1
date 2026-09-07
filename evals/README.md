@@ -974,3 +974,102 @@ runs' deterministic metrics match exactly — the same proof the generated
 artifact documents, made into an executable regression test so a future
 change that breaks this guarantee fails CI, not just a manually-run
 script.
+
+## Task 11 — evaluation reports
+
+Task 9 already generates `artifacts/day07/evaluation_report.json`/`.md`
+with most of the brief's content checklist. Task 11's own job was closing
+the one real gap that inspection found — **stability summary** was only a
+pointer sentence, not an actual summary — and adding tests that check the
+full checklist explicitly, one item at a time, rather than trusting it
+implicitly.
+
+### The checklist, and where each item lives
+
+| required | where |
+|---|---|
+| dataset version | `report["dataset"]["version"]` |
+| total case count | `report["dataset"]["total_cases"]` |
+| split counts | `report["dataset"]["split_counts"]` |
+| category counts | `report["dataset"]["category_counts"]` |
+| Hit@K | `report["deterministic_metrics"]["hit_at_1"]`/`["hit_at_k"]` |
+| MRR | `report["deterministic_metrics"]["mrr"]` |
+| citation validity | `report["deterministic_metrics"]["citation_validity_rate"]` |
+| refusal accuracy | `report["deterministic_metrics"]["refusal_accuracy_rate"]` |
+| groundedness | `report["model_based_metrics"]["groundedness_rate"]` |
+| attack pass rate | `report["deterministic_metrics"]["attack_pass_rate"]` |
+| deterministic/model-based separation | two separate top-level dicts, disjoint key sets (checked directly) |
+| train/development/holdout results | `report["split_breakdown"]` |
+| safety gate | `report["safety_gate"]` |
+| threshold comparison | `report["threshold_comparison"]` |
+| baseline comparison | `report["baseline_comparison"]` |
+| **stability summary** | `report["stability"]["summary"]` — new this task, see below |
+| failed cases | `report["failed_cases"]` |
+| failure classification summary | `report["failure_classification_summary"]` |
+| final gate verdict | `report["gate_verdict"]` |
+
+### The real fix: a structured stability summary, not just a pointer
+
+Task 9 deliberately never re-runs Task 5's expensive N-repetitions
+sampling on every gate invocation (a spot-check, not a per-commit
+necessity) — but that had left the report's `stability` section as only a
+sentence pointing at the separately-generated `stability_report.md`,
+which does not satisfy "include a stability summary." Fixed without
+reintroducing the expensive re-run:
+
+- `aico.evals.stability.build_stability_summary(refusal_results, groundedness_results) -> dict`
+  — a small, JSON-serializable summary (repeat count, subset case IDs,
+  per-case pass/grounded rate and stability flag), structurally separate
+  from `render_stability_report`'s markdown so neither is derived from the
+  other by re-parsing text.
+- `scripts/day07_generate_stability_report.py` now also writes
+  `artifacts/day07/stability_summary.json` from that same function,
+  alongside the markdown report it already produced.
+- `aico.evals.day07`'s report builder reads
+  `<artifacts-dir>/stability_summary.json` if present and embeds it under
+  `report["stability"]["summary"]` (both the JSON and Markdown reports);
+  gracefully `None` (JSON) / "no file found, run the script" (Markdown)
+  when absent — a normal gate run, or any isolated test run using a temp
+  `--artifacts-dir`, correctly shows no stability data without erroring,
+  since that script only ever writes to the real, committed
+  `artifacts/day07/`.
+
+Current committed summary (5 repetitions, `GC-002`/`GC-009`/`GC-017`/
+`GC-019`/`GC-024` — the same subset Task 5 documented):
+
+```
+| case     | system pass rate | stable? | evaluator grounded rate | stable? |
+| GC-002   | 100%              | yes     | 100%                     | yes     |
+| GC-009   | 0%                | yes     | 100%                     | yes     |
+| GC-017   | 100%              | yes     | 100%                     | yes     |
+| GC-019   | 60%               | no      | 60%                      | no      |
+| GC-024   | 100%              | yes     | 100%                     | yes     |
+```
+
+### No unexplained "AI score"
+
+Verified directly, not just by construction: `deterministic_metrics` and
+`model_based_metrics` are two separate top-level dicts with disjoint key
+sets, and no key anywhere in the JSON report contains `ai_score`,
+`overall_score`, `combined_score`, or `blended_score`
+(`test_no_unexplained_ai_score_merges_deterministic_and_model_based_results`).
+
+### Tests
+
+- `tests/test_day07_regression_gate.py` — extended
+  `test_json_report_has_every_required_task11_section` to check the
+  `stability` key explicitly (it was previously the one item never
+  asserted on), plus three new tests: the no-merged-score guarantee above,
+  the summary embedding when `stability_summary.json` exists (a hand-built
+  fixture file, checked byte-for-byte against what the report embeds), and
+  the graceful `None`/"not found" behavior when it doesn't.
+- `tests/test_day07_stability.py` — three new tests for
+  `build_stability_summary` itself: per-case pass-rate/stability for
+  system-under-test results, grounded-rate/stability for evaluator
+  results, and that the output is actually JSON-serializable (the thing
+  that would break silently if a future field ever held a non-JSON type
+  like a dataclass or enum instance).
+
+Run just these: `uv run pytest -q tests/test_day07_regression_gate.py
+tests/test_day07_stability.py`. Needs the index built first for the
+real-pipeline tests.

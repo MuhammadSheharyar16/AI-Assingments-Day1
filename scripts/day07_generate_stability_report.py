@@ -37,6 +37,7 @@ from aico.evals.groundedness import evaluate_groundedness
 from aico.evals.stability import (
     STABILITY_REPEAT_COUNT,
     STABILITY_SUBSET_CASE_IDS,
+    build_stability_summary,
     observe_groundedness_run,
     observe_refusal_run,
     render_stability_report,
@@ -49,6 +50,7 @@ from aico.rag.citation_validator import EvidenceChunk
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 DATASET_PATH = REPO_ROOT / "evals" / "golden_v1.json"
 OUT_PATH = REPO_ROOT / "artifacts" / "day07" / "stability_report.md"
+SUMMARY_OUT_PATH = REPO_ROOT / "artifacts" / "day07" / "stability_summary.json"
 SCRIPT_NAME = "scripts/day07_generate_stability_report.py"
 
 
@@ -299,10 +301,13 @@ def main() -> None:
     groundedness_results = _run_groundedness_stability(dataset, cases_by_id)
 
     report = render_stability_report(refusal_results, groundedness_results, cases_by_id, generated_by=SCRIPT_NAME)
+    summary = build_stability_summary(refusal_results, groundedness_results)
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUT_PATH.write_text(report, encoding="utf-8")
+    SUMMARY_OUT_PATH.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"wrote {OUT_PATH.relative_to(REPO_ROOT)}")
+    print(f"wrote {SUMMARY_OUT_PATH.relative_to(REPO_ROOT)}")
 
 
 if __name__ == "__main__":
