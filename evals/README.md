@@ -110,3 +110,62 @@ any candidate system output was generated for this dataset version (see
 `labeling_policy` in the JSON). None of it was adjusted after seeing a
 run, and none of it was tuned against holdout results, per the working
 rule.
+
+## Task 2 — train / development / holdout
+
+The loader is `src/aico/evals/dataset.py`; the split policy and its
+enforcement live there, not just in this document:
+
+- **Loading and structural validation** — `load_dataset()` (file) /
+  `parse_dataset()` (dict, used directly by tests) parse `golden_v1.json`
+  into typed `GoldenCase` records and raise `DatasetValidationError`
+  listing *every* problem found — missing/invalid field, an unrecognised
+  `category`/`split`/`answerability`, a duplicate `case_id`, fewer than
+  `MIN_CASES` (25) cases, a required category with zero cases, an empty
+  split, or a question that leaks across two splits. One exception with
+  every problem, not one exception per re-run.
+- **The holdout boundary is a function, not a convention** —
+  `tunable_cases(dataset)` returns only `train` + `development` cases and
+  can never return a `holdout` case by construction. Any later Day 7 code
+  that tunes anything (prompts, retrieval settings, thresholds, labels)
+  is expected to read the dataset only through this function, not
+  `dataset.cases` directly. `holdout_cases(dataset)` is the
+  measure-only counterpart. `tests/test_day07_holdout.py` proves the two
+  partition the dataset with no overlap and that `tunable_cases()` never
+  yields a holdout `case_id`.
+- **Leakage beyond duplicate IDs** — `cross_split_question_leakage()`
+  catches the case unique `case_id`s can't: the same underlying question
+  assigned to two different splits under two different IDs, which would
+  make "holdout" not actually unseen data. Checked against the real
+  dataset (currently clean) and, separately, proven to actually detect a
+  synthetic leak (`tests/test_day07_holdout.py`).
+- **Split counts** (from `golden_v1.json`'s own `counts` block, guarded
+  against drifting from the real case list by
+  `test_declared_counts_match_computed_counts`):
+
+  | split | count | tuning allowed | measured |
+  |---|---|---|---|
+  | `train` | 19 | yes | yes |
+  | `development` | 6 | yes | yes |
+  | `holdout` | 7 | **no** | yes, reported separately |
+
+### Tests
+
+- `tests/test_day07_dataset.py` — schema tests against the real
+  `golden_v1.json` (min case count, category coverage, unique IDs, valid
+  split/answerability values, no leakage, declared counts match
+  computed) plus loader-rejection tests against hand-built dicts, one
+  failure mode at a time, proving `DatasetValidationError` actually fires
+  for each documented problem rather than only passing by construction.
+- `tests/test_day07_holdout.py` — the holdout-separation guarantees
+  above: `tunable_cases`/`holdout_cases` partition the dataset with no
+  overlap, holdout covers every required category (including
+  `adversarial` and `unanswerable`), and the leakage detector is proven
+  against a synthetic dataset built specifically to leak (not just shown
+  clean on data that was never going to trigger it).
+
+Run just these: `uv run pytest -q tests/test_day07_dataset.py
+tests/test_day07_holdout.py`. Quick manual sanity check outside pytest:
+`uv run python -m aico.evals.dataset` (loads `evals/golden_v1.json`,
+prints split/category counts, exits non-zero with every problem listed if
+validation fails).
