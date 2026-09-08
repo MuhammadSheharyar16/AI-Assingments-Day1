@@ -3,5 +3,6 @@
 __pycache__/
 .env
 data/vectors/
+data/sessions/
 /zip-python-project.ps1
 /zip-python-project.sh
