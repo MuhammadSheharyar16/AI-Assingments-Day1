@@ -3,7 +3,7 @@
     "tokens": 300,
     "overlap": 50,
     "chunk_count": 23,
-    "source_dir": "data\\documents",
+    "source_dir": "data/documents",
     "source_files": [
       "DOC-001-sourcing-policy.md",
       "DOC-002-contract-terms.md",
