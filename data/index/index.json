@@ -1,0 +1,270 @@
+{
+  "manifest": {
+    "tokens": 300,
+    "overlap": 50,
+    "chunk_count": 23,
+    "source_dir": "data\\documents",
+    "source_files": [
+      "DOC-001-sourcing-policy.md",
+      "DOC-002-contract-terms.md",
+      "DOC-003-pricing-payment.md",
+      "DOC-004-onboarding-screening.md",
+      "DOC-005-delivery-inspection.md"
+    ]
+  },
+  "chunks": [
+    {
+      "chunk_id": "89009ac288495cf1",
+      "source_file": "DOC-001-sourcing-policy.md",
+      "char_start": 0,
+      "char_end": 2011,
+      "token_count": 299,
+      "content_hash": "34a21783e40672fc8fe72b80c67a8f5528ea87fd3310f92a8cdbcb7043affac6",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "DOC-001 \u2014 Supplier Selection and Sourcing Policy",
+      "text": "# DOC-001 \u2014 Supplier Selection and Sourcing Policy\n\n**Document ID:** DOC-001\n**Version:** 2.0\n**Owner:** Procurement Governance, Meridian Procurement Ltd\n**Classification:** Internal \u2014 Synthetic Training Material\n\n---\n\n## 1. Purpose and Scope\n\nThis policy sets out how Meridian Procurement Ltd identifies, evaluates and appoints suppliers for goods and services. It applies to every sourcing activity carried out on behalf of the organisation, including direct awards, competitive events and framework call-offs.\n\nThe policy covers the point at which a requirement is raised through to the point at which a supplier is added to the approved supplier list. It does not cover the commercial terms of the resulting agreement, which are governed separately.\n\nWhere this policy refers to a supplier, the same obligations apply to a vendor appointed under any framework, sub-agreement or intermediary arrangement.\n\n## 2. Sourcing Categories\n\nRequirements are classified into one of three sourcing categories before any market activity begins. The category determines the level of scrutiny applied and the approval route required.\n\nCategory A covers requirements with an annual value below fifty thousand pounds. A single written quotation is sufficient, provided the requester records why the chosen supplier represents value.\n\nCategory B covers requirements with an annual value between fifty thousand and five hundred thousand pounds. A minimum of three written quotations must be obtained and a scored evaluation must be recorded.\n\nCategory C covers requirements with an annual value above five hundred thousand pounds. A formal sourcing event is mandatory, the evaluation panel must contain at least three members, and the award recommendation must be approved by the Procurement Governance Board.\n\nCategory boundaries are assessed on total contract value over the full term, not on the value of the first year alone. Splitting a requirement into smaller awards to avoid a category threshold is prohibited.\n\n## 3."
+    },
+    {
+      "chunk_id": "f1ad4a18cdd994bd",
+      "source_file": "DOC-001-sourcing-policy.md",
+      "char_start": 1698,
+      "char_end": 3595,
+      "token_count": 291,
+      "content_hash": "f66fa7c0cd458a7a4a43216b9a1665863d08f114fb93304cdb978ce31b42b4eb",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "2. Sourcing Categories",
+      "text": "three members, and the award recommendation must be approved by the Procurement Governance Board.\n\nCategory boundaries are assessed on total contract value over the full term, not on the value of the first year alone. Splitting a requirement into smaller awards to avoid a category threshold is prohibited.\n\n## 3. Evaluation Criteria and Weighting\n\nAll Category B and Category C events are scored against a fixed criteria set. The weightings below apply unless a documented exception is approved before the event opens.\n\nPrice and total cost carries a weighting of thirty five percent. Technical capability and specification compliance carries a weighting of thirty percent. Delivery performance and capacity carries a weighting of twenty percent. Compliance, sustainability and social value carries a weighting of fifteen percent.\n\nEach criterion is scored on a scale of zero to five by every panel member independently. Scores are moderated in a single recorded session. A supplier scoring zero against any mandatory compliance criterion is excluded from further evaluation regardless of the total score achieved.\n\nThe weighted score is calculated to two decimal places. Where two suppliers finish within one point of each other, the panel must record a written rationale for the preferred award.\n\n## 4. Approved Supplier List\n\nA supplier may only receive a purchase order once it appears on the approved supplier list. Entry to the list requires a completed onboarding record, a passed compliance screen and a signed agreement.\n\nThe current approved supplier list for component and logistics categories includes Nordvale Components Ltd, Brackenfield Logistics Ltd, Halvorsen Industrial Supply and Petronella Services Ltd.\n\nEach entry on the list records the categories the supplier is approved for, the date of approval, the date of next review and the name of the responsible category manager."
+    },
+    {
+      "chunk_id": "e5767d37a85adae4",
+      "source_file": "DOC-001-sourcing-policy.md",
+      "char_start": 3260,
+      "char_end": 5186,
+      "token_count": 293,
+      "content_hash": "27513d57b2a014601246677f7060c3b97fe0db8ef323b23ba93e7c2b934e6a56",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "4. Approved Supplier List",
+      "text": "list for component and logistics categories includes Nordvale Components Ltd, Brackenfield Logistics Ltd, Halvorsen Industrial Supply and Petronella Services Ltd.\n\nEach entry on the list records the categories the supplier is approved for, the date of approval, the date of next review and the name of the responsible category manager. A supplier approved for one category may not be issued orders in another category without a fresh evaluation.\n\nEntries are reviewed at least every twenty four months. A review may be brought forward at any time by the category manager or by Procurement Governance.\n\n## 5. Single-Source Justification\n\nA single-source award is an award made without competition where competition would normally be required. Single-source awards are permitted only in defined circumstances and always require written justification.\n\nPermitted grounds are: a genuine sole supplier in the market; an urgent operational need arising from an event outside the organisation's control; continuity of an existing installation where a change of supplier would create disproportionate technical risk; or the exercise of an option contained in an existing agreement.\n\nCost saving alone is not a permitted ground. Preference based on a prior working relationship is not a permitted ground.\n\nThe justification must name the ground relied on, describe the alternatives considered, state the value and duration of the proposed award and be approved at one level above the normal approval route for that category.\n\n## 6. Sourcing Event Timelines\n\nCategory B events allow a minimum response period of fourteen calendar days from issue of the invitation. Category C events allow a minimum response period of twenty eight calendar days.\n\nClarification questions are accepted up to five working days before the response deadline. Answers are issued to all participants at the same time and without attribution to the questioner."
+    },
+    {
+      "chunk_id": "3e776308ce9fdf3c",
+      "source_file": "DOC-001-sourcing-policy.md",
+      "char_start": 4862,
+      "char_end": 6793,
+      "token_count": 293,
+      "content_hash": "50cfeeb3af6fd234a81023f7485e5d8bf5355011dd337844fd05bf472fb84699",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "6. Sourcing Event Timelines",
+      "text": "fourteen calendar days from issue of the invitation. Category C events allow a minimum response period of twenty eight calendar days.\n\nClarification questions are accepted up to five working days before the response deadline. Answers are issued to all participants at the same time and without attribution to the questioner.\n\nA response received after the stated deadline is not evaluated. The only exception is a documented failure of the organisation's own submission system, which must be confirmed by the system owner.\n\n## 7. Re-evaluation and Removal from the List\n\nA supplier is re-evaluated when its performance score falls below the agreed threshold for two consecutive review periods, when a compliance screen is failed, when ownership or control of the business changes, or when the category itself is re-competed.\n\nWhere the outcome of a re-evaluation is removal, the supplier is entitled to ninety days written notice of withdrawal from the approved supplier list. During that period existing purchase orders continue to run but no new orders may be raised.\n\nRemoval on the grounds of a failed compliance screen, insolvency, or a sanctions match takes effect immediately and the notice period stated above does not apply.\n\nA removed supplier may reapply after twelve months. Reapplication requires a full onboarding record and a fresh evaluation; the previous approval carries no weight.\n\n## 8. Records and Restricted Content\n\nEvery sourcing event produces a record containing the requirement, the category assessment, the participant list, the individual and moderated scores, the award recommendation and the approval trail.\n\nIndividual panel member scores, the named contacts of participating suppliers, and the comparative scoring matrix are restricted content. They are visible to Procurement Governance and to the category manager only. They are not disclosed to participants, to other suppliers or to requesters."
+    },
+    {
+      "chunk_id": "122c3400c171b78d",
+      "source_file": "DOC-001-sourcing-policy.md",
+      "char_start": 6444,
+      "char_end": 6896,
+      "token_count": 69,
+      "content_hash": "3fffc0da5a5af7f07cbaacc069160a0d0a6d4959dfabdc77697ea17a88f0c72a",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "8. Records and Restricted Content",
+      "text": "scores, the award recommendation and the approval trail.\n\nIndividual panel member scores, the named contacts of participating suppliers, and the comparative scoring matrix are restricted content. They are visible to Procurement Governance and to the category manager only. They are not disclosed to participants, to other suppliers or to requesters.\n\nRecords are retained for seven years from the date of award or from the date the event was abandoned."
+    },
+    {
+      "chunk_id": "ec0dceb558479331",
+      "source_file": "DOC-002-contract-terms.md",
+      "char_start": 0,
+      "char_end": 1842,
+      "token_count": 289,
+      "content_hash": "4eb6c6095c6fb40c51c02bc1a78c3328e16a3e4bc39765174f2a50a1907d6f21",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "DOC-002 \u2014 Contract Terms, Renewal and Termination",
+      "text": "# DOC-002 \u2014 Contract Terms, Renewal and Termination\n\n**Document ID:** DOC-002\n**Version:** 1.4\n**Owner:** Commercial and Legal, Meridian Procurement Ltd\n**Classification:** Internal \u2014 Synthetic Training Material\n\n---\n\n## 1. Contract Structure\n\nEvery supplier agreement is made up of three parts: the signed order form, the standard terms and conditions, and any schedules attached at the point of signature.\n\nWhere the parts conflict, the order form takes precedence over the schedules, and the schedules take precedence over the standard terms. A supplier's own terms of sale have no effect and are expressly excluded, whether or not they are referenced on a quotation, acknowledgement or invoice.\n\nContract references follow the format CTR-YYYY-NNNN. Live agreements referenced in this document include CTR-2024-0117, CTR-2025-0042 and CTR-2025-0088.\n\n## 2. Term and Commencement\n\nThe initial term begins on the commencement date stated in the order form. Where no commencement date is stated, the term begins on the date of the last signature.\n\nThe standard initial term is twenty four months. A shorter or longer initial term may be agreed where the sourcing category approval records the reason.\n\nWork performed before the commencement date is performed at the supplier's own risk and creates no payment obligation, even where a purchase order has been raised.\n\n## 3. Renewal and Extension\n\nAn agreement may be extended beyond its initial term only by a written extension signed by both parties. There is no automatic renewal and no rollover by conduct.\n\nThe total of all extensions may not exceed the length of the initial term. An agreement with a twenty four month initial term may therefore run for no more than forty eight months in total.\n\nAn extension does not reset the notice provisions and does not reopen the commercial terms."
+    },
+    {
+      "chunk_id": "573725facda3b479",
+      "source_file": "DOC-002-contract-terms.md",
+      "char_start": 1560,
+      "char_end": 3260,
+      "token_count": 294,
+      "content_hash": "52d033771d27ff5510e6679cf4a2e593efe52cc1625595615ba59a327ccfad8e",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "3. Renewal and Extension",
+      "text": "The total of all extensions may not exceed the length of the initial term. An agreement with a twenty four month initial term may therefore run for no more than forty eight months in total.\n\nAn extension does not reset the notice provisions and does not reopen the commercial terms. A change to price, scope or service level must be handled through change control, not through the extension itself.\n\nWhere an extension is not agreed before the expiry date, the agreement ends on the expiry date. Continued supply after that point does not create a new agreement and is not payable.\n\n## 4. Notice Periods\n\nEither party may end an agreement for convenience by giving sixty days written notice to the other party. Notice runs from the date of receipt, not the date of issue.\n\nThis notice period supersedes any notice period stated in the sourcing policy or in any earlier version of these terms. Where an older document states a longer period, the sixty day period in this section applies.\n\nNotice must be given in writing to the contract manager named in the order form, with a copy to the Commercial and Legal mailbox. Notice given verbally, or given only to an operational contact, has no effect.\n\nA notice once given may not be withdrawn except with the written agreement of the other party.\n\n## 5. Termination for Convenience\n\nTermination for convenience takes effect at the end of the notice period. The supplier is paid for goods delivered and services performed up to the effective date, and for committed costs the supplier can evidence and could not reasonably avoid.\n\nThe supplier is not entitled to loss of profit, loss of opportunity or any sum in respect of the unexpired part of the term."
+    },
+    {
+      "chunk_id": "93f0cccdc29aade9",
+      "source_file": "DOC-002-contract-terms.md",
+      "char_start": 2976,
+      "char_end": 4741,
+      "token_count": 284,
+      "content_hash": "ea1838bc19a98ff224df6085cafcfb3233cff668bf792d871218a066392d6d57",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "5. Termination for Convenience",
+      "text": "is paid for goods delivered and services performed up to the effective date, and for committed costs the supplier can evidence and could not reasonably avoid.\n\nThe supplier is not entitled to loss of profit, loss of opportunity or any sum in respect of the unexpired part of the term.\n\nDuring the notice period the supplier must continue to perform in full. Reduced performance during a notice period is itself a breach.\n\n## 6. Termination for Cause\n\nAn agreement may be cancelled with immediate effect where the supplier commits a material breach that is not capable of remedy, or fails to remedy a breach within thirty days of a written remedy notice.\n\nImmediate termination is also available where the supplier becomes insolvent, enters administration, has a receiver appointed, ceases to trade, fails a sanctions screen, or is found to have provided false information during onboarding or evaluation.\n\nTermination for cause does not require the sixty day notice period and does not entitle the supplier to payment for committed costs.\n\nThe exercise of a right to terminate for cause does not prevent the organisation from recovering losses arising from the breach.\n\n## 7. Assignment and Subcontracting\n\nThe supplier may not assign or novate the agreement, in whole or in part, without the prior written consent of the organisation. Consent may be withheld without giving reasons.\n\nA change of control of the supplier is treated as an assignment for the purposes of this section and must be notified within ten working days of completion.\n\nSubcontracting of any part of the supply requires prior written approval. The request must name the subcontractor, describe the scope proposed, and confirm that the subcontractor has passed an equivalent compliance screen."
+    },
+    {
+      "chunk_id": "dc10061a74f52b7d",
+      "source_file": "DOC-002-contract-terms.md",
+      "char_start": 4411,
+      "char_end": 6340,
+      "token_count": 294,
+      "content_hash": "45fce111b4f39754b59f802bba5b378a26e5fdbd0f6c1814e6e0c89ae952533e",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "7. Assignment and Subcontracting",
+      "text": "an assignment for the purposes of this section and must be notified within ten working days of completion.\n\nSubcontracting of any part of the supply requires prior written approval. The request must name the subcontractor, describe the scope proposed, and confirm that the subcontractor has passed an equivalent compliance screen. Approval of a subcontractor does not transfer any obligation away from the supplier, which remains fully responsible for performance.\n\nThe organisation may withdraw approval of a subcontractor where that subcontractor fails a compliance screen or fails to perform.\n\n## 8. Change Control\n\nAny change to scope, price, specification, service level or delivery profile must be recorded in a written change note signed by both parties before the change takes effect.\n\nA change note states the change requested, the reason, the commercial effect, the effect on the term, and the date from which the change applies. An unsigned change note has no effect.\n\nWork performed in anticipation of an unsigned change note is not payable. Verbal instruction from an operational contact does not constitute a change note.\n\n## 9. Dispute Resolution\n\nDisputes are escalated in three stages. The contract managers of both parties attempt resolution within fifteen working days. If unresolved, the dispute is escalated to a commercial director on each side for a further fifteen working days. If still unresolved, the parties may proceed to mediation before any litigation is commenced.\n\nPerformance continues throughout a dispute. Suspension of supply during a dispute is a material breach unless the dispute concerns an accepted health and safety risk.\n\n## 10. Restricted Content\n\nThe signatory authority matrix, the internal commercial approval thresholds and the named legal reviewer for each agreement are restricted content. They are available to Commercial and Legal and to the Procurement Governance Board only."
+    },
+    {
+      "chunk_id": "c117b00ed6d6714c",
+      "source_file": "DOC-002-contract-terms.md",
+      "char_start": 5996,
+      "char_end": 6414,
+      "token_count": 63,
+      "content_hash": "d6f336d5818296df3fbd161b89135b6ff66f186473e660e0abed571409ee3a47",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "9. Dispute Resolution",
+      "text": "material breach unless the dispute concerns an accepted health and safety risk.\n\n## 10. Restricted Content\n\nThe signatory authority matrix, the internal commercial approval thresholds and the named legal reviewer for each agreement are restricted content. They are available to Commercial and Legal and to the Procurement Governance Board only.\n\nSigned agreements are retained for seven years from the end of the term."
+    },
+    {
+      "chunk_id": "4db92b55b4856d15",
+      "source_file": "DOC-003-pricing-payment.md",
+      "char_start": 0,
+      "char_end": 1813,
+      "token_count": 286,
+      "content_hash": "3692007051b8dd7c0535b2bb5bf3ee514791cf6128e8847d3a0f4b57de109a1e",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "DOC-003 \u2014 Pricing, Cost Breakdown and Payment Terms",
+      "text": "# DOC-003 \u2014 Pricing, Cost Breakdown and Payment Terms\n\n**Document ID:** DOC-003\n**Version:** 1.2\n**Owner:** Finance Operations, Meridian Procurement Ltd\n**Classification:** Internal \u2014 Synthetic Training Material\n\n---\n\n## 1. Purpose\n\nThis document sets out how supplier pricing is structured, how prices may be reviewed during a term, what an acceptable invoice looks like, and when payment is made.\n\nIt applies to all agreements held with approved suppliers, including Nordvale Components Ltd, Brackenfield Logistics Ltd, Halvorsen Industrial Supply and Petronella Services Ltd.\n\n## 2. Cost Components\n\nEvery quoted price must be broken down into named cost components. A single undifferentiated figure is not accepted at evaluation and is not accepted on an invoice.\n\nThe recognised cost components are: unit cost of goods, labour, transport and carriage, tooling and setup, packaging, duties and levies, and any agreed management charge.\n\nEach component is stated separately with its unit of measure and the quantity assumed. Where a component is variable, the quotation must state the basis on which it varies and the maximum exposure over the term.\n\nA cost component that does not appear in the agreed breakdown may not be introduced later through an invoice line. Introducing an unagreed component is a change and must go through change control.\n\n## 3. Rate Cards\n\nWhere services are charged by time, a rate card is attached as a schedule to the agreement. The rate card lists each role, the day rate, the standard working day in hours, and any premium applicable to work outside standard hours.\n\nRates are fixed for the initial term unless the agreement contains an indexation provision. A rate not listed on the card may not be charged.\n\nTravel time is not chargeable unless the agreement states otherwise."
+    },
+    {
+      "chunk_id": "5df928c8be8cc67b",
+      "source_file": "DOC-003-pricing-payment.md",
+      "char_start": 1507,
+      "char_end": 3269,
+      "token_count": 283,
+      "content_hash": "1f036589825ce2416ff3dff63342ff273a106224b187bea93bee45ef557e9825",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "3. Rate Cards",
+      "text": "the standard working day in hours, and any premium applicable to work outside standard hours.\n\nRates are fixed for the initial term unless the agreement contains an indexation provision. A rate not listed on the card may not be charged.\n\nTravel time is not chargeable unless the agreement states otherwise. Where travel is chargeable, it is charged at fifty percent of the applicable day rate.\n\nIndividual supplier rate cards and the comparative rate analysis held by Finance Operations are restricted content and are not shared between suppliers or with requesters.\n\n## 4. Price Review and Indexation\n\nA price review may be requested once in any twelve month period, by either party, and only where the agreement contains an indexation provision.\n\nA request must be submitted at least sixty days before the proposed effective date and must be supported by evidence of the underlying cost movement. An increase is capped at the published index movement for the relevant period.\n\nWhere the index has moved downward, the organisation may require a corresponding reduction on the same basis.\n\nAn agreed price change is recorded in a signed change note. A price applied without a signed change note is rejected at invoice validation.\n\n## 5. Invoicing Requirements\n\nAn invoice is valid only where all of the following are present: the supplier name and registration number, the invoice number and date, the contract reference, the agreed cost components matching the order, the net amount, the tax amount and the total.\n\nA valid purchase order number must appear on every invoice. An invoice without a purchase order number is returned unpaid and is not treated as received for payment purposes.\n\nInvoices are submitted electronically to the accounts payable mailbox."
+    },
+    {
+      "chunk_id": "ad944a14068de1b4",
+      "source_file": "DOC-003-pricing-payment.md",
+      "char_start": 2956,
+      "char_end": 4752,
+      "token_count": 294,
+      "content_hash": "374bee3a5abb2d74f13a23c381cdf6602da8d9fb24f2c1027c23f61246a3a1ad",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "5. Invoicing Requirements",
+      "text": "matching the order, the net amount, the tax amount and the total.\n\nA valid purchase order number must appear on every invoice. An invoice without a purchase order number is returned unpaid and is not treated as received for payment purposes.\n\nInvoices are submitted electronically to the accounts payable mailbox. Invoices sent to an operational contact or attached to correspondence are not registered and will not be paid.\n\nOne invoice covers one purchase order. Consolidated invoices spanning multiple orders are returned.\n\n## 6. Payment Terms\n\nStandard payment terms are net thirty days from the date of a valid invoice. The clock starts on the date the invoice is registered as valid, not on the date it was issued or sent.\n\nWhere an invoice is returned as invalid, the payment clock restarts when a corrected invoice is registered.\n\nPayment is made by bank transfer to the account confirmed during onboarding. A change of bank details requires re-verification before any further payment is released.\n\n## 7. Disputed Invoices\n\nWhere part of an invoice is disputed, the undisputed part is paid on the normal terms and the disputed part is held. The organisation notifies the supplier of the disputed amount and the reason within ten working days of registration.\n\nA dispute must be raised before the payment due date. An amount paid in full is not later reclaimed through the dispute process; recovery is handled as a commercial matter.\n\nWithholding supply because an invoice is in dispute is a material breach of the agreement.\n\n## 8. Late Payment\n\nWhere the organisation pays a valid invoice after the due date, the supplier may be entitled to claim interest on the overdue amount under the applicable statutory provisions, together with a fixed recovery sum where the statute provides one."
+    },
+    {
+      "chunk_id": "00ee2218beffc6fe",
+      "source_file": "DOC-003-pricing-payment.md",
+      "char_start": 4450,
+      "char_end": 6060,
+      "token_count": 266,
+      "content_hash": "b0f2cdfd129fd52ec6ee3d56a151889f2577f4d887e12ed314b9a5a3ed6482d8",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "7. Disputed Invoices",
+      "text": "is a material breach of the agreement.\n\n## 8. Late Payment\n\nWhere the organisation pays a valid invoice after the due date, the supplier may be entitled to claim interest on the overdue amount under the applicable statutory provisions, together with a fixed recovery sum where the statute provides one.\n\nAny such claim must be submitted in writing to Finance Operations with the invoice reference and the number of days overdue. Claims submitted more than six months after the payment date are not considered.\n\nInterest is calculated on the net overdue amount only and does not apply to any portion properly held under the dispute process.\n\n## 9. Early Settlement Discount\n\nWhere an agreement contains an early settlement provision, a discount of two percent applies to invoices settled within ten days of registration.\n\nThe discount is applied to the net amount before tax. It may not be combined with any other discount or rebate offered under the same agreement.\n\nEarly settlement is at the organisation's option and creates no obligation to settle early on any future invoice.\n\n## 10. Currency and Records\n\nAll agreements are priced in pounds sterling unless the order form states otherwise. Where an agreement is priced in another currency, the exchange basis and the date of conversion are stated in the schedule.\n\nThe supplier bears the cost of any bank charge levied at its own end. The organisation bears the cost of charges levied at its own end.\n\nPayment records, invoice registers and dispute correspondence are retained for seven years from the end of the financial year in which payment was made."
+    },
+    {
+      "chunk_id": "a724c821328545fc",
+      "source_file": "DOC-004-onboarding-screening.md",
+      "char_start": 0,
+      "char_end": 1872,
+      "token_count": 275,
+      "content_hash": "f271c354e7feec8c1bd42dd1069a20c9440fc400757a101812ff894dfebf147c",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "DOC-004 \u2014 Supplier Onboarding, Compliance and Screening",
+      "text": "# DOC-004 \u2014 Supplier Onboarding, Compliance and Screening\n\n**Document ID:** DOC-004\n**Version:** 1.1\n**Owner:** Supplier Assurance, Meridian Procurement Ltd\n**Classification:** Internal \u2014 Synthetic Training Material\n\n---\n\n## 1. Purpose and Scope\n\nThis document describes the checks a supplier must pass before it can be added to the approved supplier list, and the checks that are repeated during the life of the relationship.\n\nOnboarding is a prerequisite for approval. A supplier that has completed evaluation but not onboarding may not be issued a purchase order.\n\n## 2. Onboarding Stages\n\nOnboarding runs in four stages and each stage must be closed before the next begins.\n\nStage one is registration. The supplier submits its legal name, registration number, registered address, trading addresses and primary contact details.\n\nStage two is documentation. The supplier provides the documents listed in section three.\n\nStage three is screening. Supplier Assurance runs the financial, sanctions and compliance checks described in sections five to seven.\n\nStage four is activation. The supplier record is created in the finance system, bank details are verified, and the approval record is written to the approved supplier list.\n\nA supplier that fails to complete onboarding within ninety days of registration has its application closed and must restart.\n\n## 3. Documentation Requirements\n\nThe following documents are mandatory at stage two: certificate of incorporation, most recent filed accounts, evidence of insurance cover, a signed anti-bribery declaration, a modern slavery statement where the supplier meets the turnover threshold, and a completed data protection questionnaire where the supplier will hold or process personal data.\n\nDocuments must be current at the date of submission. A document that expires during screening must be replaced before activation."
+    },
+    {
+      "chunk_id": "17dc5f6ad3544bff",
+      "source_file": "DOC-004-onboarding-screening.md",
+      "char_start": 1530,
+      "char_end": 3415,
+      "token_count": 291,
+      "content_hash": "0f1bdd7b37039ffe63c8b2e5e8e6b2cd8286f880a8a80c0e3f2c426c935ec65b",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "3. Documentation Requirements",
+      "text": "a signed anti-bribery declaration, a modern slavery statement where the supplier meets the turnover threshold, and a completed data protection questionnaire where the supplier will hold or process personal data.\n\nDocuments must be current at the date of submission. A document that expires during screening must be replaced before activation.\n\nWhere a supplier is part of a group, documents are required for the contracting entity, not for the parent, unless the parent is providing a guarantee.\n\n## 4. Financial Standing Check\n\nSupplier Assurance obtains an independent financial standing report for every supplier at onboarding and at each subsequent review.\n\nA supplier scoring below the minimum acceptable band may still be approved where a mitigation is put in place. Acceptable mitigations are a parent company guarantee, a performance bond, a reduced payment term, or a limit on the total exposure permitted at any one time.\n\nThe mitigation applied is recorded against the approval and is reviewed at the same frequency as the standing report.\n\nA material adverse change in financial standing is a re-evaluation trigger and must be raised to the category manager within five working days of it being identified.\n\n## 5. Insurance Requirements\n\nEvery supplier must hold and maintain public liability cover of at least five million pounds for the duration of the agreement.\n\nWhere the supplier provides professional advice or design work, professional indemnity cover of at least two million pounds is also required. Where the supplier transports goods on the organisation's behalf, goods in transit cover appropriate to the maximum consignment value is required.\n\nCertificates are collected at onboarding and at each renewal date. A lapse in cover suspends the supplier from receiving new orders until cover is restored and evidenced.\n\n## 6. Sanctions and Export Control Screening"
+    },
+    {
+      "chunk_id": "c89aaa8382f83a00",
+      "source_file": "DOC-004-onboarding-screening.md",
+      "char_start": 3087,
+      "char_end": 5020,
+      "token_count": 291,
+      "content_hash": "a6fc87758e66733416227c0136135e90bc03fcbc3e8ee8b66328bfa3c05062d0",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "5. Insurance Requirements",
+      "text": "on the organisation's behalf, goods in transit cover appropriate to the maximum consignment value is required.\n\nCertificates are collected at onboarding and at each renewal date. A lapse in cover suspends the supplier from receiving new orders until cover is restored and evidenced.\n\n## 6. Sanctions and Export Control Screening\n\nEvery supplier, every director of that supplier, and every approved subcontractor is screened against the applicable sanctions lists at onboarding.\n\nScreening is repeated on a rolling basis and on the occurrence of any re-screening trigger. A positive match suspends all activity with that supplier immediately and is escalated to Supplier Assurance and Commercial and Legal on the same working day.\n\nWhere goods or technical data are subject to export control, the supplier must confirm the classification and hold any licence required. The organisation does not accept a supplier's assurance in place of the classification itself.\n\nA supplier may not be released from suspension by an operational contact. Release requires a written decision from Supplier Assurance.\n\n## 7. Modern Slavery, ESG and Data Protection\n\nSuppliers above the statutory turnover threshold must publish a modern slavery statement and provide the link at onboarding. Suppliers below the threshold complete a short declaration instead.\n\nThe organisation reserves the right to audit a supplier's labour practices on reasonable notice. Refusal to permit an audit is a re-screening trigger.\n\nWhere a supplier processes personal data on the organisation's behalf, a data processing agreement is required before activation. The supplier must list its sub-processors, notify any addition in advance, and report a personal data breach without undue delay and in any event within seventy two hours of becoming aware of it.\n\n## 8. Bank Verification and Activation\n\nBank verification must be completed before the first payment is released."
+    },
+    {
+      "chunk_id": "5201e1383ae33257",
+      "source_file": "DOC-004-onboarding-screening.md",
+      "char_start": 4710,
+      "char_end": 6553,
+      "token_count": 283,
+      "content_hash": "a63c56ed57e924fea994efdbc58692092683664ec91aa24c4473ffbe70513577",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "7. Modern Slavery, ESG and Data Protection",
+      "text": "The supplier must list its sub-processors, notify any addition in advance, and report a personal data breach without undue delay and in any event within seventy two hours of becoming aware of it.\n\n## 8. Bank Verification and Activation\n\nBank verification must be completed before the first payment is released. Verification is carried out by an independent callback to a telephone number obtained from the supplier's registration record, never from a number supplied on an invoice or in email correspondence.\n\nAny subsequent change to bank details triggers the same verification process and suspends payment until verification is complete.\n\nA request to change bank details received by email alone is treated as a suspected fraud attempt and is reported to Finance Operations before any action is taken.\n\n## 9. Re-screening Triggers\n\nScreening is repeated when any of the following occurs: a change of ownership or control, a change of registered address or contracting entity, a lapse or change in insurance, a material adverse change in financial standing, a refused audit, a sanctions list update affecting the supplier's jurisdiction, or the approach of the twenty four month review date.\n\nThe category manager and Supplier Assurance are jointly responsible for raising a trigger. A trigger raised by either party is sufficient to start re-screening.\n\n## 10. Restricted Content\n\nBank verification records, the callback log, individual financial standing scores, named compliance contacts and the details of any active fraud investigation are restricted content.\n\nThey are accessible to Supplier Assurance and Finance Operations only. They are not disclosed to the supplier, to the category manager, or to any requester.\n\nOnboarding records are retained for seven years from the date the supplier is removed from the approved supplier list."
+    },
+    {
+      "chunk_id": "332f7f2c5f004cb2",
+      "source_file": "DOC-005-delivery-inspection.md",
+      "char_start": 0,
+      "char_end": 1814,
+      "token_count": 287,
+      "content_hash": "5cc7dc64326096f46528f678ff240b2fae2a5538bfc7bad20bd10eb330bdb856",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "DOC-005 \u2014 Delivery, Logistics and Inspection",
+      "text": "# DOC-005 \u2014 Delivery, Logistics and Inspection\n\n**Document ID:** DOC-005\n**Version:** 1.0\n**Owner:** Logistics and Goods Receipt, Meridian Procurement Ltd\n**Classification:** Internal \u2014 Synthetic Training Material\n\n---\n\n## 1. Purpose and Scope\n\nThis document sets out how goods are delivered to Meridian Procurement Ltd sites, how they are received and inspected, and what happens when goods do not conform to the order.\n\nIt applies to every delivery made against a purchase order, including deliveries made by a supplier's own fleet and deliveries made by a nominated carrier such as Brackenfield Logistics Ltd.\n\n## 2. Delivery Windows\n\nEvery purchase order states a required delivery date and a delivery window. The standard window is a four hour slot agreed at the point the order is acknowledged.\n\nA delivery arriving outside its agreed window may be refused at the gate where accepting it would disrupt other bookings. A refused delivery is treated as a failed delivery attempt and the supplier bears the cost of the return and redelivery.\n\nWhere a supplier knows it cannot meet the agreed window, it must notify goods receipt at least twenty four hours before the window opens and propose a new slot.\n\nStandard receiving hours are 07:00 to 17:00 Monday to Friday. Deliveries outside receiving hours require prior arrangement and are accepted only where the site has confirmed cover.\n\n## 3. Consignment Documentation\n\nEvery consignment must be accompanied by a delivery note quoting the purchase order number, the supplier name, the line items, the quantity delivered against each line, and the total number of packages.\n\nA consignment arriving without a delivery note quoting a valid purchase order number is held unbooked and is not treated as delivered. The supplier is contacted for the missing reference."
+    },
+    {
+      "chunk_id": "02b1692e01516110",
+      "source_file": "DOC-005-delivery-inspection.md",
+      "char_start": 1501,
+      "char_end": 3311,
+      "token_count": 291,
+      "content_hash": "330c9000cf1b1a9e7ec78419e43cb8e1f25e2817551ad97b2dd665a83ad7239d",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "3. Consignment Documentation",
+      "text": "order number, the supplier name, the line items, the quantity delivered against each line, and the total number of packages.\n\nA consignment arriving without a delivery note quoting a valid purchase order number is held unbooked and is not treated as delivered. The supplier is contacted for the missing reference.\n\nWhere a single order is fulfilled from more than one location, each consignment carries its own delivery note and the notes cross-reference each other.\n\n## 4. Partial Delivery\n\nA partial delivery will only be accepted where it was agreed in advance and recorded against the purchase order, or where the buyer confirms acceptance at the point the consignment arrives.\n\nAn unagreed partial delivery may be refused in full. Where it is accepted, the order remains open and the outstanding balance retains its original required delivery date.\n\nThe supplier may not invoice for a partial delivery as though the order were complete. Each accepted consignment is invoiced against the quantity actually received and booked in.\n\nInstalment deliveries agreed at the point of order are treated as separate delivery events, each with its own window and its own delivery note.\n\n## 5. Late Delivery\n\nA delivery is late where it arrives after the required delivery date, or where it arrives within the required date but outside the agreed window and is refused.\n\nThe supplier must notify goods receipt as soon as it becomes aware that a delivery will be late, state the revised date, and confirm the cause. A notification given after the required date has passed is not treated as advance notice.\n\nRepeated late delivery affects the supplier's delivery performance score, which is one of the criteria used at re-evaluation. Two consecutive review periods below the agreed threshold are a re-evaluation trigger."
+    },
+    {
+      "chunk_id": "1ee240fc68ca0a33",
+      "source_file": "DOC-005-delivery-inspection.md",
+      "char_start": 2979,
+      "char_end": 4790,
+      "token_count": 282,
+      "content_hash": "3f34614ed127da821c4c77641503b4cb780fda2e3500e8da50b13afc13067841",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "5. Late Delivery",
+      "text": "date, and confirm the cause. A notification given after the required date has passed is not treated as advance notice.\n\nRepeated late delivery affects the supplier's delivery performance score, which is one of the criteria used at re-evaluation. Two consecutive review periods below the agreed threshold are a re-evaluation trigger.\n\nWhere a late delivery causes the organisation to incur cost that could not reasonably be avoided, that cost is recoverable as a commercial matter under the agreement.\n\n## 6. Packaging and Labelling\n\nGoods must be packaged so that they arrive undamaged under normal handling. Packaging must be appropriate to the mode of transport and the season.\n\nEvery package is labelled with the purchase order number, the line reference, the package number and the total package count for that consignment. Hazardous items carry the classification and handling markings required by the applicable regulations.\n\nReturnable packaging is identified on the delivery note. Where returnable packaging is used, the supplier arranges collection within twenty working days.\n\n## 7. Goods Receipt\n\nGoods are booked in against the purchase order at the point of receipt. Booking in records the quantity received, the date and time, the condition on arrival and the name of the receiver.\n\nBooking in is a record of receipt only. It is not acceptance of the goods and does not prevent a later rejection following inspection.\n\nA discrepancy between the delivery note and the quantity physically received is recorded at booking in and notified to the supplier within one working day.\n\n## 8. Inspection\n\nGoods are subject to an inspection window of ten working days from the date of booking in. Inspection checks quantity, specification compliance, visible damage and the presence of required certification."
+    },
+    {
+      "chunk_id": "914a930fa4309230",
+      "source_file": "DOC-005-delivery-inspection.md",
+      "char_start": 4460,
+      "char_end": 6305,
+      "token_count": 287,
+      "content_hash": "de5ece3017eb94baab5832968b84aede17a185494074a4c8336af6d893f80acf",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "7. Goods Receipt",
+      "text": "quantity physically received is recorded at booking in and notified to the supplier within one working day.\n\n## 8. Inspection\n\nGoods are subject to an inspection window of ten working days from the date of booking in. Inspection checks quantity, specification compliance, visible damage and the presence of required certification.\n\nWhere goods are booked in during a shutdown period, the inspection window begins on the first working day after the shutdown ends.\n\nGoods not rejected within the inspection window are treated as accepted, except where a defect could not reasonably have been identified by inspection. A latent defect may be raised at any point within the warranty period stated in the agreement.\n\n## 9. Non-Conforming Goods\n\nWhere goods are rejected, the organisation notifies the supplier stating the line affected, the quantity rejected and the reason.\n\nThe supplier proposes a remedy within five working days. Acceptable remedies are replacement, repair, or credit. The choice of remedy rests with the organisation where the rejection concerns specification compliance.\n\nRejected goods are held at the supplier's risk from the date of the rejection notice. The supplier arranges collection within ten working days. Goods not collected within twenty working days may be disposed of at the supplier's cost.\n\nReplacement goods are subject to a fresh inspection window on the same terms.\n\n## 10. Title, Risk and Restricted Content\n\nRisk in the goods passes to the organisation on booking in. Title passes on the earlier of booking in or payment.\n\nWhere goods are rejected, risk passes back to the supplier on the date of the rejection notice.\n\nSite access codes, gate booking system credentials, named goods receipt staff and the site security schedule are restricted content and are not published in supplier-facing documentation."
+    },
+    {
+      "chunk_id": "e2fe0d9adc9ca224",
+      "source_file": "DOC-005-delivery-inspection.md",
+      "char_start": 5982,
+      "char_end": 6432,
+      "token_count": 69,
+      "content_hash": "a9c7c42e504a34998ff8bd1e5cb1b224a16f159c8434d5c559cf5441aafe6872",
+      "ingestion_version": "day1-chunker-1.0",
+      "section": "10. Title, Risk and Restricted Content",
+      "text": "the earlier of booking in or payment.\n\nWhere goods are rejected, risk passes back to the supplier on the date of the rejection notice.\n\nSite access codes, gate booking system credentials, named goods receipt staff and the site security schedule are restricted content and are not published in supplier-facing documentation.\n\nDelivery records, inspection outcomes and rejection notices are retained for seven years from the date of the delivery event."
+    }
+  ]
+}
