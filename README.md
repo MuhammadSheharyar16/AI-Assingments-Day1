@@ -1,4 +1,4 @@
-# AICO — Retrieval Engineering (Day 1: Lexical Baseline · Day 2: Embeddings & Hybrid · Day 3: Model Gateway · Day 4: Structured Contracts · Day 5: Grounded Answering · Day 6: API Surface & Observability)
+# AICO — Retrieval Engineering (Day 1: Lexical Baseline · Day 2: Embeddings & Hybrid · Day 3: Model Gateway · Day 4: Structured Contracts · Day 5: Grounded Answering · Day 6: API Surface & Observability · Day 7: Evaluation & Regression Gate · Day 8: Session State & Memory)
 
 Day 1 is a from-scratch chunker and BM25 lexical search baseline. Day 2 adds
 semantic retrieval on top of it: a real embedding provider behind one
@@ -1027,6 +1027,70 @@ autofixed, what was fixed by hand and why, and **a real regression the
 autofix itself caused** (it silently deleted a re-exported import a test
 still depended on, caught immediately by re-running the full suite) — is
 in `docs/adr/ADR-005-ruff-adoption.md`.
+
+## Day 8 — Session state and memory
+
+Adds bounded, isolated session memory on top of the Day 1–7 grounded RAG
+service, so a follow-up question can use prior conversational context
+without that memory ever becoming evidence — the assignment's own rule:
+"Memory helps interpret the conversation. Retrieved evidence still
+determines what is true." `src/aico/memory/` is the whole boundary:
+`models.py` (typed `SessionState`/`SessionTurn`/`MemorySummary`, no field
+anywhere for a credential or a "trusted" flag), `store.py` (the
+`SessionStore` abstraction — `SqliteSessionStore` the real local
+implementation, `InMemorySessionStore` the deterministic test fake, one
+shared contract proven by running every lifecycle test against both),
+`service.py` (`MemorySessionService`, the identity-bound seam
+application code resolves/mutates sessions through — no method accepts a
+raw `tenant_id`/`user_id`, only a Day 6 `TrustedIdentity` — plus
+`update_session`'s bounded lost-update retry), `context_builder.py`
+(`build_memory_context` — the token/turn-budget-bounded selection over a
+session's summary/recent turns), and `summarizer.py` (`Summarizer` +
+`FakeSummarizer`/`ModelGatewaySummarizer` + `compact_session`).
+
+`POST /ask` now accepts an optional `session_id` (creating a new session
+when omitted) and always returns the active one. The resolved session's
+bounded memory context is threaded into Day 5's still-unmodified pipeline
+as one extra argument, rendered as its own separately-labelled `SESSION
+MEMORY` prompt message (`rag/prompt_builder.py`) — distinct from
+`RETRIEVED EVIDENCE`, never merged into it, and never something
+`rag/citation_validator.py` is even aware exists: a model citing a
+memory turn id is rejected as forged exactly like any other invented
+chunk_id. Session ownership is always `tenant_id` + `user_id` (from the
+trusted identity) + `session_id`; a wrong-owner request and a nonexistent
+session id are indistinguishable by construction — every store lookup is
+scoped by all three in one query, and `SessionNotFoundError`'s outward
+message never varies by cause.
+
+```
+uv run pytest -q
+uv run python -m aico.evals.day07
+uv run python scripts/day08_generate_memory_artifacts.py
+```
+
+981 tests pass overall (up from 716 after Day 7) — 265 new for Day 8,
+across `tests/test_day08_*.py` (session contract, store lifecycle,
+isolation, context budget, compaction, concurrency, memory-vs-evidence,
+memory safety, follow-up) plus targeted session/memory additions to the
+existing Day 6 observability test file. The Day 7 regression gate is
+unmodified and still runs, unchanged, as the last required step —
+`evals/golden_v1.json`/`thresholds_v1.json`/`baseline_v1.json` and the
+Day 5 holdout dataset were never touched by any Day 8 change (verified
+directly: `git diff --stat` across every Day 8 commit against those
+paths is empty).
+
+`scripts/day08_generate_memory_artifacts.py` regenerates
+`artifacts/day08/session_lifecycle.md`, `context_compaction.md` and
+`isolation_report.md` from real `MemorySessionService`/`SessionStore`/
+`build_memory_context`/`compact_session` calls (plus one real two-turn
+`POST /ask` conversation) — the same "generate from a real run, assert
+redaction before writing" discipline `day06_generate_trace_artifact.py`
+already established; no value in any of the three files is raw turn or
+summary content.
+
+Local session data (`data/sessions/`, SQLite) is gitignored, the same as
+`data/vectors/` — a fresh checkout needs no session database on disk to
+run the test suite, since every test uses `InMemorySessionStore`.
 
 ## Key design decisions
 
