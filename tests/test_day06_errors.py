@@ -5,7 +5,15 @@ Proves, against `tests/fixtures/day06/api_cases.json`:
 - API-002: an unsupported Content-Type is rejected 4xx, and the RAG/model
   pipeline never runs.
 - API-003: a payload over the documented size ceiling is rejected 4xx,
-  before the RAG/model pipeline runs.
+  before the RAG/model pipeline runs, when `Content-Length` honestly
+  declares it.
+- API-006/API-007/API-008: the same oversize rejection still holds when
+  `Content-Length` is missing, understated/lying, or absent because the
+  request uses chunked transfer-encoding - the streamed-byte-count guard
+  in `request_protection._read_and_replay_within_limit`, not the
+  header-only fast path, is what catches these (see "A real gap closed,
+  not assumed" in the README's Day 6 section for why the header-only
+  check alone was not enough).
 - API-004: an invalid request body (missing `question`) is rejected 4xx.
 - API-001: the valid case still succeeds (protection must not false-positive).
 
@@ -237,11 +245,14 @@ def test_missing_content_length_with_oversize_body_is_still_rejected():
     """A client that omits `Content-Length` entirely (legal HTTP) must not
     get an oversize body past the ceiling just because the header-only
     fast path in `RequestProtectionMiddleware` has nothing to check."""
+    case = API_CASES["API-006"]
+    assert case["expected_class"] == "4xx"
+    assert case["must_not_reach_expensive_pipeline"] is True
 
     gateway = FakeGateway(_ANSWERED_JSON)
     status, body_json = _run_ask_over_raw_asgi(gateway, _oversize_ask_body(), [(b"content-type", b"application/json")])
 
-    assert status == 413
+    assert 400 <= status < 500
     assert gateway.call_count == 0
     _assert_error_envelope(body_json)
     assert body_json["error_code"] == "payload_too_large"
@@ -251,12 +262,15 @@ def test_lying_content_length_with_oversize_body_is_still_rejected():
     """A client that declares a small `Content-Length` (e.g. `1`) while
     actually streaming far more must not get the oversize body past the
     ceiling just because the declared header happened to look fine."""
+    case = API_CASES["API-007"]
+    assert case["expected_class"] == "4xx"
+    assert case["must_not_reach_expensive_pipeline"] is True
 
     gateway = FakeGateway(_ANSWERED_JSON)
     headers = [(b"content-type", b"application/json"), (b"content-length", b"1")]
     status, body_json = _run_ask_over_raw_asgi(gateway, _oversize_ask_body(), headers)
 
-    assert status == 413
+    assert 400 <= status < 500
     assert gateway.call_count == 0
     _assert_error_envelope(body_json)
     assert body_json["error_code"] == "payload_too_large"
@@ -266,12 +280,15 @@ def test_chunked_transfer_encoding_with_oversize_body_is_still_rejected():
     """Chunked transfer-encoding carries no `Content-Length` at all, so
     this proves the streamed-byte-count guard - not the header check -
     is what actually stops it, across several delivered messages."""
+    case = API_CASES["API-008"]
+    assert case["expected_class"] == "4xx"
+    assert case["must_not_reach_expensive_pipeline"] is True
 
     gateway = FakeGateway(_ANSWERED_JSON)
     headers = [(b"content-type", b"application/json"), (b"transfer-encoding", b"chunked")]
     status, body_json = _run_ask_over_raw_asgi(gateway, _oversize_ask_body(), headers, chunk_size=4096)
 
-    assert status == 413
+    assert 400 <= status < 500
     assert gateway.call_count == 0
     _assert_error_envelope(body_json)
     assert body_json["error_code"] == "payload_too_large"

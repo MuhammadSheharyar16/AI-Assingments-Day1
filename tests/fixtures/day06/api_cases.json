@@ -40,6 +40,36 @@
       "payload": {"question": "Synthetic test question"},
       "incoming_correlation_id": null,
       "expected": "server_generates_correlation_id"
+    },
+    {
+      "id": "API-006",
+      "name": "oversize_payload_missing_content_length",
+      "content_type": "application/json",
+      "payload_size": "above_configured_limit",
+      "content_length_header": "absent",
+      "note": "A declared-Content-Length-only size check has nothing to reject here; the streamed-byte-count guard must catch it instead.",
+      "expected_class": "4xx",
+      "must_not_reach_expensive_pipeline": true
+    },
+    {
+      "id": "API-007",
+      "name": "oversize_payload_lying_content_length",
+      "content_type": "application/json",
+      "payload_size": "above_configured_limit",
+      "content_length_header": "present but understated (declares 1 byte while the actual body is far larger)",
+      "note": "Proves the size ceiling is enforced against bytes actually streamed, not the caller-controlled header value.",
+      "expected_class": "4xx",
+      "must_not_reach_expensive_pipeline": true
+    },
+    {
+      "id": "API-008",
+      "name": "oversize_payload_chunked_transfer_encoding",
+      "content_type": "application/json",
+      "payload_size": "above_configured_limit",
+      "content_length_header": "absent (chunked transfer-encoding, delivered across several ASGI messages)",
+      "note": "Chunked transfer-encoding carries no Content-Length at all - proves the guard works across a multi-message body, not just a single one.",
+      "expected_class": "4xx",
+      "must_not_reach_expensive_pipeline": true
     }
   ]
 }

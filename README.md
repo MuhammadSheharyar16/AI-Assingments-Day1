@@ -784,6 +784,51 @@ against. Its synthetic validation fixtures (`api_cases.json`,
 to `tests/fixtures/`" convention Day 5's `attack_fixtures.json` already
 established.
 
+### A real gap closed, not assumed
+
+The first version of `RequestProtectionMiddleware` enforced the 32 KiB
+ceiling against the *declared* `Content-Length` header alone, with a
+docstring acknowledging the obvious consequence as an accepted lab-scope
+limitation: a client that omits `Content-Length`, understates it (e.g.
+declares `1` byte while sending far more), or uses chunked
+transfer-encoding (which carries no `Content-Length` at all) was not
+caught by that check. Verified directly, not just reasoned about: a raw
+ASGI client sending each of those three shapes with a genuinely oversize
+body reached `AskRequest` parsing with the full body every time — the
+size ceiling simply had nothing to check for any of them, an accepted gap
+rather than a proven-safe one.
+
+The fix is `_read_and_replay_within_limit` (`request_protection.py`): the
+middleware itself now reads the body off the real ASGI `receive` channel,
+counting bytes as they actually arrive, and stops the instant the running
+total crosses the ceiling — never buffering more than one message past
+the limit. A body that stays within it is replayed to the rest of the app
+exactly as received (`_ReplayReceive`), so normal request handling is
+unaffected.
+
+The first attempt at this fix instead wrapped `receive` and raised an
+exception on overflow from inside it, reusing the existing `ApiError`
+machinery (`errors.py`) that already handles `IdentityError` the same
+way. That seemed like the natural fit — until verified end to end: FastAPI's
+own request-body parsing wraps `receive()`/`request.json()` in a bare
+`except Exception` and converts *any* failure there into its own generic
+`HTTPException(400, "There was an error parsing the body")`, silently
+swallowing the specific `payload_too_large` 413 this middleware meant to
+produce. Enforcing the ceiling entirely within the middleware — before
+`self._app` is ever invoked, the same shape the existing
+`Content-Length`-header check already uses — sidesteps depending on how a
+downstream framework happens to handle a mid-read exception.
+
+Verified after the fix: the same raw ASGI probe (missing, understated,
+and chunked `Content-Length`, each with a genuinely oversize body) now
+returns `413 payload_too_large` in every case, with `GroundedAnswerService`
+never invoked — covered by `tests/test_day06_errors.py`'s
+`API-006`/`API-007`/`API-008` cases (`tests/fixtures/day06/api_cases.json`),
+alongside two direct unit tests of `_read_and_replay_within_limit` itself
+(a within-limit multi-chunk body replayed untouched; an over-limit stream
+stopped within a couple of messages of crossing the ceiling, never read
+to exhaustion).
+
 ## Day 7 — Evaluation harness and regression gate
 
 Turns the Day 1–6 RAG service into a measured engineering baseline: a
