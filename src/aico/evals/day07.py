@@ -110,7 +110,8 @@ from aico.evals.regression import (
     render_gate_summary,
     write_baseline,
 )
-from aico.platform.model_gateway import CallMetadata, ChatRequest, ChatResult
+from aico.platform.errors import GatewayConfigurationError
+from aico.platform.model_gateway import CallMetadata, ChatRequest, ChatResult, ModelGateway
 from aico.rag.answer_service import AnswerResult, BM25Retriever, GroundedAnswer, GroundedAnswerService
 from aico.rag.citation_validator import EvidenceChunk
 from aico.retrieval.search import load_chunks
@@ -125,14 +126,47 @@ DEFAULT_INDEX_DIR = pathlib.Path("data/index")
 DEFAULT_ARTIFACTS_DIR = pathlib.Path("artifacts/day07")
 DEFAULT_TOP_K = 5
 
-# Honest about what actually produces candidate answers in this command:
-# a scripted fake gateway (see module docstring), not a live deployment -
-# recorded as such in a baseline rather than invented to look like a real
-# Azure alias.
-MODEL_ALIASES = {
-    "chat": "fake:well-behaved-response-builder (aico.evals.day07.well_behaved_response)",
-    "embedding": "n/a - retrieval is BM25 only, no embedding call in this command",
-}
+# `--groundedness-gateway` (see parse_args): which gateway grades every
+# GroundedAnswer's groundedness (Task 4). "scripted" (default, and the only
+# mode CI ever runs) keeps this command free, offline and byte-reproducible
+# via the deterministic well_behaved_verdict stand-in below. "live" swaps in
+# a real aico.platform.model_gateway.ModelGateway.from_config() call through
+# the Day 3 Foundry boundary for the groundedness evaluator specifically -
+# the correction this constant/flag exists to satisfy: "model-based"
+# evaluation should mean genuine probabilistic model judgment, not
+# deterministic logic wearing the evaluator's structure. The
+# system-under-test's own answers (well_behaved_response) deliberately stay
+# on the scripted gateway even in "live" mode - swapping *that* one too is a
+# separate, larger change (every downstream metric becomes non-deterministic
+# across runs, not just groundedness_rate), out of this correction's scope;
+# see evals/README.md's Task 4/9 sections.
+GROUNDEDNESS_GATEWAY_CHOICES = ("scripted", "live")
+
+
+def groundedness_evaluator_alias(gateway: ModelGateway | None) -> str:
+    """The honest evaluator/model alias for whichever gateway actually
+    graded groundedness this run - fed into both the evaluation report and
+    a baseline write. Never invents a real-looking alias for the scripted
+    stand-in, and never hides which real deployment/region a live run
+    actually used."""
+    if gateway is None:
+        return "fake:well-behaved-response-builder (aico.evals.day07.well_behaved_verdict)"
+    route = gateway.config.routing.primary
+    return f"{route.provider}/{gateway.config.models.chat} (live, region={route.region})"
+
+
+def model_aliases_for_run(groundedness_gateway: ModelGateway | None) -> dict:
+    """What actually produced this run's candidate answers and grading -
+    honest per-role reporting rather than one blended "chat" alias, since
+    Task 4's grader and the system-under-test can now genuinely differ (one
+    live, one still scripted). Fed into both `evaluation_report.json` (via
+    the caller) and `write_baseline` - never invented to look like a real
+    Azure alias when nothing real was called for that role."""
+    return {
+        "chat_system_under_test": "fake:well-behaved-response-builder (aico.evals.day07.well_behaved_response)",
+        "chat_groundedness_evaluator": groundedness_evaluator_alias(groundedness_gateway),
+        "embedding": "n/a - retrieval is BM25 only, no embedding call in this command",
+    }
 
 
 # ── The honest fake gateway + one-case runner (Task 6's, now canonical) ──
@@ -283,12 +317,21 @@ def load_full_index_chunks(index_dir: pathlib.Path) -> list[EvidenceChunk]:
 
 
 def evaluate_all_cases(
-    dataset: GoldenDataset, retriever: BM25Retriever, all_chunks: list[EvidenceChunk], top_k: int
+    dataset: GoldenDataset, retriever: BM25Retriever, all_chunks: list[EvidenceChunk], top_k: int,
+    *, groundedness_gateway: ModelGateway | None = None,
 ) -> list[CaseEvaluation]:
     """Steps 2 (run evaluation) and 7 (classify failures) for every case in
     `dataset`, in one pass — the one place this module computes a case's
     complete outcome, shared by the CLI, the baseline-update path, and
-    `scripts/day07_generate_failure_classification_report.py`."""
+    `scripts/day07_generate_failure_classification_report.py`.
+
+    `groundedness_gateway` is the correction's opt-in seam: `None` (the
+    default, and the only mode CI ever exercises) keeps Task 4's grading on
+    the deterministic `well_behaved_verdict` stand-in, built fresh per case
+    exactly as before. A real `ModelGateway` (from `ModelGateway.from_config()`
+    or any duck-typed fake a test injects) makes every case's groundedness
+    verdict a genuine model call instead - the system-under-test's own
+    answer generation is untouched either way."""
     evaluations = []
     for case in dataset.cases:
         result, retrieved = run_case(case, retriever)
@@ -302,11 +345,19 @@ def evaluate_all_cases(
         groundedness: GroundednessOutcome | None = None
         if isinstance(result, GroundedAnswer):
             citations = score_citations(case, result.citation_ids, retrieved)
-            # Step 4's model-based check, run for real here (not skipped) -
-            # see well_behaved_verdict's docstring for why this is a
-            # deterministic stand-in rather than a live model call.
-            grader = ScriptedGateway(well_behaved_verdict(case, result.answer), model_alias="day07-well-behaved-grader")
-            groundedness = evaluate_groundedness(grader, case, result.answer, retrieved)
+            # Step 4's model-based check, run for real here (not skipped).
+            # `groundedness_gateway` given -> a genuine call through the
+            # real Model Gateway boundary (the correction: "model-based"
+            # evaluation should mean actual model judgment). Not given
+            # (default, CI's only mode) -> the deterministic
+            # well_behaved_verdict stand-in, same as before - see that
+            # function's docstring for why it's a genuine, non-stub check
+            # even though it makes no network call.
+            if groundedness_gateway is not None:
+                groundedness = evaluate_groundedness(groundedness_gateway, case, result.answer, retrieved)
+            else:
+                grader = ScriptedGateway(well_behaved_verdict(case, result.answer), model_alias="day07-well-behaved-grader")
+                groundedness = evaluate_groundedness(grader, case, result.answer, retrieved)
 
         refusal_check = None
         attack_check = None
@@ -397,6 +448,7 @@ def build_evaluation_report_json(
     dataset: GoldenDataset, evaluations: Sequence[CaseEvaluation], summary: EvaluationSummary,
     thresholds: Thresholds, gate: GateResult, baseline: Baseline | None, comparison: BaselineComparison | None,
     *, top_k: int, generated_by: str, stability_summary: dict | None = None,
+    groundedness_gateway: ModelGateway | None = None,
 ) -> dict:
     from aico.evals.dataset import split_counts as _split_counts
 
@@ -407,6 +459,21 @@ def build_evaluation_report_json(
         classification_counts[c.primary_type] += 1
 
     evaluations_by_case_id = {e.case.case_id: e for e in evaluations}
+
+    # Which gateway actually graded groundedness this run - taken directly
+    # from what the caller passed in (main()'s --groundedness-gateway
+    # resolves to either None or a real ModelGateway before this function
+    # ever runs), not guessed from the alias string: a live deployment
+    # could easily have an alias that doesn't look distinctive, and a
+    # scripted stand-in's alias is an implementation detail, not a promise
+    # about its shape. The per-call aliases below are still real, observed
+    # metadata (aico.evals.groundedness.evaluate_groundedness sets
+    # `evaluator_model_alias` from the gateway's own ChatResult.metadata) -
+    # reported for detail, not for classification.
+    evaluator_gateway = "live" if groundedness_gateway is not None else "scripted"
+    evaluator_aliases = sorted({
+        e.groundedness.evaluator_model_alias for e in evaluations if isinstance(e.groundedness, GroundednessEvaluation)
+    })
 
     return {
         "generated_by": generated_by,
@@ -427,10 +494,21 @@ def build_evaluation_report_json(
         },
         "model_based_metrics": {
             "groundedness_rate": summary.groundedness_rate,
+            "evaluator_gateway": evaluator_gateway,
+            "evaluator_model_aliases": evaluator_aliases,
             "note": (
-                "Measured for real via aico.evals.groundedness.evaluate_groundedness against every "
-                "GroundedAnswer, using a deterministic honest grader (well_behaved_verdict) rather than a "
-                "live model - see evals/README.md Task 9 for why, and Task 4 for the evaluator itself."
+                (
+                    "Measured for real via aico.evals.groundedness.evaluate_groundedness against every "
+                    "GroundedAnswer, using a genuine live model call through the real Model Gateway "
+                    "(Day 3 boundary) - see evaluator_model_aliases above for exactly which deployment/region. "
+                    "The system-under-test's own answers are still produced by the scripted honest gateway - "
+                    "see evals/README.md's Task 4/9 sections."
+                ) if evaluator_gateway == "live" else (
+                    "Measured for real via aico.evals.groundedness.evaluate_groundedness against every "
+                    "GroundedAnswer, using a deterministic honest grader (well_behaved_verdict) rather than a "
+                    "live model - see evals/README.md Task 9 for why, and Task 4 for the evaluator itself. "
+                    "Pass --groundedness-gateway live to grade with a real model instead (never used by CI)."
+                )
             ),
         },
         "split_breakdown": {
@@ -499,6 +577,9 @@ def render_evaluation_report_md(report: dict) -> str:
     lines.append("")
     g = report["model_based_metrics"]["groundedness_rate"]
     lines.append(f"- `groundedness_rate`: {g:.4f}" if g is not None else "- `groundedness_rate`: not measured")
+    lines.append(f"- `evaluator_gateway`: {report['model_based_metrics']['evaluator_gateway']}")
+    aliases = report["model_based_metrics"]["evaluator_model_aliases"]
+    lines.append(f"- `evaluator_model_aliases`: {', '.join(f'`{a}`' for a in aliases) if aliases else '(none graded)'}")
     lines.append(f"  - {report['model_based_metrics']['note']}")
     lines.append("")
 
@@ -609,6 +690,35 @@ def render_evaluation_report_md(report: dict) -> str:
     return "\n".join(lines)
 
 
+# ── The correction's opt-in seam: build a live groundedness gateway ──────
+
+def _build_groundedness_gateway(args: argparse.Namespace) -> tuple[ModelGateway | None, int | None]:
+    """Resolve `--groundedness-gateway` into an actual gateway (or a
+    "stop, exit with this code" signal). Returns `(gateway, None)` on
+    success - `gateway` is `None` for "scripted" (CI's only mode, no
+    network/config/identity needed at all) or a real `ModelGateway` for
+    "live". Returns `(None, exit_code)` when "live" was requested but
+    couldn't be built (bad/missing config/routing) - printed the same
+    fail-loud way every other config problem in this module is."""
+    if args.groundedness_gateway == "scripted":
+        return None, None
+
+    # Lazy import, same discipline as foundry_adapter.py's own lazy
+    # azure-identity import: a "scripted"-mode run (CI's only mode) never
+    # needs python-dotenv imported, let alone a .env file read.
+    from dotenv import load_dotenv
+
+    load_dotenv()  # reads .env for AICO_FOUNDRY_ENDPOINT; never committed, never logged
+    try:
+        gateway = ModelGateway.from_config()
+    except GatewayConfigurationError as exc:
+        print(f"LIVE GROUNDEDNESS GATEWAY CONFIGURATION FAILED: {exc}")
+        print("Falling back is not attempted - a broken --groundedness-gateway live request fails loudly, "
+              "it never silently re-grades with the scripted stand-in instead.")
+        return None, 2
+    return gateway, None
+
+
 # ── Task 8: the deliberate baseline-update path (never runs the gate) ──
 
 def _run_update_baseline(args: argparse.Namespace, dataset: GoldenDataset) -> int:
@@ -620,9 +730,13 @@ def _run_update_baseline(args: argparse.Namespace, dataset: GoldenDataset) -> in
         print(f"No index at {args.index} - run `uv run python -m aico.retrieval.ingest ...` first.")
         return 2
 
+    groundedness_gateway, error_code = _build_groundedness_gateway(args)
+    if error_code is not None:
+        return error_code
+
     retriever = BM25Retriever(index_dir=args.index, top_k=args.top_k)
     all_chunks = load_full_index_chunks(args.index)
-    evaluations = evaluate_all_cases(dataset, retriever, all_chunks, args.top_k)
+    evaluations = evaluate_all_cases(dataset, retriever, all_chunks, args.top_k, groundedness_gateway=groundedness_gateway)
     summary = build_summary(evaluations)
     metrics = {name: getattr(summary, name) for name in REQUIRED_METRIC_NAMES}
 
@@ -646,7 +760,7 @@ def _run_update_baseline(args: argparse.Namespace, dataset: GoldenDataset) -> in
         args.baseline,
         dataset_version=dataset.version,
         evaluator_prompt_version=GROUNDEDNESS_EVALUATOR_PROMPT_VERSION,
-        model_aliases=MODEL_ALIASES,
+        model_aliases=model_aliases_for_run(groundedness_gateway),
         retrieval_config=_retrieval_config(args.index, args.top_k),
         metrics=metrics,
         reviewer=args.reviewer,
@@ -677,6 +791,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--reviewer", default=None, help="required with --update-baseline")
     parser.add_argument("--notes", default=None, help="required with --update-baseline")
     parser.add_argument("--confirm", action="store_true", help="with --update-baseline, actually write the baseline (default: dry run)")
+    parser.add_argument(
+        "--groundedness-gateway", choices=GROUNDEDNESS_GATEWAY_CHOICES, default="scripted",
+        help=(
+            "which gateway grades Task 4 groundedness. 'scripted' (default - the only mode CI ever runs): "
+            "the deterministic well_behaved_verdict stand-in, no network call, byte-reproducible. 'live': a real "
+            "ModelGateway.from_config() call through the Day 3 Foundry boundary for the groundedness evaluator "
+            "only (the system-under-test's own answers stay scripted either way) - requires "
+            "config/model-routing.yaml, AICO_FOUNDRY_ENDPOINT, and an authenticated Azure identity."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -700,10 +824,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"No index at {args.index} - run `uv run python -m aico.retrieval.ingest ...` first.")
         return 2
 
+    groundedness_gateway, error_code = _build_groundedness_gateway(args)
+    if error_code is not None:
+        return error_code
+
     # 2. run evaluation (+ 7. classify failures, computed alongside)
     retriever = BM25Retriever(index_dir=args.index, top_k=args.top_k)
     all_chunks = load_full_index_chunks(args.index)
-    evaluations = evaluate_all_cases(dataset, retriever, all_chunks, args.top_k)
+    evaluations = evaluate_all_cases(dataset, retriever, all_chunks, args.top_k, groundedness_gateway=groundedness_gateway)
     summary = build_summary(evaluations)
 
     # 5/6. thresholds + safety zero tolerance
@@ -736,6 +864,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     report_json = build_evaluation_report_json(
         dataset, evaluations, summary, thresholds, gate, baseline, comparison,
         top_k=args.top_k, generated_by="python -m aico.evals.day07", stability_summary=stability_summary,
+        groundedness_gateway=groundedness_gateway,
     )
     report_md = render_evaluation_report_md(report_json)
     classifications = [e.classification for e in evaluations if e.classification is not None]
