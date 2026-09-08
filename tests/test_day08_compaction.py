@@ -172,6 +172,19 @@ class TestModelGatewaySummarizer:
         ModelGatewaySummarizer(gateway, model_alias="chat-secondary").summarize([_turn("T0")])
         assert gateway.calls[0].model_alias == "chat-secondary"
 
+    def test_module_has_no_direct_http_client_import(self) -> None:
+        # "Real summarizer, if present, uses gateway only" (Task 14) -
+        # structural, not just behavioral: summarizer.py imports nothing
+        # capable of making its own network call, only
+        # aico.platform.model_gateway.
+        import inspect
+
+        from aico.memory import summarizer as summarizer_module
+
+        source = inspect.getsource(summarizer_module)
+        for forbidden in ("import requests", "import httpx", "import urllib", "http.client"):
+            assert forbidden not in source
+
 
 # ── compact_session ──────────────────────────────────────────────────────
 

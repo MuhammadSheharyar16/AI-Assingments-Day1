@@ -920,6 +920,39 @@ def test_session_metric_attributes_never_contain_raw_turn_content():
     assert _SECRET_ANSWER not in joined
 
 
+# ── Correlation propagation across memory operations ────────────────
+
+
+def test_memory_operations_share_the_same_correlation_id_as_the_rest_of_the_request(caplog):
+    """Task 14's own required row ("Correlation propagation - Memory
+    spans/logs keep request correlation"), targeted specifically at the
+    session_lifecycle/memory_context log stages and the api.ask span's
+    memory attributes - narrower than the general
+    test_one_correlation_id_links_the_response_body_the_log_lines_and_every_span
+    (Task 12 section above), which already covers this generically by
+    checking every captured log line regardless of stage."""
+    caplog.set_level(logging.INFO, logger="aico.api")
+    clear_finished_spans()
+    store = InMemorySessionStore()
+    client = _client_with_store(store)
+
+    headers = {"X-Correlation-ID": "corr-memory-propagation-proof"}
+    resp = client.post("/ask", json={"question": _SECRET_QUESTION}, headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["correlation_id"] == "corr-memory-propagation-proof"
+
+    memory_stage_events = [p for p in _log_payloads(caplog) if p["stage"] in ("session_lifecycle", "memory_context")]
+    assert len(memory_stage_events) >= 3  # created, memory_context built, saved
+    assert {e["correlation_id"] for e in memory_stage_events} == {"corr-memory-propagation-proof"}
+    assert {e["request_id"] for e in memory_stage_events} == {body["request_id"]}
+
+    root = {s.name: s for s in get_finished_spans()}["api.ask"]
+    assert root.attributes["correlation_id"] == "corr-memory-propagation-proof"
+    assert "session_id" in root.attributes
+    assert "memory.token_count" in root.attributes
+
+
 # ── Tracing ──────────────────────────────────────────────────────────
 
 

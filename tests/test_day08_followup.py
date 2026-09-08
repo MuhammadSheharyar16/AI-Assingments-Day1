@@ -172,6 +172,38 @@ def test_second_turn_with_session_id_continues_the_same_session_and_is_independe
     ]
 
 
+def test_memory_carries_the_referent_information_a_follow_up_needs():
+    # "Follow-up interpretation" (Task 14's own required row): memory
+    # assists resolving what a follow-up's pronoun refers to. No real
+    # model is called here (the gateway is fully scripted), so this
+    # proves the information a model would need to resolve "its" ->
+    # Supplier Alpha is actually present in what gets sent for turn 2 -
+    # not that some specific model behaves correctly, which is untestable
+    # without one. `prompt_builder.py`'s SESSION MEMORY framing is the
+    # instruction a real model is given to use exactly this content for
+    # exactly this purpose.
+    store = InMemorySessionStore()
+    gateway = FakeGateway([_TURN_1_ANSWER_JSON, _TURN_2_ANSWER_JSON])
+    service = GroundedAnswerService(gateway=gateway, retriever=_fake_retriever)
+    app.dependency_overrides[get_answer_service] = lambda: service
+    app.dependency_overrides[get_trusted_identity] = lambda: _IDENTITY
+    app.dependency_overrides[get_session_store] = lambda: store
+    client = TestClient(app)
+
+    first = client.post("/ask", json={"question": _TURN_1_QUESTION})
+    session_id = first.json()["session_id"]
+    second = client.post("/ask", json={"question": _TURN_2_QUESTION, "session_id": session_id})
+    assert second.status_code == 200
+
+    turn_2_request = gateway.calls[1]
+    # The rendered memory block itself, not the system message's rule 6
+    # (which also mentions the phrase "SESSION MEMORY" in prose).
+    memory_message = next(m for m in turn_2_request.messages if m.content.startswith("SESSION MEMORY ("))
+    assert "Supplier Alpha" in memory_message.content  # the referent "its" needs, now available
+    assert _TURN_1_QUESTION in memory_message.content
+    assert _TURN_1_ANSWER_TEXT in memory_message.content
+
+
 def test_response_returns_active_session_id_even_when_status_is_not_answered():
     store = InMemorySessionStore()
     client = _client(identity=_IDENTITY, responses=[], store=store)
