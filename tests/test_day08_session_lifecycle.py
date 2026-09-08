@@ -23,6 +23,17 @@ version) as its cases, plus this store's own `delete`/administrative
 A `FakeClock` (never `time.sleep`) makes expiry deterministic (Task 8:
 "Use an injectable clock/time source for deterministic tests where
 practical").
+
+Task 8 ("Expiry and reset") required most of this file's own behavior
+already - `TestExpire`/`TestClear` above were written ahead of time
+because `SessionState.expires_at`/`SessionStore.expire`/`.clear` (Task 2)
+already had to exist for Task 1's contract to be honest. What Task 8 adds
+here, in `TestExpiryAndClearIntegrateWithMemory` below: proof that
+expiry/clear are honored by the *rest* of the memory stack too, not just
+the store's own return value - a cleared session's memory context is
+genuinely empty (Task 5), compacting a cleared session is a safe no-op
+rather than resurrecting old content (Task 6), and TTL is independently
+configurable per session, not one hardcoded global cutoff.
 """
 from __future__ import annotations
 
@@ -32,6 +43,7 @@ from pathlib import Path
 
 import pytest
 
+from aico.memory.context_builder import build_memory_context
 from aico.memory.errors import SessionConflictError, SessionNotFoundError
 from aico.memory.models import MemorySummary, SessionTurn, TurnRole
 from aico.memory.store import (
@@ -42,6 +54,7 @@ from aico.memory.store import (
     SqliteSessionStore,
     new_session_id,
 )
+from aico.memory.summarizer import FakeSummarizer, compact_session
 
 TENANT_A = "TENANT-A"
 USER_1 = "USER-1"
@@ -315,6 +328,79 @@ class TestDelete:
     def test_delete_nonexistent_session_raises_not_found(self, store: SessionStore) -> None:
         with pytest.raises(SessionNotFoundError):
             store.delete(tenant_id=TENANT_A, user_id=USER_1, session_id="SES-never-created")
+
+
+class TestExpiryAndClearIntegrateWithMemory:
+    """Task 8's "a cleared session cannot reconstruct old context from
+    stale cache" and "expired session does not return stale context",
+    proven against the rest of the memory stack (Task 5/6), not just the
+    store's own return value."""
+
+    def _session_with_history(self, store: SessionStore, **create_kwargs: object) -> str:
+        session = store.create(tenant_id=TENANT_A, user_id=USER_1, **create_kwargs)
+        with_history = session.model_copy(
+            update={
+                "recent_turns": [
+                    SessionTurn(turn_id="TURN-001", role=TurnRole.USER, timestamp=session.created_at, content="What are Supplier Alpha's payment terms?")
+                ],
+                "summary": MemorySummary(
+                    summary_version=1, text="earlier discussion of Supplier Alpha", source_turn_ids=["TURN-000"], created_at=session.created_at
+                ),
+            }
+        )
+        store.save(with_history)
+        return session.session_id
+
+    def test_cleared_session_produces_an_empty_memory_context(self, store: SessionStore) -> None:
+        session_id = self._session_with_history(store)
+
+        store.clear(tenant_id=TENANT_A, user_id=USER_1, session_id=session_id)
+        reloaded = store.get(tenant_id=TENANT_A, user_id=USER_1, session_id=session_id)
+        context = build_memory_context(reloaded)
+
+        assert context.is_empty is True
+        assert context.summary is None
+        assert context.included_turns == ()
+
+    def test_compacting_a_cleared_session_does_not_resurrect_old_content(self, store: SessionStore) -> None:
+        # A cleared session must stay empty even when compaction runs on
+        # it afterward - clear() is not merely "eligible for compaction",
+        # it removed the content outright; there is nothing left to fold
+        # into a summary, "reconstructed from stale cache" or otherwise.
+        session_id = self._session_with_history(store)
+        store.clear(tenant_id=TENANT_A, user_id=USER_1, session_id=session_id)
+        cleared = store.get(tenant_id=TENANT_A, user_id=USER_1, session_id=session_id)
+
+        result = compact_session(cleared, FakeSummarizer())
+
+        assert result is cleared  # no-op: nothing omitted, nothing to compact
+        assert result.summary is None
+        assert result.recent_turns == []
+
+    def test_expired_session_can_never_be_loaded_to_build_a_memory_context(self, store: SessionStore, clock: FakeClock) -> None:
+        # The only way any caller (including the context builder) obtains
+        # a SessionState is through get() - which already fails closed on
+        # expiry before returning one. There is no second path a stale
+        # SessionState could reach build_memory_context through.
+        session_id = self._session_with_history(store, ttl_seconds=60.0)
+        clock.advance(61)
+
+        with pytest.raises(SessionNotFoundError) as excinfo:
+            store.get(tenant_id=TENANT_A, user_id=USER_1, session_id=session_id)
+        assert excinfo.value.reason == "expired"
+
+    def test_ttl_is_independently_configurable_per_session_not_one_global_cutoff(self, store: SessionStore, clock: FakeClock) -> None:
+        short_lived = store.create(tenant_id=TENANT_A, user_id=USER_1, ttl_seconds=30.0)
+        long_lived = store.create(tenant_id=TENANT_A, user_id=USER_1, ttl_seconds=3600.0)
+
+        clock.advance(31)
+
+        with pytest.raises(SessionNotFoundError) as excinfo:
+            store.get(tenant_id=TENANT_A, user_id=USER_1, session_id=short_lived.session_id)
+        assert excinfo.value.reason == "expired"
+        # The longer-TTL session, created in the same store at the same
+        # time, is unaffected.
+        assert store.get(tenant_id=TENANT_A, user_id=USER_1, session_id=long_lived.session_id) is not None
 
 
 class TestClockContract:

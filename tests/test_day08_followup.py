@@ -228,6 +228,31 @@ def test_wrong_owner_and_nonexistent_session_produce_the_same_error_body():
     assert wrong_owner_resp.json()["message"] == nonexistent_resp.json()["message"]
 
 
+# ── Expiry (Task 8), exercised through the live request path ────────────
+
+
+def test_expired_session_id_is_denied_the_same_way_as_nonexistent():
+    store = InMemorySessionStore()
+    # Two gateway calls actually reach the pipeline: the first request
+    # that creates the session, and the later "fresh session" request -
+    # the expired-session request in between is rejected before ever
+    # reaching the gateway.
+    client = _client(identity=_IDENTITY, responses=[_TURN_1_ANSWER_JSON, _TURN_1_ANSWER_JSON], store=store)
+    session_id = client.post("/ask", json={"question": _TURN_1_QUESTION}).json()["session_id"]
+
+    store.expire(tenant_id=_IDENTITY.tenant_id, user_id=_IDENTITY.user_id, session_id=session_id)
+
+    resp = client.post("/ask", json={"question": _TURN_2_QUESTION, "session_id": session_id})
+
+    assert resp.status_code == 404
+    assert resp.json()["error_code"] == "session_not_found"
+    # A new request omitting session_id still works normally - expiry of
+    # one session never breaks the ability to start a fresh one.
+    fresh = client.post("/ask", json={"question": _TURN_1_QUESTION})
+    assert fresh.status_code == 200
+    assert fresh.json()["session_id"] != session_id
+
+
 # ── Memory safety groundwork (Task 10 owns the full test surface) ───────
 
 
