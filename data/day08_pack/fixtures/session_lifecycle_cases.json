@@ -1,0 +1,46 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "SES-001",
+      "name": "create_and_reload",
+      "owner": {
+        "tenant_id": "TENANT-A",
+        "user_id": "USER-1"
+      },
+      "action": "create_then_reload",
+      "expected": "same_session_state"
+    },
+    {
+      "id": "SES-002",
+      "name": "two_turn_followup",
+      "owner": {
+        "tenant_id": "TENANT-A",
+        "user_id": "USER-1"
+      },
+      "turns": [
+        "What are Supplier Alpha's payment terms?",
+        "What about its invoice submission window?"
+      ],
+      "expected": "memory_may_resolve_supplier_reference_but_second_answer_requires_current_retrieval"
+    },
+    {
+      "id": "SES-003",
+      "name": "expiry",
+      "action": "advance_clock_past_ttl",
+      "expected": "no_stale_memory"
+    },
+    {
+      "id": "SES-004",
+      "name": "clear",
+      "action": "clear_session",
+      "expected": "recent_turns_and_summary_removed"
+    },
+    {
+      "id": "SES-005",
+      "name": "stale_version",
+      "action": "save_using_old_version",
+      "expected": "conflict_not_silent_overwrite"
+    }
+  ]
+}

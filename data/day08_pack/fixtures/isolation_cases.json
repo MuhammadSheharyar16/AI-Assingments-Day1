@@ -1,0 +1,51 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "ISO-001",
+      "session_owner": {
+        "tenant_id": "TENANT-A",
+        "user_id": "USER-1"
+      },
+      "requester": {
+        "tenant_id": "TENANT-A",
+        "user_id": "USER-1"
+      },
+      "expected": "allow"
+    },
+    {
+      "id": "ISO-002",
+      "session_owner": {
+        "tenant_id": "TENANT-A",
+        "user_id": "USER-1"
+      },
+      "requester": {
+        "tenant_id": "TENANT-A",
+        "user_id": "USER-2"
+      },
+      "expected": "deny_without_disclosure"
+    },
+    {
+      "id": "ISO-003",
+      "session_owner": {
+        "tenant_id": "TENANT-A",
+        "user_id": "USER-1"
+      },
+      "requester": {
+        "tenant_id": "TENANT-B",
+        "user_id": "USER-1"
+      },
+      "expected": "deny_without_disclosure"
+    },
+    {
+      "id": "ISO-004",
+      "name": "different_session_same_owner",
+      "expected": "no_cross_session_memory"
+    },
+    {
+      "id": "ISO-005",
+      "name": "nonexistent_session",
+      "expected": "not_found_without_foreign_session_disclosure"
+    }
+  ]
+}

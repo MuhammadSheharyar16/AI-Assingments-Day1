@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "note": "Exact token budget is developer-defined. Cases describe required behavior.",
+  "cases": [
+    {
+      "id": "CTX-001",
+      "name": "under_budget",
+      "turn_count": 3,
+      "expected": "no_compaction_required"
+    },
+    {
+      "id": "CTX-002",
+      "name": "over_budget",
+      "turn_count": 12,
+      "expected": "older_turns_compacted_and_recent_turns_retained"
+    },
+    {
+      "id": "CTX-003",
+      "name": "summary_provenance",
+      "expected": "summary_contains_source_turn_ids"
+    },
+    {
+      "id": "CTX-004",
+      "name": "no_duplicate_history_after_compaction",
+      "expected": "compacted_turns_not_repeated_indefinitely_with_summary"
+    },
+    {
+      "id": "CTX-005",
+      "name": "memory_and_evidence_separate",
+      "expected": "memory_context_does_not_replace_current_retrieved_evidence"
+    }
+  ]
+}
