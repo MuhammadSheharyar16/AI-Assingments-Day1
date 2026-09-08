@@ -11,8 +11,12 @@ through - see its module docstring for why isolation depends on this
 being the only entry point. Task 5 adds `build_memory_context`, the
 budget-bounded selection over a loaded session's summary/recent turns -
 see its module docstring for why rendering that into an actual prompt
-section stays Task 7's job, not this module's. Task 6 adds the
-summarizer in a sibling module.
+section stays Task 7's job, not this module's. Task 6 adds `Summarizer`
+and `compact_session`, which replaces the turns a session has outgrown
+its budget for with a bounded, provenance-carrying summary - not yet
+called from the session-saving path (Task 4's `app.py`); wiring exactly
+when compaction runs during a request is left for the task that finishes
+threading memory into the live pipeline.
 """
 from aico.memory.context_builder import (
     DEFAULT_MAX_MEMORY_TOKENS,
@@ -40,6 +44,14 @@ from aico.memory.store import (
     SqliteSessionStore,
     new_session_id,
 )
+from aico.memory.summarizer import (
+    DEFAULT_MAX_SUMMARY_TOKENS,
+    FakeSummarizer,
+    ModelGatewaySummarizer,
+    Summarizer,
+    SummarizerResult,
+    compact_session,
+)
 
 __all__ = [
     "SESSION_STATE_SCHEMA_VERSION",
@@ -64,4 +76,10 @@ __all__ = [
     "DEFAULT_MAX_MEMORY_TOKENS",
     "DEFAULT_MAX_RECENT_TURNS",
     "DEFAULT_MEMORY_BUDGET",
+    "Summarizer",
+    "SummarizerResult",
+    "FakeSummarizer",
+    "ModelGatewaySummarizer",
+    "compact_session",
+    "DEFAULT_MAX_SUMMARY_TOKENS",
 ]
