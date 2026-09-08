@@ -1,6 +1,6 @@
 {
   "generated_by": "python -m aico.evals.day07",
-  "generated_at": "2026-09-08T10:15:48.812574+00:00",
+  "generated_at": "2026-09-08T10:35:31.829288+00:00",
   "dataset": {
     "version": "1.0",
     "dataset_id": "golden_v1",
@@ -32,7 +32,11 @@
   },
   "model_based_metrics": {
     "groundedness_rate": 1.0,
-    "note": "Measured for real via aico.evals.groundedness.evaluate_groundedness against every GroundedAnswer, using a deterministic honest grader (well_behaved_verdict) rather than a live model - see evals/README.md Task 9 for why, and Task 4 for the evaluator itself."
+    "evaluator_gateway": "scripted",
+    "evaluator_model_aliases": [
+      "day07-well-behaved-grader"
+    ],
+    "note": "Measured for real via aico.evals.groundedness.evaluate_groundedness against every GroundedAnswer, using a deterministic honest grader (well_behaved_verdict) rather than a live model - see evals/README.md Task 9 for why, and Task 4 for the evaluator itself. Pass --groundedness-gateway live to grade with a real model instead (never used by CI)."
   },
   "split_breakdown": {
     "development": {
