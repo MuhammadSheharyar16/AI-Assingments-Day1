@@ -124,14 +124,16 @@ memory layer"):
        is no cited, evidence-backed content to record for one.
        `AskResponse.session_id` always reflects the resolved session,
        even when this last save step is skipped.
-    4. A concurrent write losing the race on this exact session
-       (`SessionConflictError`, Task 9's territory) does not fail the
-       request - the caller's answer was already correctly, independently
-       produced by Day 5 before this step ever runs, and Day 8's own rule
-       is that memory is supplementary context, not the source of truth
-       for an answer. The loss is only logged, never silently invisible;
-       Task 9 adds the bounded-retry policy that makes this rare in
-       practice.
+    4. A concurrent write losing the race on this exact session does not
+       fail the request - the caller's answer was already correctly,
+       independently produced by Day 5 before this step ever runs, and
+       Day 8's own rule is that memory is supplementary context, not the
+       source of truth for an answer. `_record_turn` calls
+       `memory_service.update_session` (Task 9), which retries the save
+       with a fresh reload a bounded number of times before giving up -
+       only exhausting that bound (rare, sustained contention) reaches
+       the log-and-continue path below; the ordinary single-conflict case
+       already recovered silently.
 
 Day 8 Task 7 IS wired - session memory now genuinely participates in
 answering, without ever becoming evidence:
@@ -252,11 +254,12 @@ def _record_turn(
     correlation_id: str,
 ) -> None:
     """Store Safe Turn Result / Update Session State. Never raises past
-    this point - a lost race on this session (Task 9's territory) must
-    not turn an already-correctly-produced answer into a failed request;
-    it is logged instead of silently disappearing. Session memory is
-    supplementary conversational context, not the source of truth this
-    request's answer depended on (Day 8's core rule)."""
+    this point - even after Task 9's bounded retries are exhausted, a
+    lost race on this session must not turn an already-correctly-produced
+    answer into a failed request; it is logged instead of silently
+    disappearing. Session memory is supplementary conversational context,
+    not the source of truth this request's answer depended on (Day 8's
+    core rule)."""
 
     now = datetime.now(UTC)
     turns = [
@@ -271,19 +274,28 @@ def _record_turn(
     if response.status is AskStatus.ANSWERED and response.answer is not None:
         turns.append(SessionTurn(turn_id=f"{request_id}-assistant", role=TurnRole.ASSISTANT, timestamp=now, content=response.answer))
 
-    updated = session.model_copy(update={"recent_turns": [*session.recent_turns, *turns]})
-    # Task 6 - a safe no-op whenever nothing exceeds the budget yet, so
-    # this can run on every turn rather than needing its own threshold
-    # check here (compact_session's own docstring).
-    compacted = compact_session(updated, summarizer, now=now)
+    def _mutate(current: SessionState) -> SessionState:
+        # `current` is reloaded fresh on every retry attempt (Task 9) -
+        # appending this call's own turns onto whatever is actually
+        # stored right now, not onto a possibly-stale copy, is what makes
+        # a concurrent writer's turn additive rather than overwritten.
+        appended = current.model_copy(update={"recent_turns": [*current.recent_turns, *turns]})
+        # Task 6 - a safe no-op whenever nothing exceeds the budget yet,
+        # so this can run on every turn rather than needing its own
+        # threshold check here (compact_session's own docstring).
+        return compact_session(appended, summarizer, now=now)
+
     try:
-        memory_service.save_session(identity, compacted)
+        memory_service.update_session(identity, session.session_id, _mutate)
     except SessionConflictError:
+        # Task 9's bounded retry (update_session) was exhausted - a rare,
+        # sustained-contention case, not the ordinary "detected once,
+        # retried once" path, which already recovered silently above.
         log_event(
             request_id=request_id,
             correlation_id=correlation_id,
             stage="session_turn_store",
-            outcome="conflict",
+            outcome="conflict_exhausted_retries",
             session_id=session.session_id,
         )
     except SessionNotFoundError:

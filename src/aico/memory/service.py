@@ -27,13 +27,38 @@ which proves the full case matrix from the assignment brief
 `different tenant/same-looking user`, a different session under the same
 owner, and a guessed/nonexistent id all denied identically) through this
 service, not only against the raw store.
+
+Day 8 Task 9 — `update_session()` adds bounded lost-update protection on
+top of `save_session()`'s bare optimistic-concurrency primitive. The
+store (Task 2) only ever DETECTS a stale write and rejects it
+(`SessionConflictError`) - it never retries, and never should, since it
+has no way to know what a caller's intended change even was. This method
+is the one place that RECOVERS from that rejection: it reloads the
+session's current state and re-applies the caller's own mutation on top
+of it, up to a small, fixed number of attempts - "two writers cannot
+silently overwrite each other's accepted turn" (Task 9) means the second
+writer's change must still land, not merely that the conflict was logged
+and dropped. `tests/test_day08_concurrency.py` proves this against a real
+conflict (not a mocked one) and proves the retry is bounded, not
+unbounded.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from aico.api.identity import TrustedIdentity
-from aico.memory.errors import SessionNotFoundError
+from aico.memory.errors import SessionConflictError, SessionNotFoundError
 from aico.memory.models import SessionState
 from aico.memory.store import DEFAULT_SESSION_TTL_SECONDS, SessionStore
+
+# Bounded, not unbounded (Task 9's own required behavior). 3 is enough to
+# absorb an ordinary handful of overlapping writers on one session without
+# looping indefinitely under sustained contention - see
+# `test_day08_concurrency.py::test_bounded_retry_gives_up_rather_than_looping_forever`
+# for what happens once this is exhausted: the caller sees the same
+# `SessionConflictError` `save_session` would have raised on a single
+# attempt, never a silent, indefinite retry.
+DEFAULT_MAX_SAVE_ATTEMPTS = 3
 
 
 class MemorySessionService:
@@ -102,3 +127,48 @@ class MemorySessionService:
         `load_session` otherwise."""
 
         self._store.expire(tenant_id=identity.tenant_id, user_id=identity.user_id, session_id=session_id)
+
+    def update_session(
+        self,
+        identity: TrustedIdentity,
+        session_id: str,
+        mutate: Callable[[SessionState], SessionState],
+        *,
+        max_attempts: int = DEFAULT_MAX_SAVE_ATTEMPTS,
+    ) -> SessionState:
+        """Load-mutate-save with bounded retry on a lost race (Task 9).
+
+        `mutate` receives the session's CURRENT state - freshly reloaded
+        from the store on every attempt, never the same stale object
+        twice - and returns the desired new state; it must be a pure
+        function of that input (e.g. "append these turns to whatever
+        `recent_turns` is right now"), never something that assumes a
+        particular version survived, because it may be invoked more than
+        once. This is what makes concurrent writers additive rather than
+        last-write-wins: if another writer's change is already reflected
+        in the state `mutate` sees on a retry, that writer's turn is
+        still there when this call's own change is layered on top of it -
+        "two writers cannot silently overwrite each other's accepted
+        turn."
+
+        Raises `SessionConflictError` if `max_attempts` is exhausted still
+        losing the race (`max_attempts` must be a positive integer) - a
+        bounded, documented policy (Task 9's own required behavior), never
+        an unbounded loop. Raises `SessionNotFoundError` immediately,
+        without retrying, if the session cannot be loaded at all (deleted/
+        expired/wrong owner) - retrying against a session that does not
+        exist could never succeed."""
+
+        if max_attempts <= 0:
+            raise ValueError("max_attempts must be positive")
+
+        last_conflict: SessionConflictError | None = None
+        for _ in range(max_attempts):
+            current = self.load_session(identity, session_id)
+            desired = mutate(current)
+            try:
+                return self.save_session(identity, desired)
+            except SessionConflictError as exc:
+                last_conflict = exc
+        assert last_conflict is not None  # max_attempts > 0, so the loop ran at least once
+        raise last_conflict

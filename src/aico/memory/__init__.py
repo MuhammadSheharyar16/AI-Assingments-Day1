@@ -7,16 +7,19 @@ Task 1 exports the versioned session-memory contracts. Task 2 adds the
 session-store abstraction (`SessionStore`) and its two implementations,
 plus the typed store failures. Task 3 adds `MemorySessionService`, the
 identity-bound seam application/API code actually resolves sessions
-through - see its module docstring for why isolation depends on this
-being the only entry point. Task 5 adds `build_memory_context`, the
-budget-bounded selection over a loaded session's summary/recent turns -
-see its module docstring for why rendering that into an actual prompt
-section stays Task 7's job, not this module's. Task 6 adds `Summarizer`
+through. Task 5 adds `build_memory_context`, the budget-bounded selection
+over a loaded session's summary/recent turns. Task 6 adds `Summarizer`
 and `compact_session`, which replaces the turns a session has outgrown
-its budget for with a bounded, provenance-carrying summary - not yet
-called from the session-saving path (Task 4's `app.py`); wiring exactly
-when compaction runs during a request is left for the task that finishes
-threading memory into the live pipeline.
+its budget for with a bounded, provenance-carrying summary. Task 7 wires
+both of those into `api/app.py`'s `/ask` handler and `rag/prompt_builder.py`'s
+SESSION MEMORY prompt section - memory now genuinely participates in
+answering, structurally unable to be treated as evidence (see
+`context_builder.py`/`summarizer.py`/`aico.rag.prompt_builder`'s own
+module docstrings for the full boundary rationale). Task 9 adds
+`MemorySessionService.update_session`, bounded lost-update protection on
+top of `save_session`'s bare optimistic-concurrency primitive - see its
+own docstring for why detection (the store, Task 2) and recovery (this
+method) are deliberately separate responsibilities.
 """
 from aico.memory.context_builder import (
     DEFAULT_MAX_MEMORY_TOKENS,
@@ -35,7 +38,7 @@ from aico.memory.models import (
     SessionTurn,
     TurnRole,
 )
-from aico.memory.service import MemorySessionService
+from aico.memory.service import DEFAULT_MAX_SAVE_ATTEMPTS, MemorySessionService
 from aico.memory.store import (
     DEFAULT_SESSION_DB_PATH,
     DEFAULT_SESSION_TTL_SECONDS,
@@ -69,6 +72,7 @@ __all__ = [
     "DEFAULT_SESSION_TTL_SECONDS",
     "DEFAULT_SESSION_DB_PATH",
     "MemorySessionService",
+    "DEFAULT_MAX_SAVE_ATTEMPTS",
     "MemoryBudget",
     "MemoryContext",
     "build_memory_context",
