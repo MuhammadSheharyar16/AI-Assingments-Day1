@@ -20,6 +20,7 @@ Day 6 API test files.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import pathlib
 
@@ -159,6 +160,175 @@ def test_payload_at_or_below_the_limit_is_not_rejected_for_size():
 
     assert resp.status_code == 200
     assert gateway.call_count == 1
+
+
+# ── Request size: missing/lying/chunked Content-Length ───────────────────
+#
+# `httpx`/`TestClient` (used everywhere above) always sets an honest
+# Content-Length itself - it cannot send the adversarial requests below.
+# These drive `app` directly over a raw ASGI scope/receive/send trio, the
+# same technique `test_day06_cancellation.py` uses for behavior TestClient
+# cannot exercise, to prove the streamed-byte-count guard
+# (`request_protection._read_and_replay_within_limit`) - not just the
+# Content-Length header check - is what stops an oversize body reaching
+# `GroundedAnswerService` when a client omits, understates, or cannot
+# supply (chunked transfer-encoding) that header.
+
+
+def _run_ask_over_raw_asgi(gateway, body: bytes, headers: list[tuple[bytes, bytes]], *, chunk_size: int | None = None):
+    """Drives one POST /ask through `app` over raw ASGI. `chunk_size` set
+    splits `body` into that many bytes per `http.request` message (more
+    than one message, `more_body=True` until the last) - otherwise the
+    whole body is delivered in a single message, exactly like a normal
+    request. Every case here is rejected by `RequestProtectionMiddleware`
+    itself, before `run_cancellable`/the answer service ever runs, so
+    there is no client-disconnect timing to race - `receive()` need never
+    be called again after the body is rejected or fully delivered."""
+
+    app.dependency_overrides[get_answer_service] = lambda: GroundedAnswerService(
+        gateway=gateway, retriever=_fake_retriever
+    )
+    app.dependency_overrides[get_trusted_identity] = lambda: _VALID_IDENTITY
+
+    chunks = [body[i : i + chunk_size] for i in range(0, len(body), chunk_size)] if chunk_size else [body]
+    chunks = chunks or [b""]
+    index = 0
+
+    async def receive():
+        nonlocal index
+        chunk = chunks[index]
+        index += 1
+        return {"type": "http.request", "body": chunk, "more_body": index < len(chunks)}
+
+    sent: list[dict] = []
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/ask",
+        "raw_path": b"/ask",
+        "query_string": b"",
+        "root_path": "",
+        "headers": headers,
+        "client": ("testclient", 1234),
+        "server": ("testserver", 80),
+        "state": {},
+    }
+
+    asyncio.run(app(scope, receive, send))
+
+    status = next(m["status"] for m in sent if m["type"] == "http.response.start")
+    body_bytes = b"".join(m["body"] for m in sent if m["type"] == "http.response.body")
+    return status, json.loads(body_bytes)
+
+
+def _oversize_ask_body() -> bytes:
+    oversized_question = "x" * (MAX_REQUEST_BODY_BYTES + 1024)
+    return json.dumps({"question": oversized_question}).encode("utf-8")
+
+
+def test_missing_content_length_with_oversize_body_is_still_rejected():
+    """A client that omits `Content-Length` entirely (legal HTTP) must not
+    get an oversize body past the ceiling just because the header-only
+    fast path in `RequestProtectionMiddleware` has nothing to check."""
+
+    gateway = FakeGateway(_ANSWERED_JSON)
+    status, body_json = _run_ask_over_raw_asgi(gateway, _oversize_ask_body(), [(b"content-type", b"application/json")])
+
+    assert status == 413
+    assert gateway.call_count == 0
+    _assert_error_envelope(body_json)
+    assert body_json["error_code"] == "payload_too_large"
+
+
+def test_lying_content_length_with_oversize_body_is_still_rejected():
+    """A client that declares a small `Content-Length` (e.g. `1`) while
+    actually streaming far more must not get the oversize body past the
+    ceiling just because the declared header happened to look fine."""
+
+    gateway = FakeGateway(_ANSWERED_JSON)
+    headers = [(b"content-type", b"application/json"), (b"content-length", b"1")]
+    status, body_json = _run_ask_over_raw_asgi(gateway, _oversize_ask_body(), headers)
+
+    assert status == 413
+    assert gateway.call_count == 0
+    _assert_error_envelope(body_json)
+    assert body_json["error_code"] == "payload_too_large"
+
+
+def test_chunked_transfer_encoding_with_oversize_body_is_still_rejected():
+    """Chunked transfer-encoding carries no `Content-Length` at all, so
+    this proves the streamed-byte-count guard - not the header check -
+    is what actually stops it, across several delivered messages."""
+
+    gateway = FakeGateway(_ANSWERED_JSON)
+    headers = [(b"content-type", b"application/json"), (b"transfer-encoding", b"chunked")]
+    status, body_json = _run_ask_over_raw_asgi(gateway, _oversize_ask_body(), headers, chunk_size=4096)
+
+    assert status == 413
+    assert gateway.call_count == 0
+    _assert_error_envelope(body_json)
+    assert body_json["error_code"] == "payload_too_large"
+
+
+# ── Direct unit tests for the streamed-byte-count guard ──────────────────
+
+
+def test_read_and_replay_within_limit_reproduces_a_multi_chunk_body_untouched():
+    """A within-limit body delivered across several `http.request`
+    messages must come back out of the replay channel exactly as it went
+    in - proves the guard is transparent to a normal request, whatever
+    the underlying server happened to split into wire chunks."""
+    from aico.api.request_protection import _read_and_replay_within_limit
+
+    chunks = [b"abc", b"def", b"ghi"]
+    index = 0
+
+    async def receive():
+        nonlocal index
+        message = {"type": "http.request", "body": chunks[index], "more_body": index < len(chunks) - 1}
+        index += 1
+        return message
+
+    async def run() -> bytes:
+        replay, total = await _read_and_replay_within_limit(receive, max_body_bytes=100)
+        assert total == 9
+        assert replay is not None
+        collected = b""
+        while True:
+            message = await replay()
+            collected += message["body"]
+            if not message.get("more_body", False):
+                break
+        return collected
+
+    assert asyncio.run(run()) == b"abcdefghi"
+
+
+def test_read_and_replay_within_limit_stops_promptly_once_the_ceiling_is_crossed():
+    """A body with no natural end that is already over the ceiling must
+    not be read indefinitely - the guard should stop within a couple of
+    messages of crossing the limit, not buffer the whole (adversarial,
+    effectively unbounded) stream first."""
+    from aico.api.request_protection import _read_and_replay_within_limit
+
+    calls = {"count": 0}
+
+    async def receive():
+        calls["count"] += 1
+        return {"type": "http.request", "body": b"0123456789", "more_body": True}
+
+    replay, total = asyncio.run(_read_and_replay_within_limit(receive, max_body_bytes=25))
+
+    assert replay is None
+    assert total > 25
+    assert calls["count"] <= 4
 
 
 # ── Invalid request body ─────────────────────────────────────────────────

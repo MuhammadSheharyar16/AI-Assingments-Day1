@@ -722,7 +722,12 @@ Needs `AICO_AUTH_JWT_SECRET` (Setup, above) to accept any request at all.
 - **Content-Type / size** (`src/aico/api/request_protection.py`): a pure
   ASGI middleware rejects an unsupported Content-Type or a body over the
   documented 32 KiB ceiling (`MAX_REQUEST_BODY_BYTES`) before routing or
-  `GroundedAnswerService` ever run.
+  `GroundedAnswerService` ever run. The size ceiling is enforced twice: a
+  fast `Content-Length`-based rejection, then a streamed-byte-count guard
+  that counts bytes actually delivered off the wire regardless of what
+  (or whether) `Content-Length` claimed — so a request that omits the
+  header, understates it, or arrives via chunked transfer-encoding still
+  cannot get an oversize body past this middleware.
 - **Errors** (`src/aico/api/errors.py`): one shared `ErrorResponse`
   envelope (`error_code`/`message`/`request_id`/`correlation_id`) for
   every 4xx/5xx source — identity rejection, content-type/size,
