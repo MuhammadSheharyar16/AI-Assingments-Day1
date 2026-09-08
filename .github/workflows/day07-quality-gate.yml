@@ -58,11 +58,13 @@ jobs:
         run: uv run ruff check .
 
       # Not one of the four required commands, but a necessary
-      # precondition for both of them: data/index/ is a gitignored build
-      # output (never committed - see README "Run the tests"), and two
-      # existing test files plus the Day 7 regression gate itself all need
-      # the real index. A clean checkout has none, so it is built here,
-      # identically to the documented local command.
+      # precondition for both of them: two existing test files plus the
+      # Day 7 regression gate itself all need the real index.
+      # data/index/index.json is committed (see README "Run the tests"),
+      # but this step rebuilds it from data/documents/ fresh anyway,
+      # identically to the documented local command - so CI never
+      # silently passes against a committed index.json that drifted from
+      # an edited corpus in the same commit.
       - name: Build the retrieval index
         run: uv run python -m aico.retrieval.ingest --input data/documents --out data/index --tokens 300 --overlap 50
 
