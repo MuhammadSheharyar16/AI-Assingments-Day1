@@ -35,6 +35,33 @@ values, model aliases, budget status, token-usage key names) - never a
 user question, retrieved evidence, a model completion, or anything
 else with unbounded cardinality (working rule: "Avoid unbounded/
 high-cardinality labels such as full user questions").
+
+Day 8 Task 11 adds session/memory instruments, same rules:
+
+    aico_session_event_total           counter     session store operations
+                                                    by type (created/loaded/
+                                                    cleared/deleted/expired) -
+                                                    session_id/tenant/user are
+                                                    never labels (unbounded
+                                                    cardinality)
+    aico_session_isolation_denial_total counter    denied session accesses,
+                                                    labelled only by
+                                                    SessionNotFoundError's
+                                                    already-sanitized `reason`
+                                                    ("not_found"/"expired") -
+                                                    never which tenant/session
+                                                    was denied
+    aico_memory_context_tokens         histogram   MemoryContext.token_count
+                                                    built per request - a
+                                                    count, never the memory
+                                                    text itself
+    aico_memory_context_recent_turns   histogram   count of recent turns
+                                                    included per request
+    aico_compaction_total              counter     session-save operations,
+                                                    labelled by whether
+                                                    compact_session actually
+                                                    changed anything
+                                                    ("occurred": "true"/"false")
 """
 from __future__ import annotations
 
@@ -71,6 +98,21 @@ _gateway_tokens_total = _meter.create_counter(
 _gateway_retries_total = _meter.create_counter(
     name="aico_gateway_retries_total", description="Model Gateway retry count"
 )
+_session_event_total = _meter.create_counter(
+    name="aico_session_event_total", description="Count of session store operations by type"
+)
+_session_isolation_denial_total = _meter.create_counter(
+    name="aico_session_isolation_denial_total", description="Count of denied session accesses by reason"
+)
+_memory_context_tokens = _meter.create_histogram(
+    name="aico_memory_context_tokens", unit="tokens", description="Token count of the memory context built per request"
+)
+_memory_context_recent_turns = _meter.create_histogram(
+    name="aico_memory_context_recent_turns", description="Recent-turn count included in the memory context built per request"
+)
+_compaction_total = _meter.create_counter(
+    name="aico_compaction_total", description="Count of session-save operations, by whether compaction actually occurred"
+)
 
 
 def record_request_latency(latency_ms: float, *, status_code: int) -> None:
@@ -100,6 +142,30 @@ def record_gateway_call(metadata: CallMetadata) -> None:
     if metadata.token_usage:
         for token_type, count in metadata.token_usage.items():
             _gateway_tokens_total.add(count, {"model_alias": metadata.model_alias, "token_type": token_type})
+
+
+def record_session_event(event: str) -> None:
+    """`event` is one of "created"/"loaded"/"cleared"/"deleted"/"expired"
+    (Day 8 Task 11) - a fixed, bounded vocabulary, never a session id."""
+
+    _session_event_total.add(1, {"event": event})
+
+
+def record_isolation_denial(reason: str) -> None:
+    """`reason` is `SessionNotFoundError.reason` ("not_found"/"expired") -
+    already the safe, non-disclosing category Task 3 designed for exactly
+    this telemetry use, never which tenant/session was denied."""
+
+    _session_isolation_denial_total.add(1, {"reason": reason})
+
+
+def record_memory_context(*, token_count: int, recent_turn_count: int) -> None:
+    _memory_context_tokens.record(token_count)
+    _memory_context_recent_turns.record(recent_turn_count)
+
+
+def record_compaction(*, occurred: bool) -> None:
+    _compaction_total.add(1, {"occurred": "true" if occurred else "false"})
 
 
 def get_metrics_snapshot():

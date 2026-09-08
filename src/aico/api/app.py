@@ -158,6 +158,33 @@ answering, without ever becoming evidence:
        default, `FakeSummarizer` - see `dependencies.py`'s module
        docstring for why compaction deliberately does not default to a
        real model call the way the main answer path does.
+
+Day 8 Task 11 IS wired - sanitized session/memory telemetry, never raw
+turn/summary content:
+
+    1. Session resolution, memory-context building, and turn storage all
+       moved INSIDE the `api.ask` span (they used to straddle it) - every
+       memory operation for this request now shares its one trace_id,
+       fulfilling "preserve Day 6 correlation context across memory
+       operations" at the trace level, not only via the request_id/
+       correlation_id strings every `log_event` call already carried.
+    2. `_resolve_session` emits one `stage="session_lifecycle"` log line
+       per outcome (created/loaded/denied) - a denial's `error_category`
+       is `SessionNotFoundError.reason` ("not_found"/"expired"), Task 3's
+       already-safe "isolation denial category", never which tenant/
+       session was denied. `_record_turn` emits one more on save,
+       carrying session version, recent-turn count, whether compaction
+       actually occurred, and the resulting summary's source-turn count -
+       counts and booleans only.
+    3. `dependencies.get_memory_service` wraps the store in
+       `MetricsSessionStore` (instrumentation.py), the same wrap-at-
+       assembly pattern Task 8 already uses for gateway/retriever -
+       session create/load/clear/delete/expire and isolation-denial
+       counts are recorded there, at the one place that covers every
+       caller of the store, not only `/ask`. Memory-context token/recent-
+       turn counts and the compaction-occurred count are recorded here in
+       `app.py` instead, where those values are already computed
+       (Task 5/6) - `MetricsSessionStore` has no way to know them.
 """
 from __future__ import annotations
 
@@ -182,7 +209,7 @@ from aico.memory.models import SessionState, SessionTurn, TurnRole
 from aico.memory.service import MemorySessionService
 from aico.memory.summarizer import Summarizer, compact_session
 from aico.observability.logging import configure_logging, log_event
-from aico.observability.metrics import record_request_outcome
+from aico.observability.metrics import record_compaction, record_memory_context, record_request_outcome
 from aico.observability.telemetry import configure_tracing
 from aico.rag.answer_service import GroundedAnswerService
 
@@ -227,19 +254,59 @@ class SessionAccessError(ApiError):
 
 
 def _resolve_session(
-    identity: TrustedIdentity, requested_session_id: str | None, memory_service: MemorySessionService
+    identity: TrustedIdentity,
+    requested_session_id: str | None,
+    memory_service: MemorySessionService,
+    *,
+    request_id: str,
+    correlation_id: str,
 ) -> SessionState:
     """Session Resolution / Load Bounded Session State (build_outcome flow
     diagram). A supplied id must belong to `identity`; omitting it starts
     a fresh session for `identity` - never for anyone else, since ownership
-    here can only ever come from `identity`, not from the request body."""
+    here can only ever come from `identity`, not from the request body.
+
+    Day 8 Task 11 - each outcome (created/loaded/denied) emits one
+    `stage="session_lifecycle"` log line, carrying only sanitized counts/
+    categories (session_id, version, recent-turn count; on denial,
+    `SessionNotFoundError.reason` alone - Task 3's already-safe "isolation
+    denial category", never which tenant/session was denied) - never turn
+    or summary content."""
 
     if requested_session_id is None:
-        return memory_service.create_session(identity)
+        session = memory_service.create_session(identity)
+        log_event(
+            request_id=request_id,
+            correlation_id=correlation_id,
+            stage="session_lifecycle",
+            outcome="created",
+            session_id=session.session_id,
+            session_version=session.version,
+        )
+        return session
+
     try:
-        return memory_service.load_session(identity, requested_session_id)
+        session = memory_service.load_session(identity, requested_session_id)
     except SessionNotFoundError as exc:
+        log_event(
+            request_id=request_id,
+            correlation_id=correlation_id,
+            stage="session_lifecycle",
+            outcome="denied",
+            error_category=exc.reason,
+        )
         raise SessionAccessError() from exc
+
+    log_event(
+        request_id=request_id,
+        correlation_id=correlation_id,
+        stage="session_lifecycle",
+        outcome="loaded",
+        session_id=session.session_id,
+        session_version=session.version,
+        recent_turn_count=len(session.recent_turns),
+    )
+    return session
 
 
 def _record_turn(
@@ -274,6 +341,12 @@ def _record_turn(
     if response.status is AskStatus.ANSWERED and response.answer is not None:
         turns.append(SessionTurn(turn_id=f"{request_id}-assistant", role=TurnRole.ASSISTANT, timestamp=now, content=response.answer))
 
+    # Task 11 - captured from inside _mutate (identity check against
+    # compact_session's own no-op contract - `is not` is exact, not an
+    # inference from before/after summary_version) so it reflects
+    # whichever attempt actually got saved, retries included.
+    compaction = {"occurred": False}
+
     def _mutate(current: SessionState) -> SessionState:
         # `current` is reloaded fresh on every retry attempt (Task 9) -
         # appending this call's own turns onto whatever is actually
@@ -283,10 +356,12 @@ def _record_turn(
         # Task 6 - a safe no-op whenever nothing exceeds the budget yet,
         # so this can run on every turn rather than needing its own
         # threshold check here (compact_session's own docstring).
-        return compact_session(appended, summarizer, now=now)
+        compacted = compact_session(appended, summarizer, now=now)
+        compaction["occurred"] = compacted is not appended
+        return compacted
 
     try:
-        memory_service.update_session(identity, session.session_id, _mutate)
+        saved = memory_service.update_session(identity, session.session_id, _mutate)
     except SessionConflictError:
         # Task 9's bounded retry (update_session) was exhausted - a rare,
         # sustained-contention case, not the ordinary "detected once,
@@ -294,10 +369,11 @@ def _record_turn(
         log_event(
             request_id=request_id,
             correlation_id=correlation_id,
-            stage="session_turn_store",
+            stage="session_lifecycle",
             outcome="conflict_exhausted_retries",
             session_id=session.session_id,
         )
+        return
     except SessionNotFoundError:
         # The session expired/was cleared between resolution and this
         # save - the answer above was still valid and correctly produced;
@@ -305,10 +381,27 @@ def _record_turn(
         log_event(
             request_id=request_id,
             correlation_id=correlation_id,
-            stage="session_turn_store",
+            stage="session_lifecycle",
             outcome="session_unavailable",
             session_id=session.session_id,
         )
+        return
+
+    # Task 11 - "compaction occurred", "session version", "recent-turn
+    # count", "summary source-turn count": counts/booleans only, never
+    # turn or summary text.
+    record_compaction(occurred=compaction["occurred"])
+    log_event(
+        request_id=request_id,
+        correlation_id=correlation_id,
+        stage="session_lifecycle",
+        outcome="saved",
+        session_id=saved.session_id,
+        session_version=saved.version,
+        recent_turn_count=len(saved.recent_turns),
+        compaction_occurred=compaction["occurred"],
+        summary_source_turn_count=len(saved.summary.source_turn_ids) if saved.summary else 0,
+    )
 
 
 @app.post(
@@ -333,17 +426,6 @@ async def ask(
     # verification independently of this value.
     del _bearer
 
-    # Session Resolution / Load Bounded Session State (Day 8 Task 4) -
-    # before the pipeline runs, using only the trusted identity and the
-    # caller-supplied (untrusted) session_id, never anything else from the
-    # request body.
-    session = _resolve_session(identity, request.session_id, memory_service)
-    # Build Memory Context (Day 8 Task 5/7) - bounded, budgeted, and kept
-    # structurally separate from evidence: this is data, handed to the
-    # pipeline as one extra argument, never something that alters policy,
-    # retrieval or citation validation (see module docstring / Task 7).
-    memory_context = build_memory_context(session)
-
     start = time.monotonic()
     with _tracer.start_as_current_span("api.ask") as span:
         # The one place request_id/correlation_id (Task 3, HTTP-level IDs)
@@ -351,7 +433,41 @@ async def ask(
         # docstring. Never the question/answer/evidence.
         span.set_attribute("request_id", context.request_id)
         span.set_attribute("correlation_id", context.correlation_id)
+
+        # Session Resolution / Load Bounded Session State (Day 8 Task 4) -
+        # inside this span, and every memory operation below stays inside
+        # it too, so all of them share the request's one trace_id (Day 8
+        # Task 11: "preserve Day 6 correlation context across memory
+        # operations") - using only the trusted identity and the
+        # caller-supplied (untrusted) session_id, never anything else
+        # from the request body.
+        session = _resolve_session(
+            identity, request.session_id, memory_service, request_id=context.request_id, correlation_id=context.correlation_id
+        )
         span.set_attribute("session_id", session.session_id)
+        span.set_attribute("session.version", session.version)
+
+        # Build Memory Context (Day 8 Task 5/7) - bounded, budgeted, and
+        # kept structurally separate from evidence: this is data, handed
+        # to the pipeline as one extra argument, never something that
+        # alters policy, retrieval or citation validation (see module
+        # docstring / Task 7). Task 11's "memory token count"/"recent-turn
+        # count" telemetry - counts only, never the memory text itself.
+        memory_context = build_memory_context(session)
+        record_memory_context(token_count=memory_context.token_count, recent_turn_count=len(memory_context.included_turns))
+        span.set_attribute("memory.token_count", memory_context.token_count)
+        span.set_attribute("memory.recent_turn_count", len(memory_context.included_turns))
+        span.set_attribute("memory.summary_present", memory_context.summary is not None)
+        log_event(
+            request_id=context.request_id,
+            correlation_id=context.correlation_id,
+            stage="memory_context",
+            outcome="built",
+            session_id=session.session_id,
+            memory_token_count=memory_context.token_count,
+            memory_recent_turn_count=len(memory_context.included_turns),
+            memory_summary_present=memory_context.summary is not None,
+        )
 
         # Day 5's pipeline - unmodified except for the one additional,
         # optional memory_context argument (Task 7; see module docstring).
@@ -368,33 +484,34 @@ async def ask(
         if response.category:
             span.set_attribute("response.category", response.category)
 
-    # response.status/.category are already the public, pre-sanitized
-    # AskResponse fields (contracts.py) - never the question, the answer
-    # text, or retrieved evidence.
-    latency_ms = (time.monotonic() - start) * 1000
-    log_event(
-        request_id=context.request_id,
-        correlation_id=context.correlation_id,
-        stage="ask_pipeline",
-        outcome=response.status.value,
-        error_category=response.category,
-        latency_ms=latency_ms,
-        session_id=session.session_id,
-    )
-    record_request_outcome(response.status.value, response.category)
+        # response.status/.category are already the public, pre-sanitized
+        # AskResponse fields (contracts.py) - never the question, the
+        # answer text, or retrieved evidence.
+        latency_ms = (time.monotonic() - start) * 1000
+        log_event(
+            request_id=context.request_id,
+            correlation_id=context.correlation_id,
+            stage="ask_pipeline",
+            outcome=response.status.value,
+            error_category=response.category,
+            latency_ms=latency_ms,
+            session_id=session.session_id,
+        )
+        record_request_outcome(response.status.value, response.category)
 
-    # Store Safe Turn Result / Update Session State (Day 8 Task 4) - after
-    # the response is fully built, never blocking the caller's answer on
-    # a lost concurrent write (see _record_turn's docstring).
-    _record_turn(
-        identity,
-        session,
-        question=request.question,
-        response=response,
-        memory_service=memory_service,
-        summarizer=summarizer,
-        request_id=context.request_id,
-        correlation_id=context.correlation_id,
-    )
+        # Store Safe Turn Result / Update Session State (Day 8 Task 4) -
+        # after the response is fully built, never blocking the caller's
+        # answer on a lost concurrent write (see _record_turn's
+        # docstring). Still inside this span - Task 11.
+        _record_turn(
+            identity,
+            session,
+            question=request.question,
+            response=response,
+            memory_service=memory_service,
+            summarizer=summarizer,
+            request_id=context.request_id,
+            correlation_id=context.correlation_id,
+        )
 
     return response

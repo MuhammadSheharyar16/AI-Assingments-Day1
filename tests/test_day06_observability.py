@@ -47,6 +47,18 @@ are process-global cumulative counters, so most assertions use a
 before/after delta rather than an absolute value, since other tests in
 the same process may have already recorded to the same metric; a few use
 a per-test-unique `model_alias` label instead, where that is simpler.
+
+Day 8 Task 11 (own section near the end of this file) extends all three
+of the above to session/memory telemetry - `MetricsSessionStore`
+(instrumentation.py) and `app.py`'s `stage="session_lifecycle"`/
+`"memory_context"` log events, `aico_session_event_total`/
+`aico_session_isolation_denial_total`/`aico_memory_context_*`/
+`aico_compaction_total` metrics, and the `api.ask` span's new
+`session_id`/`session.version`/`memory.*` attributes. It has no
+dedicated file of its own in the Day 8 required structure (like Task 8's
+expiry/reset, folded into `test_day08_session_lifecycle.py`) - this is
+the project's one established observability test file, Day-numbered by
+when it was created, not by what it may only ever cover.
 """
 from __future__ import annotations
 
@@ -54,13 +66,21 @@ import json
 import logging
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 
 from aico.api.app import app
-from aico.api.dependencies import get_answer_service
+from aico.api.dependencies import get_answer_service, get_session_store
 from aico.api.identity import IdentityError, TrustedIdentity, get_trusted_identity
-from aico.api.instrumentation import MetricsGateway, MetricsRetriever
-from aico.observability.metrics import get_metrics_snapshot, record_cache_event
+from aico.api.instrumentation import MetricsGateway, MetricsRetriever, MetricsSessionStore
+from aico.memory.errors import SessionNotFoundError
+from aico.memory.store import InMemorySessionStore
+from aico.observability.metrics import (
+    get_metrics_snapshot,
+    record_cache_event,
+    record_compaction,
+    record_memory_context,
+)
 from aico.observability.telemetry import clear_finished_spans, get_finished_spans
 from aico.platform.model_gateway import CallMetadata, ChatRequest, ChatResult
 from aico.rag.answer_service import GroundedAnswerService
@@ -627,3 +647,344 @@ def test_one_correlation_id_links_the_response_body_the_log_lines_and_every_span
     assert root.attributes["correlation_id"] == "corr-propagation-proof-1"
     trace_ids = {s.context.trace_id for s in spans}
     assert trace_ids == {root.context.trace_id}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Day 8 Task 11 — session/memory telemetry
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _client_with_store(store: InMemorySessionStore) -> TestClient:
+    app.dependency_overrides[get_answer_service] = lambda: GroundedAnswerService(
+        gateway=FakeGateway(_ANSWERED_JSON), retriever=_fake_retriever
+    )
+    app.dependency_overrides[get_trusted_identity] = lambda: _VALID_IDENTITY
+    app.dependency_overrides[get_session_store] = lambda: store
+    return TestClient(app)
+
+
+# ── Structured logging ────────────────────────────────────────────────
+
+
+def test_session_created_loaded_and_saved_emit_session_lifecycle_events(caplog):
+    caplog.set_level(logging.INFO, logger="aico.api")
+    store = InMemorySessionStore()
+    client = _client_with_store(store)
+
+    first = client.post("/ask", json={"question": _SECRET_QUESTION})
+    session_id = first.json()["session_id"]
+    second = client.post("/ask", json={"question": _SECRET_QUESTION, "session_id": session_id})
+    assert second.status_code == 200
+
+    lifecycle_events = [p for p in _log_payloads(caplog) if p["stage"] == "session_lifecycle"]
+    created = [e for e in lifecycle_events if e["outcome"] == "created"]
+    loaded = [e for e in lifecycle_events if e["outcome"] == "loaded"]
+    saved = [e for e in lifecycle_events if e["outcome"] == "saved"]
+
+    assert len(created) == 1
+    assert created[0]["session_id"] == session_id
+    assert created[0]["session_version"] == 1
+
+    assert len(loaded) == 1
+    assert loaded[0]["session_id"] == session_id
+    assert loaded[0]["recent_turn_count"] == 2  # turn 1's user+assistant turns, already saved by then
+
+    assert len(saved) == 2  # one per request
+    for event in saved:
+        assert event["session_id"] == session_id
+        assert "session_version" in event
+        assert "recent_turn_count" in event
+        assert "compaction_occurred" in event
+        assert "summary_source_turn_count" in event
+
+
+def test_denied_session_access_logs_the_isolation_denial_category(caplog):
+    caplog.set_level(logging.INFO, logger="aico.api")
+    store = InMemorySessionStore()
+    client = _client_with_store(store)
+
+    resp = client.post("/ask", json={"question": _SECRET_QUESTION, "session_id": "SES-never-created"})
+    assert resp.status_code == 404
+
+    denied = [p for p in _log_payloads(caplog) if p["stage"] == "session_lifecycle" and p["outcome"] == "denied"]
+    assert len(denied) == 1
+    assert denied[0]["error_category"] == "not_found"  # Task 3's isolation-denial category, reused for Task 11 telemetry
+    assert "session_id" not in denied[0]  # never resolved - nothing to name
+
+
+def test_memory_context_built_event_carries_token_and_turn_counts(caplog):
+    caplog.set_level(logging.INFO, logger="aico.api")
+    store = InMemorySessionStore()
+    client = _client_with_store(store)
+
+    first = client.post("/ask", json={"question": _SECRET_QUESTION})
+    session_id = first.json()["session_id"]
+    caplog.clear()
+    second = client.post("/ask", json={"question": _SECRET_QUESTION, "session_id": session_id})
+    assert second.status_code == 200
+
+    memory_events = [p for p in _log_payloads(caplog) if p["stage"] == "memory_context"]
+    assert len(memory_events) == 1
+    event = memory_events[0]
+    assert event["outcome"] == "built"
+    assert event["session_id"] == session_id
+    assert event["memory_token_count"] > 0  # turn 1's Q+A are now in memory for turn 2
+    assert event["memory_recent_turn_count"] == 2
+    assert event["memory_summary_present"] is False
+
+
+def test_first_request_on_a_new_session_has_an_empty_memory_context(caplog):
+    caplog.set_level(logging.INFO, logger="aico.api")
+    store = InMemorySessionStore()
+    client = _client_with_store(store)
+
+    resp = client.post("/ask", json={"question": _SECRET_QUESTION})
+    assert resp.status_code == 200
+
+    event = next(p for p in _log_payloads(caplog) if p["stage"] == "memory_context")
+    assert event["memory_token_count"] == 0
+    assert event["memory_recent_turn_count"] == 0
+
+
+def test_session_and_memory_logs_never_contain_raw_turn_content(caplog):
+    caplog.set_level(logging.INFO, logger="aico.api")
+    store = InMemorySessionStore()
+    client = _client_with_store(store)
+
+    first = client.post("/ask", json={"question": _SECRET_QUESTION})
+    session_id = first.json()["session_id"]
+    client.post("/ask", json={"question": _SECRET_QUESTION, "session_id": session_id})
+
+    log_text = _all_log_text(caplog)
+    assert _SECRET_QUESTION not in log_text
+    assert _SECRET_EVIDENCE not in log_text
+    assert _SECRET_ANSWER not in log_text
+
+
+# ── Metrics ──────────────────────────────────────────────────────────
+
+
+def test_metrics_session_store_records_created_and_loaded_events():
+    store = MetricsSessionStore(InMemorySessionStore())
+    before_created = _counter_value(get_metrics_snapshot(), "aico_session_event_total", event="created")
+    before_loaded = _counter_value(get_metrics_snapshot(), "aico_session_event_total", event="loaded")
+
+    session = store.create(tenant_id="TENANT-A", user_id="USER-1")
+    reloaded = store.get(tenant_id="TENANT-A", user_id="USER-1", session_id=session.session_id)
+
+    assert reloaded.session_id == session.session_id  # wrapper is transparent - real result still returned
+    data = get_metrics_snapshot()
+    assert _counter_value(data, "aico_session_event_total", event="created") == before_created + 1
+    assert _counter_value(data, "aico_session_event_total", event="loaded") == before_loaded + 1
+
+
+def test_metrics_session_store_records_cleared_and_deleted_events():
+    store = MetricsSessionStore(InMemorySessionStore())
+    session = store.create(tenant_id="TENANT-A", user_id="USER-1")
+    before_cleared = _counter_value(get_metrics_snapshot(), "aico_session_event_total", event="cleared")
+
+    store.clear(tenant_id="TENANT-A", user_id="USER-1", session_id=session.session_id)
+
+    assert _counter_value(get_metrics_snapshot(), "aico_session_event_total", event="cleared") == before_cleared + 1
+
+    before_deleted = _counter_value(get_metrics_snapshot(), "aico_session_event_total", event="deleted")
+    store.delete(tenant_id="TENANT-A", user_id="USER-1", session_id=session.session_id)
+    assert _counter_value(get_metrics_snapshot(), "aico_session_event_total", event="deleted") == before_deleted + 1
+
+
+def test_metrics_session_store_records_isolation_denial_and_still_raises():
+    store = MetricsSessionStore(InMemorySessionStore())
+    before = _counter_value(get_metrics_snapshot(), "aico_session_isolation_denial_total", reason="not_found")
+
+    with pytest.raises(SessionNotFoundError):
+        store.get(tenant_id="TENANT-A", user_id="USER-1", session_id="SES-never-created")
+
+    after = _counter_value(get_metrics_snapshot(), "aico_session_isolation_denial_total", reason="not_found")
+    assert after == before + 1
+
+
+def test_metrics_session_store_records_expired_denial_with_its_own_reason():
+    from datetime import UTC, datetime, timedelta
+
+    class _AdvanceableClock:
+        def __init__(self, now):
+            self.now = now
+
+        def __call__(self):
+            return self.now
+
+    clock = _AdvanceableClock(datetime(2026, 1, 1, tzinfo=UTC))
+    store = MetricsSessionStore(InMemorySessionStore(clock=clock))
+    session = store.create(tenant_id="TENANT-A", user_id="USER-1", ttl_seconds=1.0)
+    clock.now += timedelta(seconds=2)
+
+    before = _counter_value(get_metrics_snapshot(), "aico_session_isolation_denial_total", reason="expired")
+    with pytest.raises(SessionNotFoundError):
+        store.get(tenant_id="TENANT-A", user_id="USER-1", session_id=session.session_id)
+    after = _counter_value(get_metrics_snapshot(), "aico_session_isolation_denial_total", reason="expired")
+    assert after == before + 1
+
+
+def test_metrics_session_store_save_is_not_double_counted_as_an_event():
+    # `save` is deliberately unwrapped (instrumentation.py's own
+    # docstring) - app.py records session_lifecycle="saved" itself, where
+    # version/compaction info is actually available.
+    inner = InMemorySessionStore()
+    store = MetricsSessionStore(inner)
+    session = store.create(tenant_id="TENANT-A", user_id="USER-1")
+
+    before = get_metrics_snapshot()
+    saved_events_before = sum(
+        p.value
+        for rm in before.resource_metrics
+        for sm in rm.scope_metrics
+        for m in sm.metrics
+        if m.name == "aico_session_event_total"
+        for p in m.data.data_points
+        if p.attributes.get("event") == "saved"
+    )
+    store.save(session)
+    after = get_metrics_snapshot()
+    saved_events_after = sum(
+        p.value
+        for rm in after.resource_metrics
+        for sm in rm.scope_metrics
+        for m in sm.metrics
+        if m.name == "aico_session_event_total"
+        for p in m.data.data_points
+        if p.attributes.get("event") == "saved"
+    )
+    assert saved_events_after == saved_events_before == 0  # no "saved" label was ever recorded by this wrapper
+
+
+def test_record_memory_context_updates_both_histograms():
+    before_tok, _ = _histogram_count_sum(get_metrics_snapshot(), "aico_memory_context_tokens")
+    before_turns, _ = _histogram_count_sum(get_metrics_snapshot(), "aico_memory_context_recent_turns")
+
+    record_memory_context(token_count=42, recent_turn_count=3)
+
+    after_tok, _ = _histogram_count_sum(get_metrics_snapshot(), "aico_memory_context_tokens")
+    after_turns, _ = _histogram_count_sum(get_metrics_snapshot(), "aico_memory_context_recent_turns")
+    assert after_tok == before_tok + 1
+    assert after_turns == before_turns + 1
+
+
+def test_record_compaction_labels_by_whether_it_occurred():
+    before_true = _counter_value(get_metrics_snapshot(), "aico_compaction_total", occurred="true")
+    before_false = _counter_value(get_metrics_snapshot(), "aico_compaction_total", occurred="false")
+
+    record_compaction(occurred=True)
+    record_compaction(occurred=False)
+
+    data = get_metrics_snapshot()
+    assert _counter_value(data, "aico_compaction_total", occurred="true") == before_true + 1
+    assert _counter_value(data, "aico_compaction_total", occurred="false") == before_false + 1
+
+
+def test_full_ask_request_updates_session_and_memory_metrics():
+    store = InMemorySessionStore()
+    client = _client_with_store(store)
+
+    before_created = _counter_value(get_metrics_snapshot(), "aico_session_event_total", event="created")
+    before_tok, _ = _histogram_count_sum(get_metrics_snapshot(), "aico_memory_context_tokens")
+
+    resp = client.post("/ask", json={"question": _SECRET_QUESTION})
+    assert resp.status_code == 200
+
+    data = get_metrics_snapshot()
+    assert _counter_value(data, "aico_session_event_total", event="created") == before_created + 1
+    after_tok, _ = _histogram_count_sum(data, "aico_memory_context_tokens")
+    assert after_tok == before_tok + 1
+
+
+def test_session_metric_attributes_never_contain_raw_turn_content():
+    store = InMemorySessionStore()
+    client = _client_with_store(store)
+
+    first = client.post("/ask", json={"question": _SECRET_QUESTION})
+    session_id = first.json()["session_id"]
+    client.post("/ask", json={"question": _SECRET_QUESTION, "session_id": session_id})
+
+    data = get_metrics_snapshot()
+    all_attribute_values = {
+        str(value)
+        for resource_metrics in data.resource_metrics
+        for scope_metrics in resource_metrics.scope_metrics
+        for metric in scope_metrics.metrics
+        for point in metric.data.data_points
+        for value in point.attributes.values()
+    }
+    joined = " ".join(all_attribute_values)
+    assert _SECRET_QUESTION not in joined
+    assert _SECRET_EVIDENCE not in joined
+    assert _SECRET_ANSWER not in joined
+
+
+# ── Tracing ──────────────────────────────────────────────────────────
+
+
+def test_api_ask_span_carries_session_and_memory_attributes_on_the_first_turn():
+    clear_finished_spans()
+    store = InMemorySessionStore()
+    client = _client_with_store(store)
+
+    resp = client.post("/ask", json={"question": _SECRET_QUESTION})
+    assert resp.status_code == 200
+    body = resp.json()
+
+    root = {s.name: s for s in get_finished_spans()}["api.ask"]
+    assert root.attributes["session_id"] == body["session_id"]
+    assert root.attributes["session.version"] == 1
+    assert root.attributes["memory.token_count"] == 0
+    assert root.attributes["memory.recent_turn_count"] == 0
+    assert root.attributes["memory.summary_present"] is False
+
+
+def test_api_ask_span_reflects_a_non_empty_memory_context_on_a_follow_up_turn():
+    clear_finished_spans()
+    store = InMemorySessionStore()
+    client = _client_with_store(store)
+
+    first = client.post("/ask", json={"question": _SECRET_QUESTION})
+    session_id = first.json()["session_id"]
+    clear_finished_spans()
+    second = client.post("/ask", json={"question": _SECRET_QUESTION, "session_id": session_id})
+    assert second.status_code == 200
+
+    root = {s.name: s for s in get_finished_spans()}["api.ask"]
+    assert root.attributes["memory.token_count"] > 0
+    assert root.attributes["memory.recent_turn_count"] == 2
+
+
+def test_denied_session_access_still_produces_a_traced_error_span():
+    """Session resolution now runs inside the `api.ask` span (Task 11) -
+    a denied access is still traced, not silently invisible to it, the
+    way it was when resolution happened before the span opened."""
+    clear_finished_spans()
+    store = InMemorySessionStore()
+    client = _client_with_store(store)
+
+    resp = client.post("/ask", json={"question": _SECRET_QUESTION, "session_id": "SES-never-created"})
+    assert resp.status_code == 404
+
+    spans = {s.name: s for s in get_finished_spans()}
+    assert "api.ask" in spans
+    root = spans["api.ask"]
+    assert root.status.status_code.name == "ERROR"
+    assert "session_id" not in root.attributes  # never resolved - nothing to attach
+
+
+def test_span_attributes_still_never_contain_raw_turn_content():
+    clear_finished_spans()
+    store = InMemorySessionStore()
+    client = _client_with_store(store)
+
+    first = client.post("/ask", json={"question": _SECRET_QUESTION})
+    session_id = first.json()["session_id"]
+    client.post("/ask", json={"question": _SECRET_QUESTION, "session_id": session_id})
+
+    all_attribute_values = {str(v) for s in get_finished_spans() for v in s.attributes.values()}
+    joined = " ".join(all_attribute_values)
+    assert _SECRET_QUESTION not in joined
+    assert _SECRET_EVIDENCE not in joined
+    assert _SECRET_ANSWER not in joined

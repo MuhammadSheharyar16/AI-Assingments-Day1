@@ -75,7 +75,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import Depends
 
-from aico.api.instrumentation import MetricsGateway, MetricsRetriever
+from aico.api.instrumentation import MetricsGateway, MetricsRetriever, MetricsSessionStore
 from aico.memory.service import MemorySessionService
 from aico.memory.store import DEFAULT_SESSION_DB_PATH, SessionStore, SqliteSessionStore
 from aico.memory.summarizer import FakeSummarizer, Summarizer
@@ -144,13 +144,14 @@ def get_session_store() -> SessionStore:
 
 def get_memory_service(store: SessionStore = Depends(get_session_store)) -> MemorySessionService:
     """Default provider: `MemorySessionService` (Day 8 Task 3) wrapping
-    the real store. Overriding `get_session_store` alone (e.g. with an
-    `InMemorySessionStore` in tests) still produces a real
-    `MemorySessionService` around it - the same "replace one ingredient"
-    pattern `get_answer_service` already uses for its own three
-    providers."""
+    the store in `MetricsSessionStore` (Task 11) - the same "wrap at
+    assembly, not at the individual provider" pattern `get_answer_service`
+    already uses for gateway/retriever. Overriding `get_session_store`
+    alone (e.g. with an `InMemorySessionStore` in tests) still produces a
+    real, metrics-wrapped `MemorySessionService` around it; only a test
+    that overrides `get_memory_service` itself bypasses the wrapping."""
 
-    return MemorySessionService(store)
+    return MemorySessionService(MetricsSessionStore(store))
 
 
 def get_summarizer() -> Summarizer:
