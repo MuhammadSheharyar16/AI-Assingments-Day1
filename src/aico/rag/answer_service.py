@@ -45,6 +45,17 @@ attribute set below is already a value this module treats as safe to
 return/log elsewhere (a category string, a count, a model alias, a
 boolean) - never the question, retrieved evidence text, or the raw model
 completion.
+
+Day 8 Task 7 — `answer()` gained an optional, keyword-only
+`memory_context` (`aico.memory.context_builder.MemoryContext`, Task 5).
+It flows into exactly one place: `build_prompt`'s new SESSION MEMORY
+section (`prompt_builder.py`). Nothing else in this pipeline reads it -
+policy, retrieval, citation validation and support validation are
+unchanged and still act only on the current question and the current
+turn's retrieved evidence. This is what makes Day 8's core rule
+structurally true here, not just documented: memory literally cannot
+reach the stages that decide what is retrieved or what counts as a valid
+citation, because those stages never receive it as an argument.
 """
 from __future__ import annotations
 
@@ -60,6 +71,7 @@ from aico.contracts.errors import ValidationFailure
 from aico.contracts.models import AnswerStatus, CitedAnswer, ConfidenceLabel
 from aico.contracts.semantic import validate_semantic
 from aico.contracts.validator import parse_and_validate
+from aico.memory.context_builder import MemoryContext
 from aico.platform.errors import ModelGatewayError
 from aico.platform.model_gateway import CancellationToken, ModelGateway
 from aico.rag.citation_validator import EvidenceChunk, validate_citations
@@ -172,7 +184,13 @@ class GroundedAnswerService:
     policy_evaluator: PolicyEvaluator = evaluate_policy
     model_alias: str | None = None
 
-    def answer(self, question: str, cancellation: CancellationToken | None = None) -> AnswerResult:
+    def answer(
+        self,
+        question: str,
+        cancellation: CancellationToken | None = None,
+        *,
+        memory_context: MemoryContext | None = None,
+    ) -> AnswerResult:
         # `cancellation` (Day 6 Task 5) is optional and defaults to None so
         # every existing Day 5 call site (positional `answer(question)`)
         # is unchanged. When given, it is threaded through to the Model
@@ -180,6 +198,16 @@ class GroundedAnswerService:
         # that does expensive, cancellable work - so an HTTP client
         # disconnect (app.py) reaches the Model Gateway path, not just the
         # HTTP handler (working rule).
+        #
+        # `memory_context` (Day 8 Task 7) is keyword-only and defaults to
+        # None for the same reason: every existing call site - here and
+        # in every Day 5/6/7 test - is unchanged. It is never used for
+        # anything except building the prompt's SESSION MEMORY section
+        # below (step 4) - it does not affect policy, retrieval, or
+        # citation/support validation, all of which stay governed only by
+        # the current question and the current turn's retrieved evidence
+        # (Day 8's core rule: memory helps interpret the conversation,
+        # retrieved evidence still determines what is true).
         with _tracer.start_as_current_span("policy") as span:
             # 1. Normalize (Task 5) - deterministic, bounded, runs before policy.
             normalized = normalize_input(question)
@@ -201,10 +229,11 @@ class GroundedAnswerService:
             retrieved = self.retriever(question)
             span.set_attribute("retrieval.retrieved_count", len(retrieved))
 
-        # 4. Build the explicitly-labelled prompt (Task 2). Local/in-process
+        # 4. Build the explicitly-labelled prompt (Task 2; Day 8 Task 7
+        # adds the optional SESSION MEMORY section). Local/in-process
         # string assembly, not worth a span of its own - it is not one of
         # the brief's named traced stages.
-        prompt = build_prompt(question, retrieved)
+        prompt = build_prompt(question, retrieved, memory_context)
 
         with _tracer.start_as_current_span("model_gateway") as span:
             # 5. Model Gateway (Day 3) - the only model-call boundary.

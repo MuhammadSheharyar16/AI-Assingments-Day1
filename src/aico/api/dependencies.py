@@ -53,6 +53,20 @@ boundary, never inside Day 5 itself. A test that overrides `get_gateway`/
 like the real ones - only a test that overrides `get_answer_service`
 itself bypasses the wrapping (reasonable: at that point the test owns the
 whole service construction).
+
+Day 8 Task 6/7: `get_summarizer` defaults to `FakeSummarizer`, not a real
+`ModelGatewaySummarizer` - deliberately, unlike every other provider in
+this module. Compaction (Task 6) is optional bookkeeping triggered only
+when a session's memory outgrows its budget, not something any `/ask`
+call needs to succeed; defaulting it to a real model call would make an
+otherwise-unrelated request's success depend on Model Gateway
+configuration for what is, from the caller's point of view, invisible
+background housekeeping - a materially different risk than `get_gateway`/
+`get_retriever`, which the main answer path always genuinely needs.
+Real, model-backed compaction is still fully supported (Task 6's own
+rule: "if used, must call through the Model Gateway") - opt in with
+`app.dependency_overrides[get_summarizer] = lambda: ModelGatewaySummarizer(get_gateway())`,
+the same override pattern as every other dependency here.
 """
 from __future__ import annotations
 
@@ -64,6 +78,7 @@ from fastapi import Depends
 from aico.api.instrumentation import MetricsGateway, MetricsRetriever
 from aico.memory.service import MemorySessionService
 from aico.memory.store import DEFAULT_SESSION_DB_PATH, SessionStore, SqliteSessionStore
+from aico.memory.summarizer import FakeSummarizer, Summarizer
 from aico.platform.model_gateway import ModelGateway
 from aico.rag.answer_service import BM25Retriever, GroundedAnswerService, PolicyEvaluator, Retriever
 from aico.security.input_policy import evaluate_policy
@@ -136,6 +151,14 @@ def get_memory_service(store: SessionStore = Depends(get_session_store)) -> Memo
     providers."""
 
     return MemorySessionService(store)
+
+
+def get_summarizer() -> Summarizer:
+    """Default provider: `FakeSummarizer` (Day 8 Task 6) - deterministic,
+    free, no external dependency. See module docstring for why this
+    default is deliberately different from every other provider here."""
+
+    return FakeSummarizer()
 
 
 def get_retrieval_health_check() -> DependencyCheck:

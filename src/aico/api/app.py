@@ -106,14 +106,12 @@ memory layer"):
        or, when omitted, a new session is created for this identity. This
        is "Session Resolution" / "Load Bounded Session State" in the
        build_outcome flow diagram.
-    2. `service.answer()` runs completely unmodified - this module still
-       has no retrieval/generation logic of its own, and passes no memory
-       content into it. Threading the resolved session's recent
-       turns/summary into the prompt as its own labelled, non-evidence
-       section ("Build Memory Context" in the diagram) is Task 5/7's job,
-       not this one's - a follow-up question's pronoun is not yet
-       resolved by memory at this point in the build, only session
-       continuity (same session_id, accumulating turn history) is.
+    2. `service.answer()` still runs unmodified as Day 5's actual answer
+       path (working rule: "Do not reimplement RAG inside the memory
+       layer") - this module has no retrieval/generation logic of its
+       own. It is now handed the resolved session's bounded memory
+       context as one additional, optional argument (Task 7, below) -
+       "Build Memory Context" in the diagram.
     3. After the pipeline returns, the user's question (and the answer,
        only when `status="answered"`) become `SessionTurn`s appended to
        the session and saved - "Store Safe Turn Result" / "Update /
@@ -134,6 +132,30 @@ memory layer"):
        for an answer. The loss is only logged, never silently invisible;
        Task 9 adds the bounded-retry policy that makes this rare in
        practice.
+
+Day 8 Task 7 IS wired - session memory now genuinely participates in
+answering, without ever becoming evidence:
+
+    1. `build_memory_context(session)` (Task 5) turns the resolved
+       session into a budget-bounded `MemoryContext` and is handed to
+       `service.answer(..., memory_context=...)` as one extra, optional
+       argument - Day 5's pipeline (policy/retrieval/citation/support
+       validation) is otherwise byte-for-byte what it was on Day 5; only
+       `prompt_builder.build_prompt` reads `memory_context`, to add its
+       own separately-labelled SESSION MEMORY message (`prompt_builder.py`'s
+       module docstring has the full boundary rationale). A brand-new
+       session's context is always empty, so its very first request
+       produces the identical three-message prompt Day 5 always built -
+       this never changes behavior when there is no history to add.
+    2. After a turn is stored, `compact_session` (Task 6) is run on the
+       updated session before it is saved - "Update / Compact Session
+       State" in the diagram. It is a safe no-op (returns the session
+       unchanged) whenever nothing exceeds the budget yet, so this runs
+       unconditionally on every turn rather than needing its own
+       threshold check here. The summarizer used is `get_summarizer`'s
+       default, `FakeSummarizer` - see `dependencies.py`'s module
+       docstring for why compaction deliberately does not default to a
+       real model call the way the main answer path does.
 """
 from __future__ import annotations
 
@@ -147,14 +169,16 @@ from opentelemetry import trace
 from aico.api import health
 from aico.api.contracts import AskRequest, AskResponse, AskStatus, ask_response_from_result
 from aico.api.correlation import CorrelationMiddleware, RequestContext, get_request_context
-from aico.api.dependencies import get_answer_service, get_memory_service
+from aico.api.dependencies import get_answer_service, get_memory_service, get_summarizer
 from aico.api.errors import ApiError, register_error_handlers
 from aico.api.identity import TrustedIdentity, bearer_scheme, get_trusted_identity
 from aico.api.request_cancellation import run_cancellable
 from aico.api.request_protection import RequestProtectionMiddleware
+from aico.memory.context_builder import build_memory_context
 from aico.memory.errors import SessionConflictError, SessionNotFoundError
 from aico.memory.models import SessionState, SessionTurn, TurnRole
 from aico.memory.service import MemorySessionService
+from aico.memory.summarizer import Summarizer, compact_session
 from aico.observability.logging import configure_logging, log_event
 from aico.observability.metrics import record_request_outcome
 from aico.observability.telemetry import configure_tracing
@@ -223,6 +247,7 @@ def _record_turn(
     question: str,
     response: AskResponse,
     memory_service: MemorySessionService,
+    summarizer: Summarizer,
     request_id: str,
     correlation_id: str,
 ) -> None:
@@ -247,8 +272,12 @@ def _record_turn(
         turns.append(SessionTurn(turn_id=f"{request_id}-assistant", role=TurnRole.ASSISTANT, timestamp=now, content=response.answer))
 
     updated = session.model_copy(update={"recent_turns": [*session.recent_turns, *turns]})
+    # Task 6 - a safe no-op whenever nothing exceeds the budget yet, so
+    # this can run on every turn rather than needing its own threshold
+    # check here (compact_session's own docstring).
+    compacted = compact_session(updated, summarizer, now=now)
     try:
-        memory_service.save_session(identity, updated)
+        memory_service.save_session(identity, compacted)
     except SessionConflictError:
         log_event(
             request_id=request_id,
@@ -283,6 +312,7 @@ async def ask(
     identity: TrustedIdentity = Depends(get_trusted_identity),
     service: GroundedAnswerService = Depends(get_answer_service),
     memory_service: MemorySessionService = Depends(get_memory_service),
+    summarizer: Summarizer = Depends(get_summarizer),
     _bearer: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
 ) -> AskResponse:
     # `_bearer` (identity.bearer_scheme) exists solely to make `/docs`
@@ -296,6 +326,11 @@ async def ask(
     # caller-supplied (untrusted) session_id, never anything else from the
     # request body.
     session = _resolve_session(identity, request.session_id, memory_service)
+    # Build Memory Context (Day 8 Task 5/7) - bounded, budgeted, and kept
+    # structurally separate from evidence: this is data, handed to the
+    # pipeline as one extra argument, never something that alters policy,
+    # retrieval or citation validation (see module docstring / Task 7).
+    memory_context = build_memory_context(session)
 
     start = time.monotonic()
     with _tracer.start_as_current_span("api.ask") as span:
@@ -306,9 +341,11 @@ async def ask(
         span.set_attribute("correlation_id", context.correlation_id)
         span.set_attribute("session_id", session.session_id)
 
-        # Day 5's pipeline, completely unmodified - no memory content is
-        # passed in here (Task 5/7 add that; see module docstring).
-        result = await run_cancellable(http_request, lambda token: service.answer(request.question, token))
+        # Day 5's pipeline - unmodified except for the one additional,
+        # optional memory_context argument (Task 7; see module docstring).
+        result = await run_cancellable(
+            http_request, lambda token: service.answer(request.question, token, memory_context=memory_context)
+        )
         response = ask_response_from_result(
             result,
             request_id=context.request_id,
@@ -343,6 +380,7 @@ async def ask(
         question=request.question,
         response=response,
         memory_service=memory_service,
+        summarizer=summarizer,
         request_id=context.request_id,
         correlation_id=context.correlation_id,
     )
