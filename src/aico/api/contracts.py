@@ -31,6 +31,19 @@ Field names are this project's implementation choice (contract_guidance.md
   exception or stack trace (Task 4 owns enforcing that generally; this
   module already never has access to one - `answer_service.py` normalizes
   failures before they reach here).
+
+Day 8 Task 4 - `AskRequest.session_id` is the ONLY session-related field
+this contract exposes, and it is `extra="forbid"` like everything else
+here: a caller cannot smuggle `tenant_id`/`user_id` (or anything else)
+into the body to influence session ownership (Day 8 working rule -
+ownership always comes from the trusted identity, never a request-body
+field). `AskResponse.session_id` is unconditionally required - every
+`/ask` response, including a non-answered one, returns the active session
+so the caller knows what to send as `session_id` on the next turn.
+`ask_response_from_result` takes it as an explicit parameter rather than
+deriving it, so this module still has zero knowledge of how a session was
+resolved or created - that stays entirely `app.py`'s and
+`aico.memory`'s job.
 """
 from __future__ import annotations
 
@@ -62,6 +75,17 @@ class AskRequest(BaseModel):
         max_length=4000,
         description="The caller's natural-language question.",
         examples=["What payment terms are stated in the supplier policy?"],
+    )
+    session_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Existing session id to continue a conversation, or omitted to start a "
+            "new session (Day 8 Task 4). Must belong to the caller's trusted tenant/"
+            "user - a session_id for another identity's session is rejected exactly "
+            "like a nonexistent one (Task 3's fail-closed rule)."
+        ),
+        examples=[None],
     )
 
 
@@ -106,6 +130,14 @@ class AskResponse(BaseModel):
 
     request_id: str = Field(description="Server-generated or caller-supplied request identifier.")
     correlation_id: str = Field(description="Correlation identifier shared with logs/spans for this operation.")
+    session_id: str = Field(
+        description=(
+            "The active session this turn was recorded under - either the caller-"
+            "supplied session_id, or a newly created one when none was supplied "
+            "(Day 8 Task 4). Send this back as session_id on the next turn to "
+            "continue the conversation."
+        )
+    )
     status: AskStatus
     answer: str | None = Field(default=None, description="The answer text, present only when status=answered.")
     citations: list[CitationOut] = Field(default_factory=list)
@@ -121,17 +153,25 @@ def ask_response_from_result(
     *,
     request_id: str,
     correlation_id: str,
+    session_id: str,
 ) -> AskResponse:
     """The one place that maps a Day 5 `AnswerResult` onto the public
     `AskResponse` contract. Never passes an internal dataclass instance,
     a raw exception message, or provider content through untouched -
     every field written here is one this module already knows is safe to
-    expose."""
+    expose.
+
+    `session_id` (Day 8 Task 4) is a plain caller-provided string, not
+    derived from `result` - this module has no session-resolution logic
+    of its own, `app.py` already resolved it before the Day 5 pipeline
+    ever ran. It is echoed on every branch, including every non-answered
+    one, per Task 4's "response returns the active session_id"."""
 
     if isinstance(result, GroundedAnswer):
         return AskResponse(
             request_id=request_id,
             correlation_id=correlation_id,
+            session_id=session_id,
             status=AskStatus.ANSWERED,
             answer=result.answer,
             citations=[CitationOut(chunk_id=cid) for cid in result.citation_ids],
@@ -142,6 +182,7 @@ def ask_response_from_result(
         return AskResponse(
             request_id=request_id,
             correlation_id=correlation_id,
+            session_id=session_id,
             status=AskStatus.INSUFFICIENT_EVIDENCE,
             answer=result.explanation,
         )
@@ -150,6 +191,7 @@ def ask_response_from_result(
         return AskResponse(
             request_id=request_id,
             correlation_id=correlation_id,
+            session_id=session_id,
             status=AskStatus.CLARIFY,
             category=result.category,
             message=result.reason,
@@ -159,6 +201,7 @@ def ask_response_from_result(
         return AskResponse(
             request_id=request_id,
             correlation_id=correlation_id,
+            session_id=session_id,
             status=AskStatus.BLOCKED,
             category=result.category,
             message=result.reason,
@@ -168,6 +211,7 @@ def ask_response_from_result(
         return AskResponse(
             request_id=request_id,
             correlation_id=correlation_id,
+            session_id=session_id,
             status=AskStatus.FAILED,
             category=result.category,
             message=f"{result.stage} stage failed: {result.category}",

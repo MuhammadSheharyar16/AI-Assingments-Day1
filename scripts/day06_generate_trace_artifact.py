@@ -34,9 +34,10 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from aico.api.app import app
-from aico.api.dependencies import get_answer_service
+from aico.api.dependencies import get_answer_service, get_session_store
 from aico.api.identity import TrustedIdentity, get_trusted_identity
 from aico.api.instrumentation import MetricsGateway, MetricsRetriever
+from aico.memory.store import InMemorySessionStore
 from aico.observability.metrics import get_metrics_snapshot
 from aico.observability.telemetry import clear_finished_spans, get_finished_spans
 from aico.platform.model_gateway import CallMetadata, ChatRequest, ChatResult
@@ -107,6 +108,10 @@ def _run_request() -> tuple[dict, dict]:
         gateway=MetricsGateway(_FakeGateway()), retriever=MetricsRetriever(_fake_retriever)
     )
     app.dependency_overrides[get_trusted_identity] = lambda: _IDENTITY
+    # Day 8 Task 4: /ask now also resolves a session. In-memory here for
+    # the same reason the gateway/retriever above are fakes - this script
+    # documents the traced request/response shape, not session storage.
+    app.dependency_overrides[get_session_store] = lambda: InMemorySessionStore()
     client = TestClient(app)
 
     resp = client.post(

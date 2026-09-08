@@ -93,23 +93,68 @@ the operation" the assignment requires - without `answer_service.py`
 needing to know anything about `request_id`/`correlation_id`, which are
 instead set as attributes on this root span (the one place both this
 module's HTTP-level IDs and the OTel trace they head are both available).
+
+Day 8 Task 4 IS wired - session participation, around the still-unchanged
+Day 5 pipeline call (working rule: "Do not reimplement RAG inside the
+memory layer"):
+
+    1. Session resolution happens BEFORE the pipeline runs, using
+       `identity` (Day 6) and `get_memory_service` (Task 3's
+       `MemorySessionService`): a supplied `request.session_id` is loaded
+       - and, per Task 3, rejected with `SessionAccessError` (404) exactly
+       the same way whether it never existed or belongs to someone else -
+       or, when omitted, a new session is created for this identity. This
+       is "Session Resolution" / "Load Bounded Session State" in the
+       build_outcome flow diagram.
+    2. `service.answer()` runs completely unmodified - this module still
+       has no retrieval/generation logic of its own, and passes no memory
+       content into it. Threading the resolved session's recent
+       turns/summary into the prompt as its own labelled, non-evidence
+       section ("Build Memory Context" in the diagram) is Task 5/7's job,
+       not this one's - a follow-up question's pronoun is not yet
+       resolved by memory at this point in the build, only session
+       continuity (same session_id, accumulating turn history) is.
+    3. After the pipeline returns, the user's question (and the answer,
+       only when `status="answered"`) become `SessionTurn`s appended to
+       the session and saved - "Store Safe Turn Result" / "Update /
+       Compact Session State". A question that was rejected by the input
+       policy is still recorded, marked `blocked=True` (Task 10 groundwork
+       - a blocked turn can be reloaded as history but a future context
+       builder must never replay it as instruction); a question that was
+       merely inconclusive (insufficient evidence / needs clarification)
+       or that failed a pipeline stage produces no assistant turn - there
+       is no cited, evidence-backed content to record for one.
+       `AskResponse.session_id` always reflects the resolved session,
+       even when this last save step is skipped.
+    4. A concurrent write losing the race on this exact session
+       (`SessionConflictError`, Task 9's territory) does not fail the
+       request - the caller's answer was already correctly, independently
+       produced by Day 5 before this step ever runs, and Day 8's own rule
+       is that memory is supplementary context, not the source of truth
+       for an answer. The loss is only logged, never silently invisible;
+       Task 9 adds the bounded-retry policy that makes this rare in
+       practice.
 """
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, Request, Security
 from fastapi.security import HTTPAuthorizationCredentials
 from opentelemetry import trace
 
 from aico.api import health
-from aico.api.contracts import AskRequest, AskResponse, ask_response_from_result
+from aico.api.contracts import AskRequest, AskResponse, AskStatus, ask_response_from_result
 from aico.api.correlation import CorrelationMiddleware, RequestContext, get_request_context
-from aico.api.dependencies import get_answer_service
-from aico.api.errors import register_error_handlers
+from aico.api.dependencies import get_answer_service, get_memory_service
+from aico.api.errors import ApiError, register_error_handlers
 from aico.api.identity import TrustedIdentity, bearer_scheme, get_trusted_identity
 from aico.api.request_cancellation import run_cancellable
 from aico.api.request_protection import RequestProtectionMiddleware
+from aico.memory.errors import SessionConflictError, SessionNotFoundError
+from aico.memory.models import SessionState, SessionTurn, TurnRole
+from aico.memory.service import MemorySessionService
 from aico.observability.logging import configure_logging, log_event
 from aico.observability.metrics import record_request_outcome
 from aico.observability.telemetry import configure_tracing
@@ -139,6 +184,92 @@ register_error_handlers(app)
 app.include_router(health.router)
 
 
+class SessionAccessError(ApiError):
+    """Day 8 Task 4 - raised when a caller-supplied `session_id` does not
+    resolve for the trusted identity making this request. Deliberately
+    the same outward shape (404, one generic message) whether the id
+    never existed, belongs to a different user, or belongs to a different
+    tenant - it adds no disclosure beyond what `SessionNotFoundError`
+    (Task 3) already refused to reveal; this class only maps that refusal
+    onto the shared `ErrorResponse` envelope via `register_error_handlers`."""
+
+    status_code = 404
+    error_code = "session_not_found"
+
+    def __init__(self) -> None:
+        super().__init__("session not found")
+
+
+def _resolve_session(
+    identity: TrustedIdentity, requested_session_id: str | None, memory_service: MemorySessionService
+) -> SessionState:
+    """Session Resolution / Load Bounded Session State (build_outcome flow
+    diagram). A supplied id must belong to `identity`; omitting it starts
+    a fresh session for `identity` - never for anyone else, since ownership
+    here can only ever come from `identity`, not from the request body."""
+
+    if requested_session_id is None:
+        return memory_service.create_session(identity)
+    try:
+        return memory_service.load_session(identity, requested_session_id)
+    except SessionNotFoundError as exc:
+        raise SessionAccessError() from exc
+
+
+def _record_turn(
+    identity: TrustedIdentity,
+    session: SessionState,
+    *,
+    question: str,
+    response: AskResponse,
+    memory_service: MemorySessionService,
+    request_id: str,
+    correlation_id: str,
+) -> None:
+    """Store Safe Turn Result / Update Session State. Never raises past
+    this point - a lost race on this session (Task 9's territory) must
+    not turn an already-correctly-produced answer into a failed request;
+    it is logged instead of silently disappearing. Session memory is
+    supplementary conversational context, not the source of truth this
+    request's answer depended on (Day 8's core rule)."""
+
+    now = datetime.now(UTC)
+    turns = [
+        SessionTurn(
+            turn_id=f"{request_id}-user",
+            role=TurnRole.USER,
+            timestamp=now,
+            content=question,
+            blocked=response.status is AskStatus.BLOCKED,
+        )
+    ]
+    if response.status is AskStatus.ANSWERED and response.answer is not None:
+        turns.append(SessionTurn(turn_id=f"{request_id}-assistant", role=TurnRole.ASSISTANT, timestamp=now, content=response.answer))
+
+    updated = session.model_copy(update={"recent_turns": [*session.recent_turns, *turns]})
+    try:
+        memory_service.save_session(identity, updated)
+    except SessionConflictError:
+        log_event(
+            request_id=request_id,
+            correlation_id=correlation_id,
+            stage="session_turn_store",
+            outcome="conflict",
+            session_id=session.session_id,
+        )
+    except SessionNotFoundError:
+        # The session expired/was cleared between resolution and this
+        # save - the answer above was still valid and correctly produced;
+        # only the turn-history write is skipped.
+        log_event(
+            request_id=request_id,
+            correlation_id=correlation_id,
+            stage="session_turn_store",
+            outcome="session_unavailable",
+            session_id=session.session_id,
+        )
+
+
 @app.post(
     "/ask",
     response_model=AskResponse,
@@ -151,22 +282,20 @@ async def ask(
     context: RequestContext = Depends(get_request_context),
     identity: TrustedIdentity = Depends(get_trusted_identity),
     service: GroundedAnswerService = Depends(get_answer_service),
+    memory_service: MemorySessionService = Depends(get_memory_service),
     _bearer: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
 ) -> AskResponse:
-    # `identity` is required for this call to reach here at all (an
-    # untrusted caller was already rejected by the dependency above) but
-    # is not yet threaded into the pipeline/response - Day 5's
-    # GroundedAnswerService has no multi-tenant retrieval to scope by
-    # tenant_id, and the response contract intentionally never echoes
-    # authorization context back to the caller (Day 6 rule). Structured
-    # logging (Task 7) and tracing (Task 9) are where `identity` becomes
-    # observable - as sanitized tenant/user identifiers, never raw claims.
-    del identity
     # `_bearer` (identity.bearer_scheme) exists solely to make `/docs`
     # render an "Authorize" button - see module docstring. It is never
     # read; `get_trusted_identity` above already did the real
     # verification independently of this value.
     del _bearer
+
+    # Session Resolution / Load Bounded Session State (Day 8 Task 4) -
+    # before the pipeline runs, using only the trusted identity and the
+    # caller-supplied (untrusted) session_id, never anything else from the
+    # request body.
+    session = _resolve_session(identity, request.session_id, memory_service)
 
     start = time.monotonic()
     with _tracer.start_as_current_span("api.ask") as span:
@@ -175,10 +304,16 @@ async def ask(
         # docstring. Never the question/answer/evidence.
         span.set_attribute("request_id", context.request_id)
         span.set_attribute("correlation_id", context.correlation_id)
+        span.set_attribute("session_id", session.session_id)
 
+        # Day 5's pipeline, completely unmodified - no memory content is
+        # passed in here (Task 5/7 add that; see module docstring).
         result = await run_cancellable(http_request, lambda token: service.answer(request.question, token))
         response = ask_response_from_result(
-            result, request_id=context.request_id, correlation_id=context.correlation_id
+            result,
+            request_id=context.request_id,
+            correlation_id=context.correlation_id,
+            session_id=session.session_id,
         )
         span.set_attribute("response.status", response.status.value)
         if response.category:
@@ -195,7 +330,21 @@ async def ask(
         outcome=response.status.value,
         error_category=response.category,
         latency_ms=latency_ms,
+        session_id=session.session_id,
     )
     record_request_outcome(response.status.value, response.category)
+
+    # Store Safe Turn Result / Update Session State (Day 8 Task 4) - after
+    # the response is fully built, never blocking the caller's answer on
+    # a lost concurrent write (see _record_turn's docstring).
+    _record_turn(
+        identity,
+        session,
+        question=request.question,
+        response=response,
+        memory_service=memory_service,
+        request_id=context.request_id,
+        correlation_id=context.correlation_id,
+    )
 
     return response

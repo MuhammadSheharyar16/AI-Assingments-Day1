@@ -32,6 +32,19 @@ OpenAPI never triggers config loading: `ModelGateway.from_config()` only
 runs the first time `get_gateway()` is actually resolved for a request
 that was not overridden.
 
+Day 8 Task 4: `get_session_store`/`get_memory_service` are the same
+pattern - `_default_session_store()` is `lru_cache`d so a real deployment
+opens exactly one `SqliteSessionStore` (one SQLite connection, reused
+across requests - the store itself serializes concurrent access
+internally, see `memory/store.py`) rather than one per request, and so
+importing this module never touches `data/sessions/` on disk until a
+request actually resolves the dependency. `app.py`'s `/ask` handler
+depends on `get_memory_service`, never on `SqliteSessionStore`/
+`InMemorySessionStore` directly - tests override `get_memory_service`
+(or just `get_session_store`, letting `get_memory_service` assemble a
+real `MemorySessionService` around a fake store) exactly like every other
+dependency here.
+
 Task 8: `get_answer_service` wraps `get_gateway`/`get_retriever`'s results
 in `MetricsGateway`/`MetricsRetriever` (instrumentation.py) before handing
 them to `GroundedAnswerService` - metrics are recorded at this DI
@@ -49,6 +62,8 @@ from typing import TYPE_CHECKING
 from fastapi import Depends
 
 from aico.api.instrumentation import MetricsGateway, MetricsRetriever
+from aico.memory.service import MemorySessionService
+from aico.memory.store import DEFAULT_SESSION_DB_PATH, SessionStore, SqliteSessionStore
 from aico.platform.model_gateway import ModelGateway
 from aico.rag.answer_service import BM25Retriever, GroundedAnswerService, PolicyEvaluator, Retriever
 from aico.security.input_policy import evaluate_policy
@@ -98,6 +113,29 @@ def get_answer_service(
         retriever=MetricsRetriever(retriever),
         policy_evaluator=policy_evaluator,
     )
+
+
+@lru_cache(maxsize=1)
+def _default_session_store() -> SessionStore:
+    return SqliteSessionStore(db_path=DEFAULT_SESSION_DB_PATH)
+
+
+def get_session_store() -> SessionStore:
+    """Default provider: the real local `SqliteSessionStore` (Day 8
+    Task 2), reused across requests via `_default_session_store`'s cache."""
+
+    return _default_session_store()
+
+
+def get_memory_service(store: SessionStore = Depends(get_session_store)) -> MemorySessionService:
+    """Default provider: `MemorySessionService` (Day 8 Task 3) wrapping
+    the real store. Overriding `get_session_store` alone (e.g. with an
+    `InMemorySessionStore` in tests) still produces a real
+    `MemorySessionService` around it - the same "replace one ingredient"
+    pattern `get_answer_service` already uses for its own three
+    providers."""
+
+    return MemorySessionService(store)
 
 
 def get_retrieval_health_check() -> DependencyCheck:
