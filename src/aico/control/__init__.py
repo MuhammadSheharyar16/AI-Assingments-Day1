@@ -12,11 +12,19 @@ records and the closed `LaneId` set, self-validating against every rule in
 and the lane selector are built against, plus its typed failures
 (`errors.py`). Task 3 adds `GateA` (`gate_a.py`) and its typed result,
 `GateADecision`/`GateAStatus` (`models.py`) -- deterministic domain/intent
-classification, run before lane selection (Task 5, `lane_selector.py`).
+classification, run before lane selection. Task 5 adds `LaneSelector`
+(`lane_selector.py`) and its typed result, `LaneDecision` (`models.py`) --
+routing a `GateADecision` onto one of the five governed lanes.
 """
-from aico.control.errors import OntologyLoadError, OntologyLookupError, OntologyRegistryError
+from aico.control.errors import (
+    LaneSelectionError,
+    OntologyLoadError,
+    OntologyLookupError,
+    OntologyRegistryError,
+)
 from aico.control.gate_a import GateA
-from aico.control.models import GateADecision, GateAStatus
+from aico.control.lane_selector import LaneSelector
+from aico.control.models import GateADecision, GateAStatus, LaneDecision
 from aico.control.ontology import (
     Concept,
     Domain,
@@ -42,4 +50,7 @@ __all__ = [
     "GateA",
     "GateADecision",
     "GateAStatus",
+    "LaneSelector",
+    "LaneDecision",
+    "LaneSelectionError",
 ]

@@ -1,29 +1,35 @@
 """
-Day 9 Task 3 -- shared control-plane decision models.
+Day 9 Task 3/5 -- shared control-plane decision models.
 
 `OntologyDocument`/`OntologyRegistry` (Tasks 1/2) define what is governed;
 this module defines what a *decision* about a request looks like once it
-has been checked against that governance: `GateADecision`, Gate-A's typed
-intent/domain classification, made before lane selection ever runs
-(`gate_a.py`). Kept separate from both `ontology.py` (governed *data*) and
-`gate_a.py` (the classification *logic* that produces this decision), so a
-later stage (the lane selector consuming a `GateADecision`, Task 11's
-observability layer logging one) can import the decision shape without
-importing the classification logic that builds it. Task 5's lane selector
-adds its own `LaneDecision` here, alongside this one, when it lands.
+has been checked against that governance. Two decisions live here:
 
-`GateADecision` sets `extra="forbid"` and carries `ontology_version` +
+- `GateADecision` (Task 3, `gate_a.py`) -- Gate-A's typed intent/domain
+  classification, made before lane selection ever runs.
+- `LaneDecision` (Task 5, `lane_selector.py`) -- the lane selector's typed
+  routing decision, made *from* a `GateADecision`.
+
+Kept separate from both `ontology.py` (governed *data*) and
+`gate_a.py`/`lane_selector.py` (the *logic* that produces these decisions),
+so a later stage (Task 9's API integration, Task 11's observability layer)
+can import the decision shapes without importing the classification/
+routing logic that builds them.
+
+Both models set `extra="forbid"` and carry `ontology_version` +
 `reason_code`, matching the Day 9 working rule: "Route decisions include
-ontology version and reason." It is never constructed with a
-`domain`/`intent_id` value that did not come from a governed
-`OntologyRegistry` lookup -- this type describes the *shape* of a
-decision; `gate_a.py` owns making that guarantee true.
+ontology version and reason." Neither is ever constructed with a
+`domain`/`intent_id`/`lane` value that did not come from a governed
+`OntologyRegistry` lookup -- these types describe the *shape* of a
+decision; `gate_a.py`/`lane_selector.py` own making that guarantee true.
 """
 from __future__ import annotations
 
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from aico.control.ontology import LaneId
 
 
 class GateAStatus(str, Enum):
@@ -59,10 +65,11 @@ class GateADecision(BaseModel):
     `possible_governed_intents`) -- what Task 6's clarification question
     is built from. Empty for every other status.
 
-    `matched_concepts` names the governed concepts that drove this
-    decision -- for `MATCHED`, the concept(s) behind the winning governed
-    phrase; for `AMBIGUOUS`, the concept(s) shared by the tied candidate
-    intents (i.e. *why* the request is ambiguous); empty for
+    `matched_concepts` names every active governed concept the request
+    text itself referenced (`gate_a.py`'s "multiple known concepts"
+    behavior, Task 4 -- a request can reference more than one governed
+    concept while still resolving, or failing to resolve, to a single
+    intent). Populated for `MATCHED`/`AMBIGUOUS`; empty for
     `UNSUPPORTED`/`BLOCKED`, where by definition nothing governed was
     recognized (or the request never reached classification at all)."""
 
@@ -78,5 +85,29 @@ class GateADecision(BaseModel):
         default_factory=list,
         description="intent_ids this request plausibly matches, populated only when status is AMBIGUOUS.",
     )
+    reason_code: str = Field(min_length=1, description="Short, sanitized, machine-checkable reason for this decision.")
+    ontology_version: str = Field(min_length=1, description="The governed ontology version this decision was made against.")
+
+
+class LaneDecision(BaseModel):
+    """The lane selector's typed routing decision (Task 5's required field
+    list, `lane`/`intent_id`/`domain`/`reason_code`/`ontology_version`).
+    `LaneSelector` (`lane_selector.py`) is the only thing that constructs
+    one, always *from* a `GateADecision` -- never from a raw dict or an
+    arbitrary lane string (`lane_policy.md`: "no arbitrary lane strings").
+
+    `lane` is always one of the five governed `LaneId` values, and for a
+    request that reached a specific governed intent, always one of that
+    intent's own `Intent.allowed_lanes` (Task 1) -- the lane selector
+    picks among what the intent itself is governed to allow, it never
+    invents a route. `intent_id`/`domain` mirror the `GateADecision` this
+    decision was made from: both `None` unless the underlying Gate-A
+    status was `MATCHED`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lane: LaneId
+    intent_id: str | None = Field(default=None, description="intent_id this lane was selected for, when one exists.")
+    domain: str | None = Field(default=None, description="domain_id this lane was selected for, when one exists.")
     reason_code: str = Field(min_length=1, description="Short, sanitized, machine-checkable reason for this decision.")
     ontology_version: str = Field(min_length=1, description="The governed ontology version this decision was made against.")
