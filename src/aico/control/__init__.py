@@ -14,9 +14,22 @@ and the lane selector are built against, plus its typed failures
 `GateADecision`/`GateAStatus` (`models.py`) -- deterministic domain/intent
 classification, run before lane selection. Task 5 adds `LaneSelector`
 (`lane_selector.py`) and its typed result, `LaneDecision` (`models.py`) --
-routing a `GateADecision` onto one of the five governed lanes.
+routing a `GateADecision` onto one of the five governed lanes. Task 12
+adds `load_control_plane_config`/`ControlPlaneConfig` (`config.py`),
+validated loading of `config/control-plane.yaml` -- registry path, the
+deployment-level `enabled_lanes` restriction `LaneSelector` accepts,
+clarification policy, and (inert today) model-assisted-interpretation
+settings.
 """
+from aico.control.config import (
+    DEFAULT_CONTROL_PLANE_CONFIG_PATH,
+    ClarificationPolicy,
+    ControlPlaneConfig,
+    ModelAssistedInterpretationConfig,
+    load_control_plane_config,
+)
 from aico.control.errors import (
+    ControlPlaneConfigurationError,
     LaneSelectionError,
     OntologyLoadError,
     OntologyLookupError,
@@ -53,4 +66,10 @@ __all__ = [
     "LaneSelector",
     "LaneDecision",
     "LaneSelectionError",
+    "ControlPlaneConfig",
+    "ClarificationPolicy",
+    "ModelAssistedInterpretationConfig",
+    "load_control_plane_config",
+    "ControlPlaneConfigurationError",
+    "DEFAULT_CONTROL_PLANE_CONFIG_PATH",
 ]

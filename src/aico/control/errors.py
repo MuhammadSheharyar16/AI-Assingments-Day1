@@ -1,5 +1,5 @@
 """
-Day 9 -- typed control-plane failures (Tasks 2/5).
+Day 9 -- typed control-plane failures (Tasks 2/5/12).
 
 `OntologyLoadError`/`OntologyLookupError` are shared by `OntologyRegistry`
 (`ontology_registry.py`, Task 2) so a caller can distinguish "the
@@ -8,8 +8,9 @@ this registry to resolve a domain/concept/intent id it does not govern"
 with one `except OntologyLoadError` / `except OntologyLookupError`, the
 same pattern Day 8's `SessionError` family uses for the memory boundary
 (`memory/errors.py`) and Day 6's `IdentityError` uses for the trust
-boundary (`api/identity.py`). `LaneSelectionError` (Task 5) is unrelated
-to the registry itself -- see its own docstring.
+boundary (`api/identity.py`). `LaneSelectionError` (Task 5) and
+`ControlPlaneConfigurationError` (Task 12) are each unrelated to the
+registry itself -- see their own docstrings.
 """
 from __future__ import annotations
 
@@ -53,3 +54,14 @@ class LaneSelectionError(Exception):
     construction; this exists to fail loudly rather than silently
     misroute if some other caller ever constructs or passes a malformed
     `GateADecision` by hand."""
+
+
+class ControlPlaneConfigurationError(Exception):
+    """Raised by `load_control_plane_config()` (`config.py`, Task 12) for
+    anything wrong with `config/control-plane.yaml` itself: missing,
+    unreadable, not valid (the small YAML subset this reuses from
+    `aico.platform.config`), a missing/invalid required key, or an
+    `lanes.enabled` entry naming something outside the closed `LaneId`
+    set. Mirrors `aico.platform.errors.GatewayConfigurationError`'s
+    fail-loud contract for `config/model-routing.yaml` -- there is never a
+    silent fallback to a default/permissive control-plane configuration."""

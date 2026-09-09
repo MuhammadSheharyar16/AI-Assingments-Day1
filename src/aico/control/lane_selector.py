@@ -41,6 +41,18 @@ This module selects `mode_b` as a lane; it never executes it. No database
 call, no Mode-B service, is reachable from anywhere in this file (Day 9
 working rule: "Day 9 selects Mode B but does not implement uncontrolled
 Mode-B execution").
+
+Day 9 Task 12 -- `enabled_lanes` (optional, from `config/control-plane.yaml`
+via `aico.control.config`) is a second, *deployment-level* gate, separate
+from what a governed intent's own `Intent.allowed_lanes` (Task 1)
+structurally permits. It can only ever narrow, never widen: a lane an
+intent is allowed to route through can still be turned off for this
+deployment, in which case `select()` falls back to `block` (reason code
+`"lane_disabled_by_config"`) instead of the lane the ontology alone would
+have picked -- there is no code path here that lets a config value grant
+a lane the registry itself did not already permit. `enabled_lanes=None`
+(the default) applies no restriction beyond the registry's own, so every
+existing caller of `LaneSelector(registry)` is unaffected.
 """
 from __future__ import annotations
 
@@ -56,15 +68,27 @@ from aico.control.ontology_registry import OntologyRegistry
 class LaneSelector:
     """The lane selector: built once against a loaded `OntologyRegistry`
     (Task 2, the same registry `GateA` was built against) and reused for
-    every `GateADecision`. `select()` is the only public entry point."""
+    every `GateADecision`. `select()` is the only public entry point.
+
+    `enabled_lanes` (Task 12) is an optional deployment-level restriction
+    over the closed `LaneId` set -- `None` (the default) applies none
+    beyond what the registry/ontology already govern. See the module
+    docstring."""
 
     registry: OntologyRegistry
+    enabled_lanes: frozenset[LaneId] | None = None
 
     def select(self, gate_decision: GateADecision) -> LaneDecision:
         """Route one `GateADecision` to a typed `LaneDecision`. Never
         raises for a decision `GateA.classify()` could actually produce --
         only for one that violates an invariant lane selection depends on
         (see `LaneSelectionError`)."""
+        decision = self._select_by_ontology(gate_decision)
+        return self._apply_deployment_gate(decision)
+
+    def _select_by_ontology(self, gate_decision: GateADecision) -> LaneDecision:
+        """The lane the governed ontology alone selects -- Tasks 3/5's
+        original policy, unaware of any deployment-level restriction."""
         version = gate_decision.ontology_version
 
         if gate_decision.status is GateAStatus.BLOCKED:
@@ -101,6 +125,26 @@ class LaneSelector:
             domain=intent.domain,
             reason_code="intent_allowed_lane",
             ontology_version=version,
+        )
+
+    def _apply_deployment_gate(self, decision: LaneDecision) -> LaneDecision:
+        """Task 12: if `enabled_lanes` is set and does not include the
+        ontology-selected lane, fall back to `block` -- a deployment
+        restriction, never a widening (see module docstring). `block`
+        itself is always implicitly allowed regardless of `enabled_lanes`'
+        exact contents -- it is the fail-closed lane every other branch
+        already falls back to, so gating it off would defeat its own
+        purpose, and a decision that is already `block` (unsupported,
+        Gate-A-level blocked, or Day 5's own block upstream of this)
+        must never have its real reason overwritten with
+        `"lane_disabled_by_config"` just because a caller's config
+        happened to omit `block` from an explicit enabled set."""
+        if self.enabled_lanes is None or decision.lane is LaneId.BLOCK or decision.lane in self.enabled_lanes:
+            return decision
+        return LaneDecision(
+            lane=LaneId.BLOCK,
+            reason_code="lane_disabled_by_config",
+            ontology_version=decision.ontology_version,
         )
 
     @staticmethod

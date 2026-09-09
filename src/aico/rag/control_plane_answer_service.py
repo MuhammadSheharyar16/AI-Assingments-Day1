@@ -112,6 +112,7 @@ from dataclasses import dataclass, field
 
 from opentelemetry import trace
 
+from aico.control.config import ControlPlaneConfig
 from aico.control.gate_a import GateA
 from aico.control.lane_selector import LaneSelector
 from aico.control.models import GateADecision, LaneDecision
@@ -210,16 +211,28 @@ class ControlPlaneAnswerService:
     from the registry automatically unless supplied (tests may inject
     their own, e.g. built from a throwaway registry). See the module
     docstring for the full pipeline and why this is not yet the service
-    `api/app.py` calls."""
+    `api/app.py` calls.
+
+    `control_plane_config` (Task 12, optional) is `config/control-plane.yaml`,
+    already loaded (`aico.control.config.load_control_plane_config`) -- when
+    given, its `enabled_lanes` is passed straight to the `LaneSelector` this
+    class builds, so a deployment can turn a lane off without touching the
+    ontology (`lane_selector.py`'s own module docstring on what
+    `enabled_lanes` can and cannot do). `None` (the default) applies no
+    deployment-level restriction beyond what the registry already governs --
+    every existing caller of `ControlPlaneAnswerService(registry, rag_service)`
+    is unaffected."""
 
     registry: OntologyRegistry
     rag_service: GroundedAnswerService
+    control_plane_config: ControlPlaneConfig | None = None
     gate_a: GateA = field(init=False)
     lane_selector: LaneSelector = field(init=False)
 
     def __post_init__(self) -> None:
         self.gate_a = GateA(self.registry)
-        self.lane_selector = LaneSelector(self.registry)
+        enabled_lanes = self.control_plane_config.enabled_lanes if self.control_plane_config is not None else None
+        self.lane_selector = LaneSelector(self.registry, enabled_lanes=enabled_lanes)
 
     def answer(
         self,

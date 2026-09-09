@@ -1,0 +1,57 @@
+# Day 9 Task 12 -- control-plane configuration.
+#
+# Operational settings for Gate-A / lane selection (Tasks 3-11): which
+# committed ontology registry to load, which governed lanes are enabled
+# for this deployment, the clarification policy, and settings for the
+# optional (and, today, unused) model-assisted interpreter.
+#
+# Ontology definitions themselves (domains/concepts/intents/lanes, and
+# which lanes each intent is allowed to route through) are NEVER here --
+# only a path to the committed registry that actually governs them
+# (ontology_requirements.md; see `ontology/registry.v1.json`). No secrets.
+version: "1.0"
+
+ontology:
+  # Path to the committed, read-only Mode-A registry (Task 1/2) -
+  # relative to the process working directory, same convention as
+  # config/model-routing.yaml's own paths.
+  registry_path: ontology/registry.v1.json
+
+lanes:
+  # Deployment-level toggle, separate from what a governed intent's own
+  # allowed_lanes (Task 1) structurally permits -- this can only ever
+  # narrow what a request may route to for this deployment, never widen
+  # it (LaneSelector's enabled_lanes never grants a lane the registry
+  # itself did not already allow). Every lane defaults to enabled - Day 9
+  # ships with nothing turned off.
+  enabled:
+    rag: true
+    mode_b: true
+    clarify: true
+    block: true
+    safe_fast_path: true
+
+clarification:
+  # Task 6 policy the clarification-question generator and Gate-A's
+  # ambiguity scoring are built around.
+  #
+  # max_candidate_intents - an upper bound on how many governed intents
+  # a single clarification question may list before it is no longer
+  # "concise" (Task 6's own required wording).
+  max_candidate_intents: 5
+  # min_overlap_score - the same threshold gate_a.py's _MIN_OVERLAP_SCORE
+  # documents and hard-codes today; recorded here as the governing policy
+  # value a future revision could make the classifier actually read.
+  min_overlap_score: 2
+
+model_assisted_interpretation:
+  # Task 4's optional model-assisted interpreter ("may propose only typed
+  # candidates", never mandatory - lane_policy.md/gate_a.py's own module
+  # docstring). Off today: this Gate-A is fully deterministic and never
+  # calls the Model Gateway. timeout_seconds/max_output_tokens are the
+  # classification timeout/budget Task 12 asks for "if model assistance
+  # exists" - present and validated only because a future day may turn
+  # this on, not because anything reads them today.
+  enabled: false
+  timeout_seconds: 5.0
+  max_output_tokens: 200
