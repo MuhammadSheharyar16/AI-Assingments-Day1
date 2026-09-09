@@ -1,22 +1,39 @@
 """
-Day 9 Task 3 -- Gate-A (`src/aico/control/gate_a.py`), and its typed
-result (`GateADecision`/`GateAStatus`, `src/aico/control/models.py`).
+Day 9 Task 3/4 -- Gate-A (`src/aico/control/gate_a.py`), its typed result
+(`GateADecision`/`GateAStatus`, `src/aico/control/models.py`), and the
+required classification behaviors from `gate_a_cases.json`/
+`ambiguity_cases.json`.
 
-Proves:
-  - the typed result shape itself (`extra="forbid"`, required fields,
-    the four required statuses);
-  - every case in the pack's own `gate_a_cases.json` classifies exactly as
-    the fixture requires, run against the real committed registry
-    (`ontology/registry.v1.json`) -- exact governed intent, registered
-    synonym, unsupported domain, unknown intent, and a Day 5
-    policy-blocked input, all through `GateA.classify()` alone;
-  - `ambiguity_cases.json`'s AMB-001 (plain multi-intent ambiguity, no
-    session context involved) is classified `ambiguous` with the correct
-    `candidate_intents`;
-  - decisions are deterministic, always carry `ontology_version`, only
-    ever match `status="active"` governed records, and `domain`/
-    `intent_id`/`matched_concepts` are populated only for the statuses
-    the module docstring says they are.
+Task 3 section proves the typed result shape itself (`extra="forbid"`,
+required fields, the four required statuses) and Gate-A's own structural
+guarantees: decisions are deterministic, always carry `ontology_version`,
+only ever match `status="active"` governed records, and `domain`/
+`intent_id`/`matched_concepts` are populated only for the statuses the
+module docstring says they are.
+
+Task 4 section proves every one of the assignment's seven required
+classification behaviors, each mapped onto the specific fixture case that
+exercises it:
+
+    exact governed intent      -> GA-001 (exact_policy_intent)
+    registered synonym         -> GA-002 (registered_synonym)
+    multiple known concepts    -> GA-002 (its input references *two*
+                                   governed concepts -- CON-SUPPLIER via
+                                   "vendor", CON-PAYMENT-TERMS via
+                                   "payment window" -- while still
+                                   resolving to one governed intent)
+    unsupported domain         -> GA-004 (nothing in the input is
+                                   governed at all)
+    unknown intent             -> GA-005 (a governed-sounding entity is
+                                   mentioned, but the request itself --
+                                   "predict...stock price" -- is not a
+                                   governed intent)
+    ambiguous intent           -> AMB-001 (ambiguity_cases.json)
+    blocked Day 5 policy result -> GA-006 (blocked_input)
+
+Every case above (and the full `gate_a_cases.json` set) also runs as a
+parametrized fixture-driven sweep against the real committed registry
+(`ontology/registry.v1.json`), not just as individually named tests.
 
 AMB-002 and AMB-003 (`ambiguity_cases.json`) are deliberately NOT covered
 here -- both require resolving a session-context-dependent reference
@@ -25,11 +42,10 @@ which is Day 8 memory interaction (Task 8) feeding into clarification
 (Task 6), neither implemented yet. `GateA.classify()` operates on
 already-resolved text only; see the module docstring in `gate_a.py`.
 
-Classification behavior against the model-assisted-interpreter working
-rules (Task 4's conditional "if a model-assisted interpreter is used...")
-does not apply here: this `GateA` is fully deterministic and never calls
-the Model Gateway (`gate_a.py` module docstring) -- there is no
-interpreter output to validate.
+The model-assisted-interpreter working rules (Task 4's conditional "if a
+model-assisted interpreter is used...") do not apply here: this `GateA` is
+fully deterministic and never calls the Model Gateway (`gate_a.py` module
+docstring) -- there is no interpreter output to validate.
 """
 from __future__ import annotations
 
@@ -144,6 +160,30 @@ def test_ga002_registered_synonym_reason_code(gate: GateA):
     assert decision.status is GateAStatus.MATCHED
     assert decision.reason_code == "concept_synonym_match"
     assert decision.intent_id == "INT-POLICY-QUESTION"
+
+
+def test_ga002_multiple_known_concepts_all_reported(gate: GateA):
+    """Task 4's "multiple known concepts" behavior: GA-002's input names
+    two distinct governed concepts (CON-SUPPLIER via "vendor",
+    CON-PAYMENT-TERMS via "payment window") -- both must be reported in
+    `matched_concepts`, even though only one governed intent is chosen."""
+    decision = gate.classify("What is the vendor payment window?")
+    assert decision.status is GateAStatus.MATCHED
+    assert set(decision.matched_concepts) == {"CON-SUPPLIER", "CON-PAYMENT-TERMS"}
+    assert decision.intent_id == "INT-POLICY-QUESTION"  # exactly one intent, despite two concepts
+
+
+def test_ga005_unknown_intent_does_not_invent_one(gate: GateA):
+    """Task 4's "unknown intent" behavior, distinct from GA-004's
+    "unsupported domain": GA-005 mentions a governed-sounding entity
+    ("Supplier Alpha") but asks for something no governed intent covers
+    ("predict...stock price") -- unsupported, with no intent invented,
+    same as GA-004 but for a different reason (a real domain touched by
+    an ungoverned request, vs. nothing governed at all)."""
+    decision = gate.classify("Predict Supplier Alpha's stock price next year.")
+    assert decision.status is GateAStatus.UNSUPPORTED
+    assert decision.intent_id is None
+    assert decision.matched_concepts == []
 
 
 def test_ga006_blocked_carries_no_domain_or_intent(gate: GateA):

@@ -58,6 +58,17 @@ Classification runs in two tiers, cheapest and most certain first:
   supplier information." -- both `INT-POLICY-QUESTION` and
   `INT-STRUCTURED-LOOKUP` share the one governed word "supplier").
 
+`GateADecision.matched_concepts`, for a `MATCHED`/`AMBIGUOUS` decision, is
+every active governed concept whose `name` or a `synonym` is a substring
+of the normalized input -- independent of which phrase actually won.
+This is deliberately broader than "just the concept(s) behind the winning
+phrase": Task 4's "multiple known concepts" case is GA-002 itself, whose
+input ("What is the vendor payment window?") references *two* governed
+concepts at once (`CON-SUPPLIER` via "vendor", `CON-PAYMENT-TERMS` via
+"payment window") even though it resolves to exactly one governed intent
+-- `matched_concepts` reports both, `intent_id` still reports only the
+one intent Tier 2's scoring actually picked.
+
 Only `status="active"` domains/concepts/intents are ever eligible to match
 (`LifecycleStatus`, Task 1) -- a deprecated/retired entry stops being
 something new language can resolve onto, without needing to be deleted out
@@ -145,14 +156,11 @@ class GateA:
     registry: OntologyRegistry
     policy_evaluator: PolicyEvaluator = evaluate_policy
     _phrase_vocabularies: tuple[_PhraseVocabulary, ...] = field(init=False, repr=False)
-    _concept_content_tokens: dict[str, frozenset[str]] = field(init=False, repr=False)
+    _active_concepts: tuple[Concept, ...] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         active_concepts = [c for c in self.registry.concepts if c.status is LifecycleStatus.ACTIVE]
-        self._concept_content_tokens = {
-            concept.concept_id: _content_tokens(_tokenize(" ".join([concept.name, *concept.synonyms])))
-            for concept in active_concepts
-        }
+        self._active_concepts = tuple(active_concepts)
         self._phrase_vocabularies = tuple(
             self._build_phrase_vocabulary(intent, phrase, active_concepts)
             for intent in self.registry.intents
@@ -175,6 +183,18 @@ class GateA:
             related_concept_ids=tuple(c.concept_id for c in related),
         )
 
+    def _recognized_concept_ids(self, normalized_lower: str) -> list[str]:
+        """Every active governed concept whose `name` or a `synonym` is a
+        substring of the (already-lowercased) normalized input -- see the
+        module docstring's "multiple known concepts" paragraph. Registry
+        order, so the result is deterministic regardless of dict/set
+        iteration order."""
+        return [
+            concept.concept_id
+            for concept in self._active_concepts
+            if any(term.lower() in normalized_lower for term in [concept.name, *concept.synonyms])
+        ]
+
     # ── Public entry point ──────────────────────────────────────────
 
     def classify(self, text: str) -> GateADecision:
@@ -194,6 +214,7 @@ class GateA:
                 ontology_version=version,
             )
 
+        recognized_concepts = self._recognized_concept_ids(normalized.lower())
         input_tokens = _tokenize(normalized)
 
         exact = self._match_exact_phrase(input_tokens)
@@ -203,12 +224,12 @@ class GateA:
                 status=GateAStatus.MATCHED,
                 domain=intent.domain,
                 intent_id=intent.intent_id,
-                matched_concepts=list(exact.related_concept_ids),
+                matched_concepts=recognized_concepts,
                 reason_code="exact_phrase_match",
                 ontology_version=version,
             )
 
-        return self._match_by_overlap(input_tokens, version)
+        return self._match_by_overlap(input_tokens, recognized_concepts, version)
 
     # ── Tier 1: exact governed phrase ───────────────────────────────
 
@@ -220,20 +241,19 @@ class GateA:
 
     # ── Tier 2: governed content-term overlap ───────────────────────
 
-    def _match_by_overlap(self, input_tokens: tuple[str, ...], version: str) -> GateADecision:
+    def _match_by_overlap(
+        self, input_tokens: tuple[str, ...], recognized_concepts: list[str], version: str
+    ) -> GateADecision:
         input_content = _content_tokens(input_tokens)
 
-        best_per_intent: dict[str, tuple[int, _PhraseVocabulary]] = {}
+        best_per_intent: dict[str, int] = {}
         for vocab in self._phrase_vocabularies:
             score = len(vocab.content_tokens & input_content)
-            current_best = best_per_intent.get(vocab.intent_id)
-            if current_best is None or score > current_best[0]:
-                best_per_intent[vocab.intent_id] = (score, vocab)
+            if score > best_per_intent.get(vocab.intent_id, -1):
+                best_per_intent[vocab.intent_id] = score
 
         qualifying = {
-            intent_id: (score, vocab)
-            for intent_id, (score, vocab) in best_per_intent.items()
-            if score >= _MIN_OVERLAP_SCORE
+            intent_id: score for intent_id, score in best_per_intent.items() if score >= _MIN_OVERLAP_SCORE
         }
         if not qualifying:
             return GateADecision(
@@ -242,29 +262,28 @@ class GateA:
                 ontology_version=version,
             )
 
-        top_score = max(score for score, _vocab in qualifying.values())
-        winners = {intent_id: vocab for intent_id, (score, vocab) in qualifying.items() if score == top_score}
+        top_score = max(qualifying.values())
+        winning_intent_ids = {intent_id for intent_id, score in qualifying.items() if score == top_score}
 
-        if len(winners) > 1:
-            candidate_intent_ids = [i.intent_id for i in self.registry.intents if i.intent_id in winners]
-            shared_concepts = set.intersection(
-                *(set(vocab.related_concept_ids) for vocab in winners.values())
-            ) or set().union(*(set(vocab.related_concept_ids) for vocab in winners.values()))
+        if len(winning_intent_ids) > 1:
+            # Registry order, not set-iteration order, for a deterministic
+            # `candidate_intents` list every time.
+            candidate_intent_ids = [i.intent_id for i in self.registry.intents if i.intent_id in winning_intent_ids]
             return GateADecision(
                 status=GateAStatus.AMBIGUOUS,
-                matched_concepts=sorted(shared_concepts),
+                matched_concepts=recognized_concepts,
                 candidate_intents=candidate_intent_ids,
                 reason_code="ambiguous_multiple_intents",
                 ontology_version=version,
             )
 
-        (winning_intent_id, winning_vocab), = winners.items()
+        (winning_intent_id,) = winning_intent_ids
         intent = self.registry.get_intent(winning_intent_id)
         return GateADecision(
             status=GateAStatus.MATCHED,
             domain=intent.domain,
             intent_id=intent.intent_id,
-            matched_concepts=list(winning_vocab.related_concept_ids),
+            matched_concepts=recognized_concepts,
             reason_code="concept_synonym_match",
             ontology_version=version,
         )
