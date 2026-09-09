@@ -9,10 +9,14 @@ document is `OntologyDocument`, made of `Domain` / `Concept` / `Intent`
 records and the closed `LaneId` set, self-validating against every rule in
 `day09_pack/ontology_requirements.md`. Task 2 adds `OntologyRegistry`
 (`ontology_registry.py`), the read-only, typed loader/lookup service Gate-A
-(Task 3/4, `gate_a.py`) and the lane selector (Task 5, `lane_selector.py`)
-are built against, plus its typed failures (`errors.py`).
+and the lane selector are built against, plus its typed failures
+(`errors.py`). Task 3 adds `GateA` (`gate_a.py`) and its typed result,
+`GateADecision`/`GateAStatus` (`models.py`) -- deterministic domain/intent
+classification, run before lane selection (Task 5, `lane_selector.py`).
 """
 from aico.control.errors import OntologyLoadError, OntologyLookupError, OntologyRegistryError
+from aico.control.gate_a import GateA
+from aico.control.models import GateADecision, GateAStatus
 from aico.control.ontology import (
     Concept,
     Domain,
@@ -35,4 +39,7 @@ __all__ = [
     "OntologyLookupError",
     "OntologyRegistry",
     "DEFAULT_REGISTRY_PATH",
+    "GateA",
+    "GateADecision",
+    "GateAStatus",
 ]
