@@ -1,0 +1,118 @@
+{
+  "ontology_version": "1.0",
+  "domains": [
+    {
+      "domain_id": "supplier_governance",
+      "name": "Supplier Governance",
+      "owner": "AICO Engineering Team",
+      "status": "active"
+    }
+  ],
+  "lanes": [
+    "rag",
+    "mode_b",
+    "clarify",
+    "block",
+    "safe_fast_path"
+  ],
+  "concepts": [
+    {
+      "concept_id": "CON-SUPPLIER",
+      "name": "supplier",
+      "description": "A synthetic supplier/vendor entity.",
+      "synonyms": [
+        "vendor"
+      ],
+      "relationships": [],
+      "owner": "AICO Engineering Team",
+      "status": "active"
+    },
+    {
+      "concept_id": "CON-PAYMENT-TERMS",
+      "name": "payment terms",
+      "description": "Documented payment-term policy.",
+      "synonyms": [
+        "payment window",
+        "invoice payment terms"
+      ],
+      "relationships": [
+        "CON-SUPPLIER"
+      ],
+      "owner": "AICO Engineering Team",
+      "status": "active"
+    },
+    {
+      "concept_id": "CON-INVOICE-POLICY",
+      "name": "invoice submission policy",
+      "description": "Documented invoice submission rules.",
+      "synonyms": [
+        "invoice window",
+        "invoice submission rules"
+      ],
+      "relationships": [
+        "CON-SUPPLIER"
+      ],
+      "owner": "AICO Engineering Team",
+      "status": "active"
+    },
+    {
+      "concept_id": "CON-CONTRACT",
+      "name": "contract",
+      "description": "Synthetic supplier contract.",
+      "synonyms": [
+        "agreement"
+      ],
+      "relationships": [
+        "CON-SUPPLIER"
+      ],
+      "owner": "AICO Engineering Team",
+      "status": "active"
+    }
+  ],
+  "intents": [
+    {
+      "intent_id": "INT-POLICY-QUESTION",
+      "domain": "supplier_governance",
+      "description": "Ask a factual question answered from supplier policy documents.",
+      "phrases": [
+        "what are the payment terms",
+        "what is the invoice policy",
+        "show supplier policy"
+      ],
+      "allowed_lanes": [
+        "rag"
+      ],
+      "clarification_required_when_ambiguous": true,
+      "status": "active"
+    },
+    {
+      "intent_id": "INT-STRUCTURED-LOOKUP",
+      "domain": "supplier_governance",
+      "description": "Request a governed structured-data lookup to be executed by a later Mode-B component.",
+      "phrases": [
+        "list active contracts",
+        "show structured supplier record",
+        "lookup contract record"
+      ],
+      "allowed_lanes": [
+        "mode_b"
+      ],
+      "clarification_required_when_ambiguous": true,
+      "status": "active"
+    },
+    {
+      "intent_id": "INT-HELP",
+      "domain": "supplier_governance",
+      "description": "Ask what the lab system supports.",
+      "phrases": [
+        "what can you help with",
+        "show supported requests"
+      ],
+      "allowed_lanes": [
+        "safe_fast_path"
+      ],
+      "clarification_required_when_ambiguous": false,
+      "status": "active"
+    }
+  ]
+}

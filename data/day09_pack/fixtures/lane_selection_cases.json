@@ -1,0 +1,53 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "LANE-001",
+      "gate_a": {
+        "status": "matched",
+        "intent_id": "INT-POLICY-QUESTION",
+        "domain": "supplier_governance"
+      },
+      "expected_lane": "rag"
+    },
+    {
+      "id": "LANE-002",
+      "gate_a": {
+        "status": "matched",
+        "intent_id": "INT-STRUCTURED-LOOKUP",
+        "domain": "supplier_governance"
+      },
+      "expected_lane": "mode_b",
+      "must_not_execute_database": true
+    },
+    {
+      "id": "LANE-003",
+      "gate_a": {
+        "status": "ambiguous",
+        "intent_id": null,
+        "domain": "supplier_governance"
+      },
+      "expected_lane": "clarify",
+      "must_not_call_retrieval_or_model": true
+    },
+    {
+      "id": "LANE-004",
+      "gate_a": {
+        "status": "unsupported",
+        "intent_id": null,
+        "domain": null
+      },
+      "expected_lane": "block",
+      "must_not_call_retrieval_or_model": true
+    },
+    {
+      "id": "LANE-005",
+      "gate_a": {
+        "status": "matched",
+        "intent_id": "INT-HELP",
+        "domain": "supplier_governance"
+      },
+      "expected_lane": "safe_fast_path"
+    }
+  ]
+}

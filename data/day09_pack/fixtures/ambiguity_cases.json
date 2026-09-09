@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "AMB-001",
+      "input": "Show me the supplier information.",
+      "possible_governed_intents": [
+        "INT-POLICY-QUESTION",
+        "INT-STRUCTURED-LOOKUP"
+      ],
+      "expected_status": "ambiguous",
+      "expected_lane": "clarify"
+    },
+    {
+      "id": "AMB-002",
+      "input": "What about it?",
+      "session_context": null,
+      "expected_status": "ambiguous",
+      "expected_lane": "clarify"
+    },
+    {
+      "id": "AMB-003",
+      "input": "What about its invoice policy?",
+      "session_context": {
+        "previous_subject": "Supplier Alpha",
+        "previous_intent": "INT-POLICY-QUESTION"
+      },
+      "expected": "memory_may_resolve_reference_but_final_intent_must_exist_in_registry"
+    }
+  ]
+}
