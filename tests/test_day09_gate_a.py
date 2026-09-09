@@ -1,7 +1,7 @@
 """
-Day 9 Task 3/4 -- Gate-A (`src/aico/control/gate_a.py`), its typed result
-(`GateADecision`/`GateAStatus`, `src/aico/control/models.py`), and the
-required classification behaviors from `gate_a_cases.json`/
+Day 9 Task 3/4/7 -- Gate-A (`src/aico/control/gate_a.py`), its typed
+result (`GateADecision`/`GateAStatus`, `src/aico/control/models.py`), and
+the required classification behaviors from `gate_a_cases.json`/
 `ambiguity_cases.json`.
 
 Task 3 section proves the typed result shape itself (`extra="forbid"`,
@@ -46,9 +46,21 @@ The model-assisted-interpreter working rules (Task 4's conditional "if a
 model-assisted interpreter is used...") do not apply here: this `GateA` is
 fully deterministic and never calls the Model Gateway (`gate_a.py` module
 docstring) -- there is no interpreter output to validate.
+
+Task 7 section proves "unsupported behavior" fails closed: a broader sweep
+of unsupported inputs beyond the two named fixture cases (GA-004/GA-005)
+never invents an intent, always carries a short/sanitized ("safe") reason
+code that never echoes the raw input, always carries `ontology_version`,
+and always routes to `block` (`LaneSelector`, Task 5) -- never `rag`. It
+also proves "no retrieval" / "no Mode-B execution" architecturally: static
+analysis of `gate_a.py`/`lane_selector.py`'s own import statements shows
+neither module imports anything capable of retrieval or database access in
+the first place, so there is nothing in the control plane today for an
+unsupported (or any) decision to fall through into.
 """
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
@@ -56,8 +68,9 @@ import pytest
 from pydantic import ValidationError
 
 from aico.control.gate_a import GateA
+from aico.control.lane_selector import LaneSelector
 from aico.control.models import GateADecision, GateAStatus
-from aico.control.ontology import OntologyDocument
+from aico.control.ontology import LaneId, OntologyDocument
 from aico.control.ontology_registry import OntologyRegistry
 from aico.security.input_policy import PolicyDecision, PolicyOutcome
 
@@ -82,6 +95,11 @@ def real_registry() -> OntologyRegistry:
 @pytest.fixture
 def gate(real_registry: OntologyRegistry) -> GateA:
     return GateA(real_registry)
+
+
+@pytest.fixture
+def selector(real_registry: OntologyRegistry) -> LaneSelector:
+    return LaneSelector(real_registry)
 
 
 # ---------------------------------------------------------------------------
@@ -322,3 +340,121 @@ def test_deprecated_intent_is_never_matched():
 
     assert decision.status is GateAStatus.UNSUPPORTED
     assert decision.intent_id is None
+
+
+# ===========================================================================
+# Task 7 -- Unsupported behavior
+# ===========================================================================
+
+# A broader sweep of unsupported inputs beyond the two named fixture cases
+# (GA-004/GA-005) -- different domains entirely (geography, entertainment,
+# cooking, sports, translation, finance) and one clearly off-topic sentence
+# that still happens to share a stray governed-sounding word, the same
+# GA-005 shape. None of these are blocked by Day 5's policy (they are
+# ordinary benign questions) and none match any governed concept/intent
+# strongly enough to qualify (`gate_a.py`'s `_MIN_OVERLAP_SCORE`).
+_UNSUPPORTED_SWEEP = [
+    "What is the capital of France?",
+    "Tell me a joke.",
+    "How do I bake a chocolate cake?",
+    "What is the score of last night's basketball game?",
+    "Translate this sentence into French.",
+    "Write a poem about the ocean.",
+    "What is the current price of Bitcoin?",
+    "How tall is Mount Everest?",
+]
+
+
+@pytest.mark.parametrize("text", _UNSUPPORTED_SWEEP)
+def test_unsupported_sweep_never_invents_an_intent(gate: GateA, text: str):
+    decision = gate.classify(text)
+    assert decision.status is GateAStatus.UNSUPPORTED
+    assert decision.intent_id is None
+    assert decision.domain is None
+    assert decision.matched_concepts == []
+    assert decision.candidate_intents == []
+
+
+@pytest.mark.parametrize("text", _UNSUPPORTED_SWEEP)
+def test_unsupported_sweep_carries_a_typed_result_with_safe_reason_code_and_version(gate: GateA, text: str):
+    decision = gate.classify(text)
+
+    # Typed result: a real GateADecision/GateAStatus, not a bare string/dict.
+    assert isinstance(decision, GateADecision)
+    assert isinstance(decision.status, GateAStatus)
+
+    # Ontology version present (Day 9 working rule: "Route decisions
+    # include ontology version and reason").
+    assert decision.ontology_version == gate.registry.ontology_version
+
+    # Safe reason code: short, sanitized, machine-checkable -- never the
+    # raw request text echoed back, never whitespace/newlines.
+    assert decision.reason_code == "no_governed_match"
+    assert text.lower() not in decision.reason_code.lower()
+    assert " " not in decision.reason_code
+    assert "\n" not in decision.reason_code
+    assert len(decision.reason_code) < 64
+
+
+@pytest.mark.parametrize("text", _UNSUPPORTED_SWEEP)
+def test_unsupported_sweep_never_defaults_to_rag(gate: GateA, selector: LaneSelector, text: str):
+    """"Unknown requests must not default to RAG" (Task 7) -- proven
+    through the real `LaneSelector` (Task 5), not just asserted about the
+    Gate-A status in isolation."""
+    decision = gate.classify(text)
+    lane_decision = selector.select(decision)
+    assert lane_decision.lane is LaneId.BLOCK
+    assert lane_decision.lane is not LaneId.RAG
+
+
+def test_ga004_and_ga005_together_both_fail_closed_the_same_way(gate: GateA):
+    """The two named fixture cases, side by side: an unsupported *domain*
+    (nothing governed at all) and an unknown *intent* within a governed-
+    sounding domain both land on the identical typed outcome -- Gate-A
+    does not distinguish "how" unsupported by giving one of them a
+    different status, lane, or leniency."""
+    unsupported_domain = gate.classify("What is tomorrow's weather?")  # GA-004
+    unknown_intent = gate.classify("Predict Supplier Alpha's stock price next year.")  # GA-005
+
+    for decision in (unsupported_domain, unknown_intent):
+        assert decision.status is GateAStatus.UNSUPPORTED
+        assert decision.intent_id is None
+        assert decision.reason_code == "no_governed_match"
+
+
+# ---------------------------------------------------------------------------
+# "No retrieval" / "no Mode-B execution": true by construction, not just by
+# absence of a wired pipeline -- neither module imports anything capable of
+# retrieval or database access in the first place.
+# ---------------------------------------------------------------------------
+
+_CONTROL_SRC_DIR = REPO_ROOT / "src" / "aico" / "control"
+
+# Forbidden import roots for the Day 9 control plane at this stage of the
+# build (Gate-A/Task 3-7, lane selector/Task 5): nothing in `aico.control`
+# may import retrieval, RAG orchestration, or direct database access.
+# `aico.security` (Day 5's input policy) is explicitly allowed -- Gate-A's
+# own `BLOCKED` status is built on it (Task 3). `aico.platform` (Model
+# Gateway) is also forbidden here: Task 4's optional model-assisted
+# interpreter is not used (see the module docstring), so today's Gate-A
+# has no legitimate reason to import it either.
+_FORBIDDEN_IMPORT_PREFIXES = ("aico.retrieval", "aico.rag", "aico.platform", "sqlite3")
+
+
+def _imported_module_roots(py_file: Path) -> set[str]:
+    tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+    roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            roots.add(node.module)
+    return roots
+
+
+@pytest.mark.parametrize("filename", ["gate_a.py", "lane_selector.py"])
+def test_no_retrieval_or_mode_b_execution_reachable_by_import(filename: str):
+    imports = _imported_module_roots(_CONTROL_SRC_DIR / filename)
+    for forbidden in _FORBIDDEN_IMPORT_PREFIXES:
+        offending = [imp for imp in imports if imp == forbidden or imp.startswith(forbidden + ".")]
+        assert offending == [], f"{filename} imports forbidden module(s): {offending}"
