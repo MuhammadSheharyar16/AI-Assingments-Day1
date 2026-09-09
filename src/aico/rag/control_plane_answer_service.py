@@ -1,6 +1,8 @@
 """
-Day 9 Task 9 -- integrate Gate-A (Task 3) and the lane selector (Task 5)
-in front of the Day 5 answer pipeline (`answer_service.GroundedAnswerService`).
+Day 9 Task 9/11 -- integrate Gate-A (Task 3) and the lane selector
+(Task 5) in front of the Day 5 answer pipeline
+(`answer_service.GroundedAnswerService`), with decision provenance /
+observability (Task 11) on both stages.
 
 Required order (Day 9 assignment):
 
@@ -56,6 +58,34 @@ API layer that calls it.
        *could* (it legitimately holds a `GroundedAnswerService`), and it
        only ever does so from the single `rag` branch.
 
+Task 11 -- decision provenance / observability: steps 3 and 4 above each
+run inside their own OTel span (`"gate_a"`, `"lane_selection"`), carrying
+exactly the sanitized fields the assignment names -- `ontology_version`,
+`domain`, `intent_id`, `gate_a.status`/`lane`, `reason_code`, and a
+directly measured `latency_ms` -- and nothing else. Neither span, nor
+anything else in this module, ever receives `question` (the user's raw
+text), `resolved_question`, or `clarification_question` as an attribute --
+there is no call site here that could leak them (Task 11 rule: "Do not log
+full prompt/session/evidence content, authorization claims or secrets").
+
+`request_id`/`correlation_id` are deliberately NOT explicit parameters or
+span attributes here. `answer_service.py`'s own module docstring documents
+why: this module intentionally never imports `aico.api`/`aico.observability`
+(same layering `answer_service.py` already keeps -- see its docstring),
+so it has no way to read them directly. Day 6 Task 9 already solved
+"preserve correlation context" for exactly this shape of problem: a
+caller (`api/app.py`'s `api.ask` root span, were this wired in) sets those
+two IDs as attributes once, on the span it opens *around* this call, and
+every span created here becomes a *child* of that span automatically
+(Python's `start_as_current_span` uses the ambient current span as
+parent) -- so `gate_a`/`lane_selection` share that request's one
+`trace_id` without this module needing to know either ID exists. This is
+the identical mechanism `answer_service.py`'s "policy"/"retrieval"/
+"model_gateway" spans already rely on (see its own module docstring and
+`app.py`'s Task 9 section) -- Task 11 does not introduce a new
+correlation mechanism, it reuses the one already proven in
+`tests/test_day06_observability.py`.
+
 WHY THIS IS NOT WIRED INTO `api/app.py`'s `/ask` TODAY: Day 9's committed
 ontology (`ontology/registry.v1.json`) is deliberately a small, SYNTHETIC
 Mode-A registry (`ontology_requirements.md`: "The supplied registry is a
@@ -77,7 +107,10 @@ actually covers the corpus it gates.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
+
+from opentelemetry import trace
 
 from aico.control.gate_a import GateA
 from aico.control.lane_selector import LaneSelector
@@ -89,6 +122,14 @@ from aico.platform.model_gateway import CancellationToken
 from aico.rag.answer_service import AnswerResult, Blocked, Clarify, GroundedAnswerService
 from aico.security.input_policy import PolicyOutcome, evaluate_policy
 from aico.security.normalization import normalize_input
+
+# Task 11 -- same pattern `answer_service.py` already uses and documents:
+# `opentelemetry.trace.get_tracer(__name__)` directly, never importing
+# `aico.observability` here. The tracer works against whatever provider
+# `aico.observability.telemetry.configure_tracing()` installs (or a
+# harmless no-op default when nothing has configured one yet, e.g. a test
+# that imports this module directly without importing `api/app.py`).
+_tracer = trace.get_tracer(__name__)
 
 # ── New typed result paths (lane outcomes with no Day 5 equivalent) ─────
 
@@ -214,11 +255,40 @@ class ControlPlaneAnswerService:
         if reference_context is not None:
             resolved_question = resolve_reference(question, reference_context)
 
-        # 3. Gate-A (Task 3).
-        gate_decision: GateADecision = self.gate_a.classify(resolved_question)
+        # 3. Gate-A (Task 3). Task 11 -- "gate_a" span, sanitized attributes
+        # only (ontology_version/domain/intent_id/status/reason_code/
+        # latency_ms) -- never the question text. `request_id`/
+        # `correlation_id` are deliberately NOT set here: this module does
+        # not import `aico.api` (same boundary `answer_service.py` already
+        # keeps), so those IDs are carried the same way every other span
+        # in this codebase already carries them -- as attributes on
+        # whatever root span a caller (a future `app.py` integration) has
+        # open around this call, with every span below it sharing that
+        # root's trace_id automatically (Day 6 Task 9's own established
+        # mechanism, not a new one).
+        with _tracer.start_as_current_span("gate_a") as span:
+            start = time.monotonic()
+            gate_decision: GateADecision = self.gate_a.classify(resolved_question)
+            latency_ms = (time.monotonic() - start) * 1000
+            span.set_attribute("gate_a.ontology_version", gate_decision.ontology_version)
+            span.set_attribute("gate_a.status", gate_decision.status.value)
+            span.set_attribute("gate_a.domain", gate_decision.domain or "")
+            span.set_attribute("gate_a.intent_id", gate_decision.intent_id or "")
+            span.set_attribute("gate_a.reason_code", gate_decision.reason_code)
+            span.set_attribute("gate_a.latency_ms", latency_ms)
 
-        # 4. Lane selector (Task 5).
-        lane_decision: LaneDecision = self.lane_selector.select(gate_decision)
+        # 4. Lane selector (Task 5). Task 11 -- "lane_selection" span, same
+        # sanitized-attribute rule as above.
+        with _tracer.start_as_current_span("lane_selection") as span:
+            start = time.monotonic()
+            lane_decision: LaneDecision = self.lane_selector.select(gate_decision)
+            latency_ms = (time.monotonic() - start) * 1000
+            span.set_attribute("lane_selection.ontology_version", lane_decision.ontology_version)
+            span.set_attribute("lane_selection.lane", lane_decision.lane.value)
+            span.set_attribute("lane_selection.domain", lane_decision.domain or "")
+            span.set_attribute("lane_selection.intent_id", lane_decision.intent_id or "")
+            span.set_attribute("lane_selection.reason_code", lane_decision.reason_code)
+            span.set_attribute("lane_selection.latency_ms", latency_ms)
 
         # 5. Selected lane behavior.
         if lane_decision.lane is LaneId.RAG:
