@@ -1,5 +1,5 @@
 """
-Day 9 Task 3/5 -- shared control-plane decision models.
+Day 9 Task 3/5/6 -- shared control-plane decision models.
 
 `OntologyDocument`/`OntologyRegistry` (Tasks 1/2) define what is governed;
 this module defines what a *decision* about a request looks like once it
@@ -62,8 +62,20 @@ class GateADecision(BaseModel):
     `candidate_intents` is an extension beyond the assignment's minimum
     field list, populated only for `AMBIGUOUS`: the governed intent ids a
     request plausibly matches (`ambiguity_cases.json`'s own
-    `possible_governed_intents`) -- what Task 6's clarification question
-    is built from. Empty for every other status.
+    `possible_governed_intents`), when there are specific competing
+    intents to name. Can be empty even for `AMBIGUOUS` -- an input with no
+    governed content to disambiguate *among* at all (e.g. a bare dangling
+    reference, `ambiguity_cases.json` AMB-002, "What about it?") is still
+    ambiguous (it needs clarification, it is not simply out of scope), it
+    just has nothing specific to list yet. Empty for every other status.
+
+    `clarification_question` (Task 6) is a second extension, populated
+    only for `AMBIGUOUS`: a concise question generated deterministically
+    from `candidate_intents`' own governed `Intent.description` text (or,
+    when `candidate_intents` is empty, from the registry's governed
+    `Domain.name`s) -- never free text a caller invents, and never a call
+    to the Model Gateway (`gate_a.py`'s `_build_clarification_question`).
+    `None` for every other status.
 
     `matched_concepts` names every active governed concept the request
     text itself referenced (`gate_a.py`'s "multiple known concepts"
@@ -84,6 +96,11 @@ class GateADecision(BaseModel):
     candidate_intents: list[str] = Field(
         default_factory=list,
         description="intent_ids this request plausibly matches, populated only when status is AMBIGUOUS.",
+    )
+    clarification_question: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Deterministically generated clarification question, populated only when status is AMBIGUOUS.",
     )
     reason_code: str = Field(min_length=1, description="Short, sanitized, machine-checkable reason for this decision.")
     ontology_version: str = Field(min_length=1, description="The governed ontology version this decision was made against.")

@@ -1,6 +1,7 @@
 """
-Day 9 Task 3 -- Gate-A: deterministic domain/intent classification before
-lane selection.
+Day 9 Task 3/6 -- Gate-A: deterministic domain/intent classification
+before lane selection, and clarification-question generation for an
+ambiguous result.
 
 "Gate-A determines whether the request maps to a governed domain/intent
 before lane selection" (Day 9 assignment). `GateA.classify()` never
@@ -58,6 +59,26 @@ Classification runs in two tiers, cheapest and most certain first:
   supplier information." -- both `INT-POLICY-QUESTION` and
   `INT-STRUCTURED-LOOKUP` share the one governed word "supplier").
 
+  One more Tier 2 case, checked before scoring even starts: an input
+  whose content-token set is *empty* (nothing left once stopwords are
+  removed -- a bare dangling reference like `ambiguity_cases.json`
+  AMB-002, "What about it?", with no session context to resolve it) is
+  also `AMBIGUOUS`, with an empty `candidate_intents` -- distinct from
+  `UNSUPPORTED`. The two are not the same failure: `UNSUPPORTED` (GA-004,
+  GA-005) means the input *has* real content and none of it is governed;
+  this case means there is no content to evaluate at all, so Gate-A
+  cannot tell whether the request is governed or not -- that is a
+  clarification problem ("do not guess", Task 6), not an out-of-scope one.
+
+`GateADecision.clarification_question` (Task 6) is generated only for
+`AMBIGUOUS`, by `_build_clarification_question()` -- deterministically,
+from `candidate_intents`' own governed `Intent.description` text when
+there are specific competing intents (AMB-001), or from the registry's
+governed `Domain.name`s when there is nothing more specific to offer
+(the empty-content case above). Never invented free text, and never a
+Model Gateway call -- see "What this module deliberately does NOT do"
+below.
+
 `GateADecision.matched_concepts`, for a `MATCHED`/`AMBIGUOUS` decision, is
 every active governed concept whose `name` or a `synonym` is a substring
 of the normalized input -- independent of which phrase actually won.
@@ -76,10 +97,15 @@ from under anything that still references it historically.
 
 What this module deliberately does NOT do: it never performs its own
 free-form fuzzy/semantic matching beyond the two deterministic tiers
-above, it never calls the Model Gateway (that is Task 4's optional
-model-assisted interpreter, layered *on top of* this deterministic
-classifier, never replacing it), and it never decides which lane a
-`MATCHED`/`AMBIGUOUS`/`UNSUPPORTED`/`BLOCKED` decision routes to (Task 5).
+above, it never calls the Model Gateway -- not for classification (Task
+4's optional model-assisted interpreter, layered *on top of* this
+deterministic classifier, never replacing it) and not for the
+clarification question either (Task 6: "a model may phrase the question,
+but cannot create a new intent/lane" is optional; this module phrases it
+itself, from governed text only, so the question's content can never
+drift from what the ontology actually governs) -- and it never decides
+which lane a `MATCHED`/`AMBIGUOUS`/`UNSUPPORTED`/`BLOCKED` decision routes
+to (Task 5).
 """
 from __future__ import annotations
 
@@ -183,6 +209,31 @@ class GateA:
             related_concept_ids=tuple(c.concept_id for c in related),
         )
 
+    def _build_clarification_question(self, candidate_intent_ids: list[str]) -> str:
+        """Task 6: "generate a concise clarification question from
+        governed ontology distinctions." `candidate_intent_ids` non-empty
+        (AMB-001-style tie) -> a question built from each candidate
+        intent's own governed `description`, in the same registry order
+        `candidate_intents` itself uses. `candidate_intent_ids` empty
+        (AMB-002-style dangling reference, nothing to disambiguate among)
+        -> a question built from the registry's own governed, active
+        `Domain.name`s instead, since there is nothing more specific to
+        offer. Either way, every word describing an *option* comes
+        directly from committed ontology text -- this never phrases a
+        candidate's option in its own invented words, only asks the
+        question around them."""
+        if candidate_intent_ids:
+            options = [self.registry.get_intent(iid).description for iid in candidate_intent_ids]
+            listed = "; or ".join(f"({i}) {desc}" for i, desc in enumerate(options, start=1))
+            return f"Could you clarify which of these you mean: {listed}?"
+
+        domain_names = [d.name for d in self.registry.domains if d.status is LifecycleStatus.ACTIVE]
+        if domain_names:
+            return "Could you clarify what you're asking about? Supported topics include: " + ", ".join(
+                domain_names
+            ) + "."
+        return "Could you clarify what you're asking about?"
+
     def _recognized_concept_ids(self, normalized_lower: str) -> list[str]:
         """Every active governed concept whose `name` or a `synonym` is a
         substring of the (already-lowercased) normalized input -- see the
@@ -246,6 +297,17 @@ class GateA:
     ) -> GateADecision:
         input_content = _content_tokens(input_tokens)
 
+        if not input_content:
+            # A bare dangling reference (e.g. "What about it?") -- nothing
+            # to score against. Ambiguous, not unsupported (see module
+            # docstring); nothing specific to list in `candidate_intents`.
+            return GateADecision(
+                status=GateAStatus.AMBIGUOUS,
+                clarification_question=self._build_clarification_question([]),
+                reason_code="insufficient_governed_content",
+                ontology_version=version,
+            )
+
         best_per_intent: dict[str, int] = {}
         for vocab in self._phrase_vocabularies:
             score = len(vocab.content_tokens & input_content)
@@ -273,6 +335,7 @@ class GateA:
                 status=GateAStatus.AMBIGUOUS,
                 matched_concepts=recognized_concepts,
                 candidate_intents=candidate_intent_ids,
+                clarification_question=self._build_clarification_question(candidate_intent_ids),
                 reason_code="ambiguous_multiple_intents",
                 ontology_version=version,
             )
