@@ -282,6 +282,95 @@ def test_session_from_another_identity_is_rejected_same_as_ask():
 
 
 # ---------------------------------------------------------------------------
+# Task 8/9 -- memory-assisted follow-up, resolved end to end over two real
+# HTTP requests on the same session (the gap the Day 9 validation review
+# flagged: `reference_context` was proven at the service layer but never
+# reached from a real `/ask/governed` request - `build_reference_context()`
+# now derives it from the session's own stored turns, see
+# `aico.memory.context_builder`).
+# ---------------------------------------------------------------------------
+
+
+def test_memory_assisted_followup_from_the_assignments_worked_example():
+    """The assignment's own illustrative example over two real HTTP
+    requests sharing one session:
+        Turn 1: "What are the payment terms for Supplier Alpha?"
+        Turn 2: "What about its invoice policy?"
+    (Turn 1 phrased to unambiguously MATCH under this build's own
+    deterministic scoring - the assignment's literal "Show Supplier Alpha
+    payment terms." happens to tie two intents' word-overlap scores in
+    this registry's small vocabulary and comes back AMBIGUOUS on its own,
+    a pre-existing property of `gate_a.py`'s scoring unrelated to the
+    memory wiring this test exists to prove.) Turn 2 resolves through the
+    same real, unmodified `GateA.classify()` to the same governed intent
+    `artifacts/day09/gate_a_decisions.md`'s "Memory-Assisted Follow-Up"
+    case documents at the service layer - proving the live route now
+    reaches the identical outcome."""
+    gateway, retriever = CountingGateway(), CountingRetriever()
+    client = _client(gateway, retriever)
+
+    resp1 = client.post("/ask/governed", json={"question": "What are the payment terms for Supplier Alpha?"})
+    assert resp1.status_code == 200
+    body1 = resp1.json()
+    assert body1["status"] == "answered"
+    assert body1["lane"] == "rag"
+    session_id = body1["session_id"]
+
+    resp2 = client.post(
+        "/ask/governed", json={"question": "What about its invoice policy?", "session_id": session_id}
+    )
+    assert resp2.status_code == 200
+    body2 = resp2.json()
+
+    assert body2["status"] == "answered"
+    assert body2["lane"] == "rag"
+    assert gateway.call_count == 2
+    assert retriever.call_count == 2
+
+
+def test_memory_assisted_followup_changes_the_bare_pronoun_outcome():
+    """A stronger, unambiguous proof that a real prior turn is actually
+    reaching Gate-A through the live route (not merely not-breaking
+    anything): a bare "What about it?" with no prior turn in its session
+    is `AMBIGUOUS` (insufficient governed content - `gate_a.py`'s own
+    documented behavior for a dangling reference with no context to
+    resolve it); the exact same text, asked as a follow-up after a prior
+    turn establishing "Supplier Alpha", is instead classified from
+    resolved text containing that subject - a different reason_code,
+    proving the substitution actually happened, not just that the
+    endpoint tolerated the extra `session_id` field."""
+    gateway, retriever = CountingGateway(), CountingRetriever()
+
+    # Baseline: no prior turn at all -> nothing to resolve, ambiguous.
+    client_fresh = _client(gateway, retriever)
+    resp_fresh = client_fresh.post("/ask/governed", json={"question": "What about it?"})
+    assert resp_fresh.status_code == 200
+    body_fresh = resp_fresh.json()
+    assert body_fresh["status"] == "clarify"
+    assert body_fresh["reason_code"] == "insufficient_governed_content"
+
+    # With a real prior turn in the same session: the pronoun is resolved
+    # to "Supplier Alpha" before Gate-A runs, which this narrow registry's
+    # vocabulary alone is not enough to MATCH, but the resolved text is
+    # still content-bearing - a materially different reason_code than the
+    # empty-content case above, only reachable if resolution occurred.
+    client_with_history = _client(CountingGateway(), CountingRetriever())
+    resp1 = client_with_history.post(
+        "/ask/governed", json={"question": "What are the payment terms for Supplier Alpha?"}
+    )
+    session_id = resp1.json()["session_id"]
+
+    resp2 = client_with_history.post(
+        "/ask/governed", json={"question": "What about it?", "session_id": session_id}
+    )
+    assert resp2.status_code == 200
+    body2 = resp2.json()
+    assert body2["status"] == "blocked"
+    assert body2["reason_code"] == "no_governed_match"
+    assert body2["reason_code"] != body_fresh["reason_code"]
+
+
+# ---------------------------------------------------------------------------
 # /ask itself is untouched by this route existing
 # ---------------------------------------------------------------------------
 

@@ -62,7 +62,7 @@ from aico.api.dependencies import get_control_plane_answer_service, get_memory_s
 from aico.api.identity import TrustedIdentity, bearer_scheme, get_trusted_identity
 from aico.api.request_cancellation import run_cancellable
 from aico.api.session_flow import record_turn, resolve_session
-from aico.memory.context_builder import build_memory_context
+from aico.memory.context_builder import build_memory_context, build_reference_context
 from aico.memory.service import MemorySessionService
 from aico.memory.summarizer import Summarizer
 from aico.observability.logging import log_event
@@ -133,15 +133,21 @@ async def ask_governed(
         # Day 9's pipeline: Day 5 input policy -> Gate-A -> lane selector
         # -> selected-lane behavior, all inside `ControlPlaneAnswerService.
         # answer()` (Task 9). `reference_context` (Task 8, session-memory-
-        # assisted follow-up) is intentionally not threaded from stored
-        # session turns here yet - AMB-003's own working example
+        # assisted follow-up) is derived from this session's own stored
+        # turns by `build_reference_context()` - the same bounded,
+        # no-trust-upgrade derivation AMB-003's own working example
         # (`tests/test_day09_memory_interaction.py`) already proves the
-        # resolver's guarantees against `GateA`/`LaneSelector` directly;
-        # deriving a `SessionReferenceContext` from arbitrary prior turns
-        # automatically is future integration work, not required for this
-        # route to be a real, reachable governed request path today.
+        # resolver's guarantees against `GateA`/`LaneSelector` directly.
+        # `session` here is the state loaded *before* this request's own
+        # turn is recorded (below), so its `recent_turns` never includes
+        # the current question - only genuinely prior turns are ever a
+        # resolution candidate.
+        reference_context = build_reference_context(session)
         result = await run_cancellable(
-            http_request, lambda token: service.answer(request.question, token, memory_context=memory_context)
+            http_request,
+            lambda token: service.answer(
+                request.question, token, memory_context=memory_context, reference_context=reference_context
+            ),
         )
         response = governed_ask_response_from_result(
             result,

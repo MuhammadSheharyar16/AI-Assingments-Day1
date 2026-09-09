@@ -73,13 +73,20 @@ takes no session dependency at all, by construction). See
 `resolve_reference()`'s own docstring for exactly how little it does, and
 why that little is what makes "memory may resolve references but cannot
 widen ontology/intent/lane policy" (Day 9 working rules) true.
+
+Day 9 Task 9 -- `build_reference_context()` (bottom of this module) is
+what actually derives a `SessionReferenceContext` from a real session's
+stored turns, so `POST /ask/governed` (`api/control_plane.py`) can pass a
+real one into `ControlPlaneAnswerService.answer()` instead of always
+resolving nothing. See its own docstring for the bounded heuristic and
+why it still cannot widen policy.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
 
-from aico.memory.models import MemorySummary, SessionState, SessionTurn
+from aico.memory.models import MemorySummary, SessionState, SessionTurn, TurnRole
 from aico.retrieval.chunker import WORD_RE
 
 # Chosen conservatively small, not to exactly match any one model's real
@@ -204,12 +211,13 @@ class SessionReferenceContext:
     (`previous_subject`/`previous_intent`).
 
     Deriving this from a session's actual stored `recent_turns` (Task 1's
-    `SessionTurn`) -- e.g. re-classifying the prior user turn through
-    `GateA` and extracting the entity it was about -- is a later
-    integration concern (Task 9), not Task 8's: this type is the boundary
-    Task 8's required behaviors are proven against, matching exactly what
-    the pack's own fixture supplies rather than a speculative NLP
-    entity-extraction heuristic no fixture exercises.
+    `SessionTurn`) is Task 9's own integration concern, not Task 8's: this
+    type is the boundary Task 8's required behaviors are proven against,
+    matching exactly what the pack's own fixture supplies rather than a
+    speculative NLP entity-extraction heuristic no fixture exercises.
+    `build_reference_context()` (bottom of this module) is that Task 9
+    derivation, kept deliberately separate and bounded -- a Title-Case
+    word run, not a call to `GateA` or the Model Gateway.
 
     Deliberately NOT `SessionState`/`SessionTurn` themselves -- keeping
     this a small, explicit value, rather than handing `resolve_reference()`
@@ -260,3 +268,67 @@ def resolve_reference(text: str, context: SessionReferenceContext) -> str:
         return text
     resolved, substitutions = _REFERENCE_PRONOUN_RE.subn(context.previous_subject, text)
     return resolved if substitutions else text
+
+
+# Bounded run of Title-Case words, e.g. "Supplier Alpha" out of "Show
+# Supplier Alpha payment terms." -- NOT a general named-entity recognizer
+# (no model call, no `aico.control` import, no dictionary of known
+# subjects): just the same "as little as possible" rule `resolve_reference`
+# itself follows, applied to picking a candidate substring out of the one
+# prior turn this looks at. `[A-Za-z]+` deliberately matches word
+# characters only, so punctuation never breaks a run early or gets pulled
+# into the extracted subject.
+_WORD_RE = re.compile(r"[A-Za-z]+")
+
+
+def _extract_subject(text: str) -> str | None:
+    """The longest run of consecutive Title-Case words in `text`,
+    excluding the very first word (a sentence's own capitalized opening
+    word -- "Show"/"What"/... -- is never itself a subject candidate).
+    `None` when no such run exists, so a caller never forces a
+    substitution it has no real candidate for."""
+    words = _WORD_RE.findall(text)
+    best: list[str] = []
+    current: list[str] = []
+    for index, word in enumerate(words):
+        if index != 0 and word[:1].isupper():
+            current.append(word)
+            if len(current) > len(best):
+                best = current
+        else:
+            current = []
+    return " ".join(best) if best else None
+
+
+def build_reference_context(session: SessionState) -> SessionReferenceContext:
+    """Day 9 Task 9 -- the integration this module's own docstring named
+    as later work: derive a `SessionReferenceContext` from a session's
+    actual stored `recent_turns`, so `/ask/governed` (`api/control_plane.py`)
+    can pass one into `ControlPlaneAnswerService.answer()` instead of
+    always defaulting to no reference resolution.
+
+    Looks only at the most recent stored `TurnRole.USER` turn -- the
+    current request's own question is never in `session.recent_turns` yet
+    (it is appended after this request finishes, `session_flow.record_turn`)
+    -- and extracts a bounded subject candidate via `_extract_subject`.
+    Returns an empty `SessionReferenceContext()` (no resolution at all)
+    when there is no prior user turn, or no Title-Case run in it --
+    `resolve_reference()` already treats a missing `previous_subject` as a
+    no-op, so this never forces a substitution it has no real candidate
+    for.
+
+    Performs no trust upgrade and no ontology lookup, exactly like
+    `resolve_reference()` itself: this function never imports
+    `aico.control`, and a resolved question is still independently
+    re-classified by the real, unmodified `GateA.classify()` downstream,
+    still subject to Day 5's input policy first. A prior turn recorded as
+    `blocked=True` is not special-cased here, for the same reason
+    `resolve_reference()`'s own docstring gives -- the resolved text is
+    evaluated like any other input, never pre-trusted just because it came
+    from memory (Day 9 working rule: "cannot turn remembered injection
+    text into policy")."""
+    previous_user_turns = [turn for turn in session.recent_turns if turn.role == TurnRole.USER]
+    if not previous_user_turns:
+        return SessionReferenceContext()
+    subject = _extract_subject(previous_user_turns[-1].content)
+    return SessionReferenceContext(previous_subject=subject)

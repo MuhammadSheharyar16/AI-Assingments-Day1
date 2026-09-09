@@ -1169,12 +1169,14 @@ uv run python -m aico.evals.day07
 uv run python scripts/day09_generate_control_plane_artifacts.py
 ```
 
-1188 tests pass overall (up from 981 after Day 8) — ~207 new for Day 9,
+1208 tests pass overall (up from 981 after Day 8) — 227 new for Day 9,
 across `tests/test_day09_*.py` (ontology/registry, Gate-A, lane selector,
-ambiguity, memory interaction, no-fall-through counters, observability,
-control-plane config, control-plane integration, and a dedicated
-regression file that re-runs the real Day 7 evaluation CLI and the Day 8
-session-isolation matrix in-process). No-fall-through is proven with
+ambiguity, memory interaction incl. the real-session `build_reference_context`
+derivation, no-fall-through counters, observability, control-plane config,
+control-plane integration, real-HTTP API integration incl. the
+memory-assisted follow-up worked example, and a dedicated regression file
+that re-runs the real Day 7 evaluation CLI and the Day 8 session-isolation
+matrix in-process). No-fall-through is proven with
 instrumented counting fakes (not lane labels alone): `clarify`/`block`/
 `unsupported` all show zero retrieval and zero Model Gateway calls, a
 `mode_b` selection still succeeds with `sqlite3.connect` patched to raise,
@@ -1612,10 +1614,16 @@ aico-ai-engineer-lab/
                                      without execution, config-driven enabled_lanes narrowing (25)
     test_day09_ambiguity.py         Day 9 Task 6 — all ambiguity_cases.json outcomes, clarification questions
                                      built only from governed intent/domain text (15)
-    test_day09_memory_interaction.py       Day 9 Task 8 — AMB-003 + the assignment's worked example, the five
-                                     "memory cannot ..." guarantees against the real GateA/LaneSelector (19)
+    test_day09_memory_interaction.py       Day 9 Task 8/9 — AMB-003 + the assignment's worked example, the five
+                                     "memory cannot ..." guarantees against the real GateA/LaneSelector, plus
+                                     build_reference_context() deriving SessionReferenceContext from a real
+                                     session's stored turns (27)
     test_day09_control_plane_integration.py  Day 9 Task 9 — full pipeline order, per-lane routing, no
                                      unnecessary retrieval/model calls (12)
+    test_day09_api_integration.py   Day 9 Task 9 — the same pipeline order over a real HTTP request to
+                                     POST /ask/governed (real FastAPI app, real registry/config), plus the
+                                     memory-assisted follow-up worked example resolved over two real
+                                     requests on one session (12)
     test_day09_no_fallthrough.py    Day 9 Task 10 — counting fakes: clarify/block/unsupported = 0 calls,
                                      mode_b never opens sqlite3.connect, rag lane proven to reach both (13)
     test_day09_observability.py     Day 9 Task 11 — gate_a/lane_selection spans, required fields, trace_id
@@ -1626,12 +1634,12 @@ aico-ai-engineer-lab/
                                      evaluation CLI and Day 8 isolation matrix re-run in-process (4)
 ```
 
-1188 tests pass in total (`uv run pytest -q`, verified 2026-09-09, count
+1208 tests pass in total (`uv run pytest -q`, verified 2026-09-09, count
 includes parametrized cases as pytest reports them — the per-file counts
-in the tree above count test *functions*, so they don't sum to this
-number directly): 544 for Day 1-6 (up from 520 on 2026-09-07 — Day 7-9
+in the tree above are the same pytest-collected counts, and do sum to
+this number): 544 for Day 1-6 (up from 520 on 2026-09-07 — Day 7-9
 work added a small number of Day 1-6-adjacent cases along the way), 212
-new for Day 7, 225 new for Day 8, 207 new for Day 9. `test_day05_answer_support.py`
+new for Day 7, 225 new for Day 8, 227 new for Day 9. `test_day05_answer_support.py`
 is new (post-review hardening — see `support_validator.py` above); every
 other Day 1-6 test still passes unchanged, satisfying the working-rule
 regression requirement, and `uv run python -m aico.evals.day07` remains
