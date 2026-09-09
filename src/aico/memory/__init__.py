@@ -20,6 +20,13 @@ module docstrings for the full boundary rationale). Task 9 adds
 top of `save_session`'s bare optimistic-concurrency primitive - see its
 own docstring for why detection (the store, Task 2) and recovery (this
 method) are deliberately separate responsibilities.
+
+Day 9 Task 8 adds `SessionReferenceContext`/`resolve_reference` -
+resolving a dangling reference ("What about its invoice policy?") against
+a prior turn's remembered subject, without ever widening what
+`aico.control`'s Gate-A/lane selector are allowed to decide - see
+`context_builder.py`'s own module docstring for the full boundary
+rationale.
 """
 from aico.memory.context_builder import (
     DEFAULT_MAX_MEMORY_TOKENS,
@@ -27,8 +34,10 @@ from aico.memory.context_builder import (
     DEFAULT_MEMORY_BUDGET,
     MemoryBudget,
     MemoryContext,
+    SessionReferenceContext,
     build_memory_context,
     estimate_tokens,
+    resolve_reference,
 )
 from aico.memory.errors import SessionConflictError, SessionError, SessionNotFoundError
 from aico.memory.models import (
@@ -80,6 +89,8 @@ __all__ = [
     "DEFAULT_MAX_MEMORY_TOKENS",
     "DEFAULT_MAX_RECENT_TURNS",
     "DEFAULT_MEMORY_BUDGET",
+    "SessionReferenceContext",
+    "resolve_reference",
     "Summarizer",
     "SummarizerResult",
     "FakeSummarizer",

@@ -62,9 +62,21 @@ Turns this selection leaves out (`MemoryContext.omitted_turns`) are
 exactly the ones "eligible for compaction" (Task 5's required behavior) -
 Task 6's summarizer consumes that list directly rather than
 recomputing which turns are "old" on its own.
+
+Day 9 Task 8 -- reference resolution (`SessionReferenceContext`,
+`resolve_reference()`, bottom of this module). "Session Context" is its
+own stage in the Day 9 pipeline, upstream of Gate-A
+(`Trusted Request -> Session Context -> Mode-A Ontology Registry ->
+Gate-A -> ...`) -- resolving a dangling reference like "What about its
+invoice policy?" is memory's job, not Gate-A's (`aico.control.gate_a`
+takes no session dependency at all, by construction). See
+`resolve_reference()`'s own docstring for exactly how little it does, and
+why that little is what makes "memory may resolve references but cannot
+widen ontology/intent/lane policy" (Day 9 working rules) true.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from aico.memory.models import MemorySummary, SessionState, SessionTurn
@@ -172,3 +184,79 @@ def build_memory_context(session: SessionState, *, budget: MemoryBudget = DEFAUL
         token_count=token_count,
         budget=budget,
     )
+
+
+# ── Task 8: reference resolution ────────────────────────────────────────
+
+# The small, closed set of dangling-reference pronouns this resolves --
+# exactly the shape the assignment's own example uses ("What about its
+# invoice policy?"), not a general pronoun-resolution engine. Matched
+# whole-word, case-insensitively, so "it"/"It"/"ITS" all resolve the same
+# way and a word merely containing these letters ("This", "bit") never does.
+_REFERENCE_PRONOUN_RE = re.compile(r"\b(?:it's|its|it)\b", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class SessionReferenceContext:
+    """The minimal, already-resolved signal `resolve_reference()` needs:
+    the subject and governed intent of the most recent relevant prior turn
+    -- exactly `ambiguity_cases.json` AMB-003's own `session_context` shape
+    (`previous_subject`/`previous_intent`).
+
+    Deriving this from a session's actual stored `recent_turns` (Task 1's
+    `SessionTurn`) -- e.g. re-classifying the prior user turn through
+    `GateA` and extracting the entity it was about -- is a later
+    integration concern (Task 9), not Task 8's: this type is the boundary
+    Task 8's required behaviors are proven against, matching exactly what
+    the pack's own fixture supplies rather than a speculative NLP
+    entity-extraction heuristic no fixture exercises.
+
+    Deliberately NOT `SessionState`/`SessionTurn` themselves -- keeping
+    this a small, explicit value, rather than handing `resolve_reference()`
+    a whole session to go rummaging through, is what makes "memory cannot
+    widen policy" checkable by inspection: there is no session data here
+    for that function to reach for beyond these two plain strings, and (see
+    `resolve_reference()`) it does not even read `previous_intent`."""
+
+    previous_subject: str | None = None
+    previous_intent: str | None = None
+
+
+def resolve_reference(text: str, context: SessionReferenceContext) -> str:
+    """Substitute a dangling `it`/`its` reference in `text` with
+    `context.previous_subject`, when one is available -- "Session memory
+    may resolve references but cannot widen ontology/intent/lane policy"
+    (Day 9 working rules).
+
+    Returns `text` unchanged when there is nothing to substitute
+    (`previous_subject` is `None`/empty) or nothing to substitute it into
+    (no matching pronoun in `text`).
+
+    This is deliberately the ENTIRE extent of what memory does here: a
+    plain string substitution, returning plain text. It never imports or
+    touches `aico.control` (no `OntologyRegistry`, no `GateA`, no
+    `LaneSelector`) -- so it cannot create an ontology concept, cannot
+    pick an intent, and cannot choose a lane; there is no code path here
+    that could. It never reads `context.previous_intent` at all -- the
+    resolved text is only ever a *candidate* for the caller to run back
+    through the real, unmodified `GateA.classify()`, which is what
+    actually (and independently) decides whether the resolved text names
+    a governed intent (`ambiguity_cases.json` AMB-003: "memory may resolve
+    the reference but the final intent must exist in the registry"). If
+    Gate-A would have classified the resolved text as `unsupported`
+    without memory's help, substituting the subject back in does not
+    change that unless the resolved text now genuinely, independently
+    matches something governed -- memory supplies words, never a verdict.
+
+    It also performs no trust upgrade on `previous_subject` itself: the
+    resolved text is passed to `GateA.classify()` exactly like any other
+    request text, still subject to Day 5's input policy (Gate-A's own
+    Tier 0). If a prior turn's remembered subject happened to contain
+    injected/malicious text, the resolved text containing it is still
+    evaluated -- and still blocked -- like any other input; nothing here
+    marks it as pre-trusted (Day 9 working rule: "cannot turn remembered
+    injection text into policy")."""
+    if not context.previous_subject:
+        return text
+    resolved, substitutions = _REFERENCE_PRONOUN_RE.subn(context.previous_subject, text)
+    return resolved if substitutions else text
