@@ -1,8 +1,11 @@
 """
-Day 9 Task 1 -- typed Mode-A ontology model (`src/aico/control/ontology.py`).
+Day 9 Task 1/2 -- the typed Mode-A ontology model
+(`src/aico/control/ontology.py`) and the ontology registry that loads it
+(`src/aico/control/ontology_registry.py`).
 
-Proves the acceptance-relevant behaviors of `OntologyDocument` /
-`Domain` / `Concept` / `Intent` / `LaneId` directly against Pydantic:
+Task 1 section proves the acceptance-relevant behaviors of
+`OntologyDocument` / `Domain` / `Concept` / `Intent` / `LaneId` directly
+against Pydantic:
 
   - the committed `ontology/registry.v1.json` (Day 9's real Mode-A
     registry, copied verbatim from `data/day09_pack/fixtures/
@@ -17,9 +20,15 @@ Proves the acceptance-relevant behaviors of `OntologyDocument` /
     (duplicate domain id, an intent referencing an undeclared domain)
     are rejected too.
 
+Task 2 section proves `OntologyRegistry` end to end: loading the real
+committed file (success and every documented failure mode), that its
+collection/version accessors are read-only, and that `get_domain` /
+`get_concept` / `get_intent` / `resolve_concepts` correctly resolve or
+reject against the real registry's ids.
+
 Gate-A classification (Task 3/4) and lane selection (Task 5) are not
 implemented yet and are out of scope here -- this file only proves the
-typed model boundary itself.
+typed model and registry boundary itself.
 """
 from __future__ import annotations
 
@@ -30,6 +39,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from aico.control.errors import OntologyLoadError, OntologyLookupError
 from aico.control.ontology import (
     Concept,
     Domain,
@@ -38,6 +48,7 @@ from aico.control.ontology import (
     LifecycleStatus,
     OntologyDocument,
 )
+from aico.control.ontology_registry import DEFAULT_REGISTRY_PATH, OntologyRegistry
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMMITTED_REGISTRY_PATH = REPO_ROOT / "ontology" / "registry.v1.json"
@@ -289,3 +300,183 @@ def test_unknown_top_level_field_rejected():
     data["not_a_governed_field"] = "should be rejected"
     with pytest.raises(ValidationError):
         OntologyDocument.model_validate(data)
+
+
+# ===========================================================================
+# Task 2 -- OntologyRegistry
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Load committed registry / validate it
+# ---------------------------------------------------------------------------
+
+
+def test_default_registry_path_points_at_committed_file():
+    assert DEFAULT_REGISTRY_PATH == Path("ontology/registry.v1.json")
+
+
+def test_load_reads_the_real_committed_registry():
+    registry = OntologyRegistry.load()
+
+    assert registry.ontology_version == "1.0"
+    assert len(registry.domains) == 1
+    assert len(registry.concepts) == 4
+    assert len(registry.intents) == 3
+    assert set(registry.lanes) == set(LaneId)
+
+
+def test_load_accepts_an_explicit_path(tmp_path):
+    explicit_path = tmp_path / "registry.v1.json"
+    explicit_path.write_text(COMMITTED_REGISTRY_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+
+    registry = OntologyRegistry.load(explicit_path)
+
+    assert registry.ontology_version == "1.0"
+
+
+def test_load_missing_file_raises_ontology_load_error(tmp_path):
+    missing_path = tmp_path / "does_not_exist.json"
+    with pytest.raises(OntologyLoadError, match="not found"):
+        OntologyRegistry.load(missing_path)
+
+
+def test_load_malformed_json_raises_ontology_load_error(tmp_path):
+    bad_path = tmp_path / "bad.json"
+    bad_path.write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(OntologyLoadError, match="not valid JSON"):
+        OntologyRegistry.load(bad_path)
+
+
+def test_load_registry_failing_typed_validation_raises_ontology_load_error(tmp_path):
+    invalid_data = _minimal_valid_document()
+    del invalid_data["ontology_version"]
+    bad_path = tmp_path / "invalid.json"
+    bad_path.write_text(json.dumps(invalid_data), encoding="utf-8")
+
+    with pytest.raises(OntologyLoadError, match="failed validation"):
+        OntologyRegistry.load(bad_path)
+
+
+# ---------------------------------------------------------------------------
+# Expose active ontology version / read-only lookups
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def registry() -> OntologyRegistry:
+    return OntologyRegistry(OntologyDocument.model_validate(_load_committed_registry_dict()))
+
+
+def test_ontology_version_property(registry):
+    assert registry.ontology_version == "1.0"
+
+
+def test_collection_accessors_return_tuples_not_lists(registry):
+    assert isinstance(registry.domains, tuple)
+    assert isinstance(registry.concepts, tuple)
+    assert isinstance(registry.intents, tuple)
+    assert isinstance(registry.lanes, tuple)
+
+
+def test_collection_accessor_returns_a_fresh_immutable_tuple_each_call(registry):
+    """A caller gets a `tuple` (no `.append`/`.remove`/item assignment at
+    all) and a *fresh* one on every access -- not a cached reference to a
+    mutable list living inside the registry that a caller could reach
+    through and mutate for everyone else (Day 9 working rule: "Runtime
+    request/model output must not mutate the registry")."""
+    first_read = registry.concepts
+    assert not hasattr(first_read, "append")
+    with pytest.raises(TypeError):
+        first_read[0] = first_read[0]  # tuples reject item assignment
+
+    second_read = registry.concepts
+    assert first_read == second_read
+    assert first_read is not second_read
+
+
+def test_registry_has_no_public_mutator_methods(registry):
+    forbidden_prefixes = ("add_", "set_", "update_", "delete_", "remove_", "mutate_")
+    public_methods = [name for name in dir(registry) if not name.startswith("_")]
+    offending = [name for name in public_methods if name.startswith(forbidden_prefixes)]
+    assert offending == []
+
+
+# ---------------------------------------------------------------------------
+# Resolve concepts/intents (and domains) by id
+# ---------------------------------------------------------------------------
+
+
+def test_get_domain_resolves_known_domain(registry):
+    domain = registry.get_domain("supplier_governance")
+    assert isinstance(domain, Domain)
+    assert domain.name == "Supplier Governance"
+
+
+def test_get_domain_unknown_id_raises_ontology_lookup_error(registry):
+    with pytest.raises(OntologyLookupError) as exc_info:
+        registry.get_domain("does_not_exist")
+    assert exc_info.value.kind == "domain"
+    assert exc_info.value.identifier == "does_not_exist"
+
+
+def test_get_concept_resolves_known_concept(registry):
+    concept = registry.get_concept("CON-SUPPLIER")
+    assert isinstance(concept, Concept)
+    assert concept.name == "supplier"
+
+
+def test_get_concept_unknown_id_raises_ontology_lookup_error(registry):
+    with pytest.raises(OntologyLookupError) as exc_info:
+        registry.get_concept("CON-DOES-NOT-EXIST")
+    assert exc_info.value.kind == "concept"
+
+
+def test_get_intent_resolves_known_intent(registry):
+    intent = registry.get_intent("INT-POLICY-QUESTION")
+    assert isinstance(intent, Intent)
+    assert intent.allowed_lanes == [LaneId.RAG]
+
+
+def test_get_intent_unknown_id_raises_ontology_lookup_error(registry):
+    with pytest.raises(OntologyLookupError) as exc_info:
+        registry.get_intent("INT-DOES-NOT-EXIST")
+    assert exc_info.value.kind == "intent"
+
+
+def test_has_domain_concept_intent_membership_checks(registry):
+    assert registry.has_domain("supplier_governance") is True
+    assert registry.has_domain("nope") is False
+    assert registry.has_concept("CON-SUPPLIER") is True
+    assert registry.has_concept("nope") is False
+    assert registry.has_intent("INT-HELP") is True
+    assert registry.has_intent("nope") is False
+
+
+def test_resolve_concepts_bulk_resolves_in_order(registry):
+    resolved = registry.resolve_concepts(["CON-CONTRACT", "CON-SUPPLIER"])
+    assert [c.concept_id for c in resolved] == ["CON-CONTRACT", "CON-SUPPLIER"]
+
+
+def test_resolve_concepts_empty_input_returns_empty_tuple(registry):
+    assert registry.resolve_concepts([]) == ()
+
+
+def test_resolve_concepts_rejects_unknown_candidate_id(registry):
+    """Exactly the check Task 4's model-assisted interpreter needs: a
+    proposed candidate id that is not actually governed is rejected, not
+    silently dropped or substituted."""
+    with pytest.raises(OntologyLookupError) as exc_info:
+        registry.resolve_concepts(["CON-SUPPLIER", "CON-INVENTED-BY-MODEL"])
+    assert exc_info.value.identifier == "CON-INVENTED-BY-MODEL"
+
+
+def test_relationship_targets_resolve_to_real_concepts(registry):
+    """`Concept.relationships` is validated at parse time (Task 1) to only
+    ever name existing concept_ids -- `resolve_concepts` turns that id
+    list into the actual governed `Concept` objects for every concept in
+    the real registry that declares any relationships."""
+    for concept in registry.concepts:
+        if not concept.relationships:
+            continue
+        resolved = registry.resolve_concepts(concept.relationships)
+        assert [c.concept_id for c in resolved] == concept.relationships

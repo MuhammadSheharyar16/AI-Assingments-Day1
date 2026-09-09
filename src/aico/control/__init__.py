@@ -7,10 +7,12 @@ and control").
 Task 1 exports the typed ontology model (`ontology.py`): a governed Mode-A
 document is `OntologyDocument`, made of `Domain` / `Concept` / `Intent`
 records and the closed `LaneId` set, self-validating against every rule in
-`day09_pack/ontology_requirements.md`. Later tasks add the registry loader
-(Task 2, `ontology_registry.py`), Gate-A (Task 3/4, `gate_a.py`) and the lane
-selector (Task 5, `lane_selector.py`), all built on these same types.
+`day09_pack/ontology_requirements.md`. Task 2 adds `OntologyRegistry`
+(`ontology_registry.py`), the read-only, typed loader/lookup service Gate-A
+(Task 3/4, `gate_a.py`) and the lane selector (Task 5, `lane_selector.py`)
+are built against, plus its typed failures (`errors.py`).
 """
+from aico.control.errors import OntologyLoadError, OntologyLookupError, OntologyRegistryError
 from aico.control.ontology import (
     Concept,
     Domain,
@@ -19,6 +21,7 @@ from aico.control.ontology import (
     LifecycleStatus,
     OntologyDocument,
 )
+from aico.control.ontology_registry import DEFAULT_REGISTRY_PATH, OntologyRegistry
 
 __all__ = [
     "Concept",
@@ -27,4 +30,9 @@ __all__ = [
     "LaneId",
     "LifecycleStatus",
     "OntologyDocument",
+    "OntologyRegistryError",
+    "OntologyLoadError",
+    "OntologyLookupError",
+    "OntologyRegistry",
+    "DEFAULT_REGISTRY_PATH",
 ]
