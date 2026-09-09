@@ -67,7 +67,20 @@ Real, model-backed compaction is still fully supported (Task 6's own
 rule: "if used, must call through the Model Gateway") - opt in with
 `app.dependency_overrides[get_summarizer] = lambda: ModelGatewaySummarizer(get_gateway())`,
 the same override pattern as every other dependency here.
-"""
+
+Day 9 Task 9/12: `get_ontology_registry`/`get_control_plane_config` follow
+the same `lru_cache`d-singleton pattern as `_default_gateway`/
+`_default_session_store` above - a real deployment loads and validates
+`ontology/registry.v1.json` (Task 2) and `config/control-plane.yaml`
+(Task 12) exactly once, not once per request, and importing this module
+never touches either file until a request actually resolves the
+dependency. `get_control_plane_answer_service` builds on top of
+`get_answer_service` (not a second gateway/retriever/policy-evaluator
+wiring) so `/ask/governed`'s `rag` lane gets the identical
+metrics-wrapped Day 5 pipeline `/ask` itself uses - overriding
+`get_gateway`/`get_retriever`/`get_policy_evaluator` (or `get_answer_service`
+itself) changes both endpoints' `rag` behavior together, exactly as
+overriding any other shared provider here does."""
 from __future__ import annotations
 
 from functools import lru_cache
@@ -76,11 +89,14 @@ from typing import TYPE_CHECKING
 from fastapi import Depends
 
 from aico.api.instrumentation import MetricsGateway, MetricsRetriever, MetricsSessionStore
+from aico.control.config import ControlPlaneConfig, load_control_plane_config
+from aico.control.ontology_registry import OntologyRegistry
 from aico.memory.service import MemorySessionService
 from aico.memory.store import DEFAULT_SESSION_DB_PATH, SessionStore, SqliteSessionStore
 from aico.memory.summarizer import FakeSummarizer, Summarizer
 from aico.platform.model_gateway import ModelGateway
 from aico.rag.answer_service import BM25Retriever, GroundedAnswerService, PolicyEvaluator, Retriever
+from aico.rag.control_plane_answer_service import ControlPlaneAnswerService
 from aico.security.input_policy import evaluate_policy
 
 if TYPE_CHECKING:
@@ -184,3 +200,53 @@ def get_model_gateway_health_check() -> DependencyCheck:
     from aico.api.health import check_model_gateway_health
 
     return check_model_gateway_health
+
+
+@lru_cache(maxsize=1)
+def _default_ontology_registry() -> OntologyRegistry:
+    return OntologyRegistry.load()
+
+
+def get_ontology_registry() -> OntologyRegistry:
+    """Default provider: the real committed Mode-A ontology registry
+    (Day 9 Task 2, `ontology/registry.v1.json`), loaded and validated
+    exactly once via `_default_ontology_registry`'s cache. Tests override
+    this to build `ControlPlaneAnswerService` against a throwaway registry
+    without touching the committed file."""
+
+    return _default_ontology_registry()
+
+
+@lru_cache(maxsize=1)
+def _default_control_plane_config() -> ControlPlaneConfig:
+    return load_control_plane_config()
+
+
+def get_control_plane_config() -> ControlPlaneConfig:
+    """Default provider: the real `config/control-plane.yaml` (Day 9
+    Task 12), loaded and validated exactly once via
+    `_default_control_plane_config`'s cache."""
+
+    return _default_control_plane_config()
+
+
+def get_control_plane_answer_service(
+    registry: OntologyRegistry = Depends(get_ontology_registry),
+    control_plane_config: ControlPlaneConfig = Depends(get_control_plane_config),
+    rag_service: GroundedAnswerService = Depends(get_answer_service),
+) -> ControlPlaneAnswerService:
+    """Default provider: `ControlPlaneAnswerService` (Day 9 Task 9),
+    assembled from the real ontology registry and control-plane config
+    plus `get_answer_service`'s own real, metrics-wrapped Day 5 pipeline -
+    see module docstring for why this reuses `get_answer_service` rather
+    than wiring `get_gateway`/`get_retriever`/`get_policy_evaluator` a
+    second time. Tests override this dependency as a whole, or any one of
+    `get_ontology_registry`/`get_control_plane_config`/`get_answer_service`
+    (or the providers those in turn depend on) individually - the same
+    layered-override shape every other provider in this module offers."""
+
+    return ControlPlaneAnswerService(
+        registry=registry,
+        rag_service=rag_service,
+        control_plane_config=control_plane_config,
+    )
