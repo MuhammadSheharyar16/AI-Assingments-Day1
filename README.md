@@ -1,4 +1,4 @@
-# AICO — Retrieval Engineering (Day 1: Lexical Baseline · Day 2: Embeddings & Hybrid · Day 3: Model Gateway · Day 4: Structured Contracts · Day 5: Grounded Answering · Day 6: API Surface & Observability · Day 7: Evaluation & Regression Gate · Day 8: Session State & Memory)
+# AICO — Retrieval Engineering (Day 1: Lexical Baseline · Day 2: Embeddings & Hybrid · Day 3: Model Gateway · Day 4: Structured Contracts · Day 5: Grounded Answering · Day 6: API Surface & Observability · Day 7: Evaluation & Regression Gate · Day 8: Session State & Memory · Day 9: Ontology Registry, Gate-A & Lane Selection)
 
 Day 1 is a from-scratch chunker and BM25 lexical search baseline. Day 2 adds
 semantic retrieval on top of it: a real embedding provider behind one
@@ -1092,6 +1092,106 @@ Local session data (`data/sessions/`, SQLite) is gitignored, the same as
 `data/vectors/` — a fresh checkout needs no session database on disk to
 run the test suite, since every test uses `InMemorySessionStore`.
 
+## Day 9 — Ontology Registry, Gate-A & Lane Selection
+
+Adds a governed control plane in front of the Day 5–8 pipeline: `src/aico/control/`
+defines what a request is allowed to *mean* (Mode-A) and which route it is
+allowed to take, strictly separate from Mode-B facts and from Gate-B
+permission/tenant/PII checking (a later day). The assignment's own rule:
+"the model may help interpret language, but allowed meaning and the
+allowed route come from governed Mode-A definitions and deterministic
+policy."
+
+- `ontology.py` — typed `OntologyDocument`/`Domain`/`Concept`/`Intent`/
+  `LaneId` models (Pydantic, `extra="forbid"`), self-validating: duplicate
+  domain/concept/intent ids, dangling relationship targets, an intent
+  referencing an undeclared domain, and a lane not enabled for the loaded
+  ontology version are all rejected at parse time, not by ad hoc checks
+  downstream.
+- `ontology_registry.py` — loads and validates the committed
+  `ontology/registry.v1.json` (byte-identical to the Day 9 resource pack's
+  fixture) into those typed objects once, then exposes read-only lookups
+  (`get_domain`/`get_concept`/`get_intent`/`resolve_concepts`) — every
+  collection accessor returns a fresh `tuple`, and there is no mutator
+  method anywhere, so nothing at runtime (request or model output) can
+  create, widen, or mutate a registry entry.
+- `gate_a.py` — deterministic domain/intent classification *before* lane
+  selection: Day 5's own `evaluate_policy` first (a `block` outcome short-
+  circuits to `GateAStatus.BLOCKED`), then an exact governed-phrase match,
+  then governed content-term overlap scoring (synonyms folded in from the
+  registry's own `Concept.synonyms`) — never free-form fuzzy matching, and
+  never a Model Gateway call. Produces exactly one of `matched` /
+  `ambiguous` / `unsupported` / `blocked`; an ambiguous result also gets a
+  deterministically generated `clarification_question`, built only from
+  governed `Intent.description`/`Domain.name` text.
+- `lane_selector.py` — routes a `GateADecision` to one of the five
+  governed lanes (`rag` / `mode_b` / `clarify` / `block` /
+  `safe_fast_path`) using only the matched intent's own
+  `Intent.allowed_lanes`; `mode_b` is *selected*, never executed (no
+  database import anywhere in the module); an optional
+  `config/control-plane.yaml`-driven `enabled_lanes` can only narrow which
+  lanes a deployment allows, never widen what the ontology itself permits.
+- `aico/rag/control_plane_answer_service.py` — `ControlPlaneAnswerService`
+  wires Gate-A and the lane selector in front of the unmodified Day 5
+  `GroundedAnswerService`: trusted identity → session resolution → Day 5
+  input policy → (optional Task 8 reference resolution) → Gate-A →
+  lane selector → selected-lane behavior. Only the `rag` branch ever calls
+  the wrapped RAG service (retrieval/Model Gateway); `clarify`/`block`/
+  `safe_fast_path` return a typed result directly. Each of the `gate_a`/
+  `lane_selection` stages runs in its own OTel span carrying
+  `ontology_version`/`domain`/`intent_id`/`status`-or-`lane`/`reason_code`/
+  `latency_ms` — never the raw question or generated clarification text —
+  and inherits `request_id`/`correlation_id` through Day 6's existing
+  parent-span mechanism.
+
+Session memory (Day 8) may resolve a dangling reference ("its invoice
+policy" → "Supplier Alpha invoice policy") via `resolve_reference` before
+Gate-A ever classifies the text, but the final intent/lane is still
+decided independently by the unmodified Gate-A/lane selector — memory
+cannot create a concept, widen an allowed intent, override an
+`unsupported` result, or turn a remembered (possibly adversarial) subject
+into trusted policy; every resolved request is still run through Day 5's
+own input policy exactly like a first turn.
+
+`ControlPlaneAnswerService` is not yet wired into `api/app.py`'s `/ask` —
+the committed `ontology/registry.v1.json` is a deliberately small,
+synthetic Mode-A registry covering three intents, and routing the real,
+much broader `/ask` corpus (`data/documents/`, Day 7's golden eval set)
+through it today would classify most of Day 7's permanent regression
+questions `unsupported`, silently breaking the Day 7 gate. This module is
+Day 9's complete, independently testable integration, ready for a future
+day to route real traffic through once the governed ontology covers the
+corpus it gates.
+
+```
+uv run pytest -q
+uv run python -m aico.evals.day07
+uv run python scripts/day09_generate_control_plane_artifacts.py
+```
+
+1188 tests pass overall (up from 981 after Day 8) — ~207 new for Day 9,
+across `tests/test_day09_*.py` (ontology/registry, Gate-A, lane selector,
+ambiguity, memory interaction, no-fall-through counters, observability,
+control-plane config, control-plane integration, and a dedicated
+regression file that re-runs the real Day 7 evaluation CLI and the Day 8
+session-isolation matrix in-process). No-fall-through is proven with
+instrumented counting fakes (not lane labels alone): `clarify`/`block`/
+`unsupported` all show zero retrieval and zero Model Gateway calls, a
+`mode_b` selection still succeeds with `sqlite3.connect` patched to raise,
+and the same fakes are shown reaching exactly one call each for the `rag`
+lane, proving the counters are actually wired into the pipeline. The Day 7
+regression gate and Day 8 isolation/memory tests are unmodified and still
+pass — `evals/baseline_v1.json` is untouched by any Day 9 change.
+
+`scripts/day09_generate_control_plane_artifacts.py` regenerates
+`artifacts/day09/ontology_report.md`, `gate_a_decisions.md` and
+`lane_selection_report.md` from real `OntologyRegistry.load()`/
+`GateA.classify()`/`ControlPlaneAnswerService.answer()` calls (the lane
+report's call counts come from the same counting-fake technique the
+no-fall-through tests use) — including one real invalid-registry
+rejection (a duplicate `concept_id`) captured as evidence, not described
+hypothetically.
+
 ## Key design decisions
 
 **Day 1**
@@ -1164,11 +1264,11 @@ run the test suite, since every test uses `InMemorySessionStore`.
 
 ## Folder structure
 
-Verified against `git ls-files` on 2026-09-03 — every path below exists in
+Verified against `git ls-files` on 2026-09-09 — every path below exists in
 the repo as shown; nothing here is aspirational.
 
 ```
-AI-Assignments-Day6/
+aico-ai-engineer-lab/
   README.md                        this file
   pyproject.toml                    project metadata, deps, [tool.pytest.ini_options] (testpaths=tests) -
                                      `import aico` works under `uv run` because `uv sync` installs the
@@ -1176,15 +1276,28 @@ AI-Assignments-Day6/
   uv.lock                           uv's resolved + hashed dependency lockfile
   .python-version                   Python version uv pins the .venv to
   .gitignore
+  .dockerignore                     Day 7 Task 12 — keeps .venv/__pycache__/local data out of the build context
   .env                              endpoint + (legacy Day 2) provider values (gitignored, never committed)
+  Dockerfile                        Day 7 Task 12 — multi-stage build: uv-installed deps -> clean runtime stage
+  docker-entrypoint.sh              Day 7 Task 12 — container entrypoint (no baked-in credentials)
+  .github/workflows/
+    day07-quality-gate.yml          Day 7 Task 13 — CI: uv sync --frozen -> ruff -> pytest -> aico.evals.day07,
+                                     evaluation failure fails the job, baseline never auto-updated
   config/
     model-routing.yaml              Day 3 — deployment aliases, resilience/budget/routing policy (no secrets)
+    control-plane.yaml              Day 9 Task 12 — registry path, enabled lanes, clarification policy,
+                                     model-assisted-interpretation setting (off), no ontology data, no secrets
+  ontology/
+    registry.v1.json                Day 9 Task 1/2 — committed, read-only governed Mode-A registry (byte-identical
+                                     to data/day09_pack/fixtures/ontology_registry_v1.json)
+    README.md                       Day 9 — what the registry is, why it's read-only, how a v2 would be added
   contracts/schema/
     cited_answer.v1.schema.json           Day 4 — generated from CitedAnswer, never hand-edited
     response_envelope.v1.schema.json      Day 4 — generated from ResponseEnvelope, never hand-edited
   docs/adr/
     ADR-003-model-routing-and-fallback.md   Day 3 — gateway/routing/fallback design decision
     ADR-004-day4-contract-versioning.md     Day 4 — backward-compatibility rule + breaking-change examples
+    ADR-005-ruff-adoption.md                Day 7 Task 13 — why ruff is the CI lint gate
   scripts/
     day03_gateway_demo.py           Day 3 — regenerates artifacts/day03/gateway_demo.md's scenarios
     day04_generate_schemas.py       Day 4 — regenerates contracts/schema/*.json from the source models
@@ -1195,6 +1308,18 @@ AI-Assignments-Day6/
                                           from the real normalization -> input_policy -> answer_service pipeline
     day06_generate_trace_artifact.py     Day 6 Task 11 — regenerates artifacts/day06/trace_summary.md from
                                           one real /ask call's spans + metrics (fake gateway, no network call)
+    day07_generate_stability_report.py       Day 7 Task 5 — regenerates artifacts/day07/stability_report.md from
+                                              real repeated runs (refusal + groundedness signals)
+    day07_generate_failure_classification_report.py  Day 7 Task 6 — demonstration generator; superseded for
+                                                       normal use by `uv run python -m aico.evals.day07` itself
+    day07_update_baseline.py                 Day 7 Task 8 — the deliberate, separate baseline-update workflow
+                                              (dry-run by default; never invoked by CI or normal evaluation)
+    day07_controlled_regression_proof.py     Day 7 Task 10 — runs the real gate under approved/weakened/restored
+                                              retrieval config, regenerates artifacts/day07/controlled_regression.md
+    day08_generate_memory_artifacts.py       Day 8 Task 13 — regenerates artifacts/day08/*.md from real
+                                              MemorySessionService/SessionStore/context-builder/compaction calls
+    day09_generate_control_plane_artifacts.py  Day 9 Task 13 — regenerates artifacts/day09/*.md from real
+                                                OntologyRegistry/GateA/ControlPlaneAnswerService calls
   src/aico/
     api/                             Day 6 — the typed FastAPI service (Tasks 1-6, 10)
       app.py                         Task 1 — FastAPI app, POST /ask, middleware/router wiring
@@ -1235,6 +1360,11 @@ AI-Assignments-Day6/
       support_validator.py          Day 5 (post-review hardening) — citation-ID membership does not prove
                                      answer content is supported; bounded lexical-overlap check, run after
                                      citation validation, catches fabrication and poisoned-directive claims
+      control_plane_answer_service.py  Day 9 Task 9/11 — ControlPlaneAnswerService: wires Gate-A/lane selector
+                                     in front of the unmodified GroundedAnswerService (identity -> session ->
+                                     Day 5 policy -> Gate-A -> lane selector -> selected-lane behavior); only
+                                     the rag branch reaches retrieval/Model Gateway; gate_a/lane_selection
+                                     OTel spans. Not yet wired into api/app.py's /ask (see Day 9 section above)
     security/                       Day 5 — input-side defense (Tasks 5-6)
       __init__.py
       normalization.py              Day 5 Task 5 — bounded, deterministic obfuscation normalization
@@ -1248,9 +1378,51 @@ AI-Assignments-Day6/
       vector_index.py               Day 2 — vector cache, cosine similarity search
       embed.py                      Day 2 — CLI: chunks -> vector cache
       hybrid.py                     Day 2 — reciprocal-rank fusion
-    evals/
+    evals/                           Day 7 — the evaluation harness (Tasks 2-7, 9)
       day01.py                      CLI: Hit@1 / Hit@5 / MRR scorer (bm25, two chunk configs)
       day02.py                      CLI: three-mode scorer (bm25 / vector / hybrid)
+      dataset.py                    Day 7 Task 2 — typed GoldenCase loader + train/development/holdout split
+      metrics.py                    Day 7 Task 3 — deterministic checks: Hit@K/MRR/citation validity/
+                                     refusal-attack scoring, no model call
+      groundedness.py               Day 7 Task 4 — separate model-based groundedness path through the
+                                     Model Gateway, versioned grader prompt, reported apart from metrics.py
+      stability.py                  Day 7 Task 5 — repeated-run core (run_repeated) + refusal/groundedness
+                                     observation shapes, feeds artifacts/day07/stability_report.md
+      failure_classifier.py         Day 7 Task 6 — one primary failure type per failed case (fixed 6-value
+                                     taxonomy: chunking/retrieval/prompt/citation/refusal/evaluator)
+      regression.py                 Day 7 Task 7 — typed Thresholds + the zero-tolerance safety gate applied
+                                     to one run's aggregate metrics
+      day07.py                      Day 7 Task 9 — the one complete `uv run python -m aico.evals.day07`
+                                     command: validate -> evaluate -> compare vs baseline/thresholds ->
+                                     classify -> JSON+Markdown reports -> exit 0/non-zero
+    memory/                         Day 8 — the session-memory boundary (Tasks 1-10)
+      models.py                     Task 1 — typed SessionState/SessionTurn/MemorySummary (no secrets,
+                                     no trusted-identity field)
+      store.py                      Task 2 — SessionStore abstraction: SqliteSessionStore (real) +
+                                     InMemorySessionStore (deterministic test fake), one shared contract
+      service.py                    Task 3/9 — MemorySessionService: identity-bound session resolution
+                                     (tenant_id+user_id+session_id only), bounded lost-update retry
+      context_builder.py            Task 5/8 — bounded memory-context window (token/turn budget) +
+                                     SessionReferenceContext/resolve_reference (Day 9's own reference case)
+      summarizer.py                 Task 6 — Summarizer abstraction: FakeSummarizer (tests) +
+                                     ModelGatewaySummarizer (real, via the Day 3 gateway only)
+      errors.py                     Task 2 — typed SessionError family (SessionNotFoundError, ...),
+                                     cross-owner and nonexistent-session denials carry an identical reason
+    control/                        Day 9 — the Mode-A control-plane boundary (Tasks 1-3, 5, 12)
+      ontology.py                   Task 1 — typed OntologyDocument/Domain/Concept/Intent/LaneId, self-
+                                     validating (duplicate ids, dangling relationship/lane refs, enum/status)
+      ontology_registry.py          Task 2 — loads + validates ontology/registry.v1.json, read-only
+                                     lookups (fresh tuples, no mutator methods), exposes the active version
+      gate_a.py                     Task 3/6 — GateA.classify(): Day 5 policy -> exact governed phrase ->
+                                     governed content-term overlap; matched/ambiguous/unsupported/blocked,
+                                     deterministic clarification-question generation, no Model Gateway call
+      lane_selector.py              Task 5 — LaneSelector.select(): routes a GateADecision to one of the
+                                     5 governed lanes from the matched intent's own allowed_lanes only
+      models.py                     Task 3/5 — shared GateADecision/LaneDecision typed result shapes
+      config.py                     Task 12 — validated config/control-plane.yaml loading (registry path,
+                                     enabled lanes, clarification policy, model-assisted-interpretation)
+      errors.py                     Tasks 2/5/12 — OntologyLoadError/OntologyLookupError/
+                                     LaneSelectionError/ControlPlaneConfigurationError
   data/
     documents/                      DOC-001 .. DOC-005 (synthetic, unchanged across all days)
     evals/
@@ -1276,8 +1448,38 @@ AI-Assignments-Day6/
       api_contract_guidance.md
       telemetry_requirements.md
       trace_summary_template.md
+    day08_pack/                     Day 8 — supplied resource pack (deterministic lifecycle/isolation/
+                                     compaction/safety scenarios; does not prescribe class names/schema)
+      README.md
+      memory_contract_guidance.md
+      context_budget_guidance.md
+      fixtures/
+        session_lifecycle_cases.json
+        isolation_cases.json
+        context_compaction_cases.json
+        memory_safety_cases.json
+    day09_pack/                     Day 9 — supplied resource pack (fixed synthetic inputs, never edited
+                                     to make the implementation pass)
+      README.md
+      ontology_requirements.md      Task 1/2's required validation bullets
+      lane_policy.md                Task 5's required routing policy table
+      fixtures/
+        ontology_registry_v1.json   the governed v1 registry (copied verbatim to ontology/registry.v1.json)
+        gate_a_cases.json           6 cases: exact/synonym/structured/unsupported/unknown/blocked
+        lane_selection_cases.json   5 cases, one per governed lane
+        ambiguity_cases.json        3 cases (AMB-001..003), including the memory-resolved AMB-003
     index/                         build output (gitignored) - python -m aico.retrieval.ingest
     vectors/                       build output (gitignored) - python -m aico.retrieval.embed
+    sessions/                      Day 8 — local SqliteSessionStore data (gitignored; every test uses
+                                     InMemorySessionStore instead, so a fresh checkout needs none of this)
+  evals/                            Day 7 Tasks 1/7/8 — developer-authored (no Day 7 resource pack supplied)
+    golden_v1.json                 Task 1 — >=25 labelled cases across all 6 required categories, split
+                                    train/development/holdout
+    thresholds_v1.json             Task 7 — explicit, machine-readable, applied release thresholds +
+                                    zero-tolerance safety gate
+    baseline_v1.json               Task 8 — reviewed baseline; never rewritten by normal evaluation, only
+                                    by the separate `--update-baseline` workflow (scripts/day07_update_baseline.py)
+    README.md                      design rationale for the dataset/splits/thresholds/baseline above
   artifacts/
     day01/
       chunks_200_40.json            committed chunk set, config A
@@ -1298,6 +1500,27 @@ AI-Assignments-Day6/
     day06/                          Day 6 Task 11 — auto-generated by day06_generate_trace_artifact.py
       trace_summary.md              request/correlation IDs, all 6 trace stages, latency/token/retry,
                                      programmatically-verified redaction check (not a hand-ticked box)
+    day07/                          Day 7 — generated by `uv run python -m aico.evals.day07` + Task 5/10 scripts
+      evaluation_report.json        Task 11 — full machine-readable run (counts, metrics, splits, safety
+                                     gate, threshold/baseline comparison, stability, failures, verdict)
+      evaluation_report.md          Task 11 — the same run, human-readable
+      stability_report.md           Task 5 — repeated-run case IDs, observed scores, mean/range/variation
+      stability_summary.json        Task 5 — machine-readable counterpart
+      failure_classification.md     Task 6 — every failed case's primary type + evidence-based reason
+      controlled_regression.md      Task 10 — approved -> weakened (FAIL, non-zero exit) -> restored (PASS)
+    day08/                          Day 8 Task 13 — generated by day08_generate_memory_artifacts.py
+      session_lifecycle.md          sanitized evidence: creation, two-turn follow-up, load, expiry, clear
+      context_compaction.md         configured budget/limit, size before/after, compacted turn IDs,
+                                     summary provenance, confirmation retrieved evidence stays separate
+      isolation_report.md           same-owner / cross-user / cross-tenant / cross-session / nonexistent-
+                                     session outcomes, no raw conversation content
+    day09/                          Day 9 Task 13 — generated by day09_generate_control_plane_artifacts.py
+      ontology_report.md            version, domains/concepts/intents/lanes summary, validation result,
+                                     one real invalid-registry rejection (duplicate concept_id)
+      gate_a_decisions.md           exact/synonym/ambiguous/unsupported/memory-assisted-follow-up cases,
+                                     each with actual GateA.classify() output
+      lane_selection_report.md      Gate-A result / selected lane / reason / retrieval-model-call counts
+                                     per case, referencing the Task 10 counter evidence for clarify/block
   tests/
     __init__.py
     fixtures/
@@ -1312,6 +1535,8 @@ AI-Assignments-Day6/
         api_cases.json                    synthetic Content-Type/size/validation/correlation cases
         identity_claim_cases.json         synthetic trusted-principal claims cases (allow/reject)
         dependency_health_cases.json      synthetic dependency-outage combinations
+      (Day 8/9 tests read their fixtures directly from data/day08_pack/fixtures/ and
+      data/day09_pack/fixtures/ — no separate tests/fixtures/day08|day09/ copy is kept)
     test_chunker.py                 (11)
     test_bm25.py                    (6)
     test_ingest.py                  (4)
@@ -1349,15 +1574,68 @@ AI-Assignments-Day6/
     test_day06_health.py            Day 6 Task 6 — liveness/readiness/dependency-health, all 3 fixtures (9)
     test_day06_observability.py     Day 6 Tasks 7-9 + 12 — structured logs, metrics, tracing, redaction (18)
     test_day06_dependency_injection.py     Day 6 Task 10 — every DI seam independently replaceable (5)
+    test_day07_dataset.py           Day 7 Task 1/2 — schema, >=25 cases, all 6 categories, unique IDs,
+                                     split correctness, holdout-not-used-for-tuning (23)
+    test_day07_metrics.py           Day 7 Task 3 — Hit@K/MRR/citation-validity/refusal-attack scorers (36)
+    test_day07_groundedness.py      Day 7 Task 4 — model-based groundedness path, versioned grader (15)
+    test_day07_live_groundedness.py Day 7 Task 4 — same path against a real Model Gateway call (9)
+    test_day07_stability.py         Day 7 Task 5 — repeated-run aggregation, mean/range/variation (20)
+    test_day07_failure_classification.py   Day 7 Task 6 — every failed case gets exactly one primary type (22)
+    test_day07_safety_gate.py       Day 7 Task 7 — zero-tolerance safety gate overrides aggregate score (21)
+    test_day07_baseline_update.py   Day 7 Task 8 — baseline immutable under normal eval, separate deliberate
+                                     update path only (29)
+    test_day07_regression_gate.py   Day 7 Task 9 — the complete `aico.evals.day07` command, exit codes (19)
+    test_day07_holdout.py           Day 7 Task 10 — weakened retrieval config fails the gate, non-zero exit (11)
+    test_day07_uv_workflow.py       Day 7 — install/lint/test/eval all run through `uv run` (7)
+    test_day08_session_contract.py  Day 8 Task 1 — typed SessionState/SessionTurn/MemorySummary shape (28)
+    test_day08_session_lifecycle.py Day 8 Task 2 — create/get/save/clear/expire, same contract for both
+                                     store implementations (61)
+    test_day08_isolation.py         Day 8 Task 3 — same-owner allow; cross-user/cross-tenant/cross-session/
+                                     guessed-ID deny, indistinguishable fail-closed reason (29)
+    test_day08_followup.py          Day 8 Task 4 — two-turn follow-up demo; current retrieval/citations
+                                     still drive the factual answer (12)
+    test_day08_context_budget.py    Day 8 Task 5 — bounded context window never exceeds the configured
+                                     budget, newest-turns-retained policy (22)
+    test_day08_compaction.py        Day 8 Task 6 — older-turn summarization, provenance, no fact/permission
+                                     invention, fake + Model-Gateway summarizer paths (27)
+    test_day08_memory_not_evidence.py      Day 8 Task 7 — memory separately labelled, memory IDs rejected
+                                     by the citation validator, remembered claims stay unsupported (17)
+    test_day08_memory_safety.py     Day 8 Task 10 — injection/blocked/unsupported-fact/forged-citation
+                                     turns in memory cannot become trusted policy or evidence (17)
+    test_day08_concurrency.py       Day 8 Task 9 — optimistic-version lost-update protection, no unbounded
+                                     retry (12)
+    test_day09_ontology.py          Day 9 Task 1/2 — typed registry, every required rejection (duplicate/
+                                     dangling-reference/invalid-enum/missing-version), read-only lookups (41)
+    test_day09_gate_a.py            Day 9 Task 3/4/7 — all gate_a_cases.json outcomes, unsupported-fails-
+                                     closed sweep, ontology version on every decision (51)
+    test_day09_lane_selector.py     Day 9 Task 5 — all lane_selection_cases.json outcomes, mode_b selected
+                                     without execution, config-driven enabled_lanes narrowing (25)
+    test_day09_ambiguity.py         Day 9 Task 6 — all ambiguity_cases.json outcomes, clarification questions
+                                     built only from governed intent/domain text (15)
+    test_day09_memory_interaction.py       Day 9 Task 8 — AMB-003 + the assignment's worked example, the five
+                                     "memory cannot ..." guarantees against the real GateA/LaneSelector (19)
+    test_day09_control_plane_integration.py  Day 9 Task 9 — full pipeline order, per-lane routing, no
+                                     unnecessary retrieval/model calls (12)
+    test_day09_no_fallthrough.py    Day 9 Task 10 — counting fakes: clarify/block/unsupported = 0 calls,
+                                     mode_b never opens sqlite3.connect, rag lane proven to reach both (13)
+    test_day09_observability.py     Day 9 Task 11 — gate_a/lane_selection spans, required fields, trace_id
+                                     inherited from a parent span, no raw question/clarification text (10)
+    test_day09_control_plane_config.py     Day 9 Task 12 — config/control-plane.yaml validated loading,
+                                     unknown lane id rejected, no secrets (17)
+    test_day09_regression.py        Day 9 Task 14 — safe_fast_path-is-INT-HELP-only, plus the real Day 7
+                                     evaluation CLI and Day 8 isolation matrix re-run in-process (4)
 ```
 
-520 tests pass in total (`uv run pytest -q`, verified 2026-09-07, count
+1188 tests pass in total (`uv run pytest -q`, verified 2026-09-09, count
 includes parametrized cases as pytest reports them — the per-file counts
 in the tree above count test *functions*, so they don't sum to this
-number directly). `test_day05_answer_support.py` is new (post-review
-hardening — see `support_validator.py` above); every other Day 1-6 test
-still passes unchanged, satisfying the working-rule regression
-requirement.
+number directly): 544 for Day 1-6 (up from 520 on 2026-09-07 — Day 7-9
+work added a small number of Day 1-6-adjacent cases along the way), 212
+new for Day 7, 225 new for Day 8, 207 new for Day 9. `test_day05_answer_support.py`
+is new (post-review hardening — see `support_validator.py` above); every
+other Day 1-6 test still passes unchanged, satisfying the working-rule
+regression requirement, and `uv run python -m aico.evals.day07` remains
+green with `evals/baseline_v1.json` unchanged by any Day 8/9 commit.
 
 Note: the task brief's "Required structure" names `requirements.txt`; this
 repo uses `pyproject.toml` + `uv.lock` (via `uv`) instead, which is the
@@ -1378,3 +1656,28 @@ files (`test_day06_correlation.py`, `test_day06_errors.py`,
 minimum set, which the brief's "equivalent file splitting is acceptable
 when responsibilities remain clear and independently testable" explicitly
 allows.
+
+Day 7's required tree (`src/aico/evals/{dataset,metrics,groundedness,
+regression,failure_classifier}.py`, `evals/{golden,thresholds,baseline}_v1.json`,
+`artifacts/day07/*`, the `test_day07_*.py` files, `Dockerfile`, and the CI
+workflow) matches exactly; `stability.py` and `test_day07_uv_workflow.py`
+are additive. No Day 7 resource pack was supplied by design (`evals/README.md`
+documents and justifies every dataset/threshold/baseline decision).
+
+Day 8's required tree (`src/aico/memory/*`, `data/day08_pack/*` used as
+supplied, `artifacts/day08/*`, the `test_day08_*.py` files) matches
+exactly; `test_day08_session_contract.py` and `test_day08_memory_not_evidence.py`
+split Task 1/7 coverage out of the minimum set, the same file-splitting
+allowance Day 6 already used.
+
+Day 9's required tree (`src/aico/control/*`, `ontology/registry.v1.json`,
+`config/control-plane.yaml`, `data/day09_pack/*` used as supplied,
+`artifacts/day09/*`, the `test_day09_*.py` files) matches exactly;
+`test_day09_control_plane_integration.py`, `test_day09_observability.py`
+and `test_day09_control_plane_config.py` split Task 9/11/12 coverage out
+of the minimum set. `gate_a.py` runs a fully deterministic two-tier
+classifier and does not use a model-assisted interpreter — the Task 4/14
+model-candidate-validation checks are satisfied structurally
+(`OntologyRegistry.resolve_concepts()` rejects an unknown candidate id,
+`test_day09_ontology.py::test_resolve_concepts_rejects_unknown_candidate_id`)
+rather than by an interpreter that exists but is unused.
