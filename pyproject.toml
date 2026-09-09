@@ -19,7 +19,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
+    "httpx2>=2.12.0",
     "pytest>=9.1.1",
     "pytest-timeout>=2.4.0",
     "ruff>=0.16.6",
@@ -34,6 +34,16 @@ packages = ["src/aico"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # Upstream-only noise: Starlette 1.6.0's own testclient.py module-level
+    # code still references the deprecated anyio.abc.BlockingPortal alias
+    # internally (anyio's own deprecation, not ours) - nothing in this
+    # codebase touches anyio.abc.BlockingPortal, and there is no
+    # currently-released Starlette version that avoids it. Scoped to the
+    # exact message/module so a real BlockingPortal usage introduced later
+    # in this codebase's own code would still surface normally.
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated.*:DeprecationWarning:starlette.testclient",
+]
 
 [tool.ruff]
 # Explicit, not ruff's own version-dependent implicit default (working
