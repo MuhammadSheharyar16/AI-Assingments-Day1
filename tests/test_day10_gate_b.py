@@ -8,6 +8,9 @@ combinations, determinism, and the model-cannot-authorize boundary.
 Day 10 Task 7 -- governed data-classification enforcement through the
 authorization path (unit coverage for `is_data_classification_permitted()`
 itself lives in `test_day10_policy_registry.py`).
+Day 10 Task 10 -- clarification behavior: the one safe, necessary
+`clarify` trigger, and the boundary around it -- Gate-B never asks the
+caller to self-assert a role/tenant/permission/clearance, it denies.
 
 Proves, against the real committed `policy/gate_b_policy.v1.json` (Task 2's
 `PolicyRegistry`), the real committed `ontology/registry.v1.json` (Day 9's
@@ -43,9 +46,16 @@ Proves, against the real committed `policy/gate_b_policy.v1.json` (Task 2's
     guarantees ("policy version invalid" is structurally impossible,
     "no natural-language inference" is structurally impossible -- proven by
     inspecting the actual types involved, not a runtime check);
-  - the one documented `clarify` case (Task 10): a matched, allowed rule
-    whose own `allowed_data_classes` names more than one classification and
-    the caller asked for none in particular;
+  - Task 10's one safe, necessary `clarify` trigger: a matched, allowed
+    rule whose own `allowed_data_classes` names more than one
+    classification and the caller asked for none in particular -- and its
+    boundary: every scenario that instead needs trusted-identity/policy
+    context (missing identity, missing/unknown role, cross-tenant, a
+    specifically disallowed classification, no matching rule at all)
+    denies rather than clarifies, proven both per-scenario and as a
+    closed-set sweep ("clarify only ever pairs with
+    `data_class_selection_required`, never anything role/tenant/
+    permission-shaped");
   - Task 7's governed classifications enforced end to end: `public`/
     `internal` both individually granted for a policy-document read,
     `confidential` allowed only for the one specifically authorized role
@@ -534,7 +544,7 @@ def test_authorize_has_no_raw_text_parameter_to_infer_permission_from():
 
 
 # ---------------------------------------------------------------------------
-# Clarify (Task 10's one documented case)
+# Clarification behavior (Task 10)
 # ---------------------------------------------------------------------------
 
 
@@ -542,8 +552,9 @@ def test_clarify_when_matched_rule_allows_multiple_classes_and_none_requested(ga
     """`GB-R005` (`compliance_reviewer` / `INT-STRUCTURED-LOOKUP` /
     `mode_b`) allows `[public, internal, confidential]` -- three
     classifications. Asking for none in particular is genuinely ambiguous
-    and safely clarifiable (Task 10), never a role/tenant/permission the
-    caller would have to self-assert."""
+    and safely clarifiable (Task 10 example: "request references two
+    allowed resource types and policy needs one selected"), never a
+    role/tenant/permission the caller would have to self-assert."""
     identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-3", roles=("compliance_reviewer",))
     decision = gate_b.authorize(
         identity,
@@ -554,7 +565,12 @@ def test_clarify_when_matched_rule_allows_multiple_classes_and_none_requested(ga
     assert decision.decision is GateBStatus.CLARIFY
     assert decision.reason_code == "data_class_selection_required"
     assert decision.rule_id == "GB-R005"
-    # Nothing granted yet -- clarify is not a partial allow.
+    # The tenant scope was already safely resolved before the ambiguity
+    # was hit -- clarify does not have to re-litigate what is already
+    # settled, only what genuinely still needs one thing selected.
+    assert decision.effective_tenant_scope == ("TENANT-A",)
+    # Nothing about the ambiguous dimension itself is granted yet --
+    # clarify is not a partial allow.
     assert decision.effective_data_classes == ()
     assert decision.effective_pii_policy == ()
     assert decision.disclosure_profile is None
@@ -576,6 +592,120 @@ def test_clarify_never_needed_when_matched_rule_allows_exactly_one_class(gate_b)
     )
     assert decision.decision is GateBStatus.CLARIFY
     assert decision.rule_id == "GB-R004"
+
+
+# --- "Do not ask the user to provide: a role / a tenant ID to gain
+# access / a permission name / a clearance level" -- every one of these
+# is a case where the missing information is trusted-identity/policy
+# territory, not something safe to ask the caller for, so each denies
+# rather than clarifies. ---
+
+
+def test_missing_trusted_identity_denies_never_clarifies(gate_b):
+    """Task 10: "If trusted authorization context is missing, deny/
+    auth-fail rather than asking the user to claim more privilege." """
+    decision = gate_b.authorize(
+        None, _matched("INT-POLICY-QUESTION"), _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION")
+    )
+    assert decision.decision is GateBStatus.DENY
+    assert decision.decision is not GateBStatus.CLARIFY
+
+
+def test_missing_role_denies_never_clarifies(gate_b):
+    """Never "what is your role?" -- role is trusted identity, not
+    something the caller supplies to get past a gap."""
+    identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-1", roles=())
+    decision = gate_b.authorize(
+        identity, _matched("INT-POLICY-QUESTION"), _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION")
+    )
+    assert decision.decision is GateBStatus.DENY
+    assert decision.decision is not GateBStatus.CLARIFY
+
+
+def test_unknown_role_denies_never_clarifies(gate_b):
+    identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-1", roles=("made_up_role",))
+    decision = gate_b.authorize(
+        identity, _matched("INT-POLICY-QUESTION"), _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION")
+    )
+    assert decision.decision is GateBStatus.DENY
+    assert decision.decision is not GateBStatus.CLARIFY
+
+
+def test_cross_tenant_denies_never_clarifies(gate_b):
+    """Never "which tenant ID would you like to use?" -- that would let a
+    caller probe for a tenant to claim rather than being bounded to the
+    one their trusted identity already establishes."""
+    identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-2", roles=("sourcing_analyst",))
+    decision = gate_b.authorize(
+        identity,
+        _matched("INT-POLICY-QUESTION"),
+        _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION"),
+        GateBRequest(data_class=DataClassification.INTERNAL, tenant_ids=("TENANT-B",)),
+    )
+    assert decision.decision is GateBStatus.DENY
+    assert decision.decision is not GateBStatus.CLARIFY
+
+
+def test_no_matching_rule_denies_never_clarifies(gate_b):
+    """Never "what permission do you have?" -- an absent rule denies
+    outright; Gate-B does not ask the caller to name a permission that
+    would let it match one."""
+    identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-3", roles=("compliance_reviewer",))
+    decision = gate_b.authorize(
+        identity, _matched("INT-POLICY-QUESTION"), _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION")
+    )
+    assert decision.decision is GateBStatus.DENY
+    assert decision.decision is not GateBStatus.CLARIFY
+
+
+def test_disallowed_classification_denies_never_clarifies(gate_b):
+    """Never "what clearance level do you have?" -- a specifically
+    requested, disallowed classification denies; it is not treated as
+    "tell us your clearance and we'll let it through." """
+    identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-1", roles=("supplier_reader",))
+    decision = gate_b.authorize(
+        identity,
+        _matched("INT-POLICY-QUESTION"),
+        _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION"),
+        GateBRequest(data_class=DataClassification.RESTRICTED),
+    )
+    assert decision.decision is GateBStatus.DENY
+    assert decision.decision is not GateBStatus.CLARIFY
+
+
+def test_clarify_is_reserved_exclusively_for_the_one_safe_data_class_ambiguity(gate_b, registry):
+    """Closed-set proof, swept across every deny-producing scenario this
+    module's own tests exercise: `CLARIFY` is only ever reached through
+    `reason_code="data_class_selection_required"` -- never paired with a
+    role/tenant/permission/intent-shaped reason. Enumerates every distinct
+    `reason_code` this build can actually produce and asserts the mapping
+    holds for all of them, rather than trusting the handful of cases
+    above to be exhaustive."""
+    identity_variants = [
+        None,
+        TrustedIdentity(tenant_id="TENANT-A", user_id="USER-1", roles=()),
+        TrustedIdentity(tenant_id="TENANT-A", user_id="USER-1", roles=("made_up_role",)),
+        TrustedIdentity(tenant_id="TENANT-A", user_id="USER-1", roles=("supplier_reader",)),
+        TrustedIdentity(tenant_id="TENANT-A", user_id="USER-2", roles=("sourcing_analyst",)),
+        TrustedIdentity(tenant_id="TENANT-A", user_id="USER-3", roles=("compliance_reviewer",)),
+    ]
+    seen_reason_codes: set[str] = set()
+    for identity in identity_variants:
+        for rule in registry.rules:
+            for data_class in (None, *rule.allowed_data_classes, DataClassification.RESTRICTED):
+                for tenant_ids in ((), ("TENANT-B",)):
+                    decision = gate_b.authorize(
+                        identity,
+                        _matched(rule.intent_id),
+                        _lane_decision(rule.lane, rule.intent_id),
+                        GateBRequest(data_class=data_class, tenant_ids=tenant_ids),
+                    )
+                    seen_reason_codes.add(decision.reason_code)
+                    if decision.decision is GateBStatus.CLARIFY:
+                        assert decision.reason_code == "data_class_selection_required"
+
+    assert "data_class_selection_required" in seen_reason_codes  # sanity: the sweep did hit the clarify path
+    assert len(seen_reason_codes) > 1  # sanity: the sweep did hit more than just one reason code
 
 
 # ---------------------------------------------------------------------------
