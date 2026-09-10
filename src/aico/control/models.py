@@ -217,3 +217,26 @@ class GateBDecision(BaseModel):
     )
     reason_code: str = Field(min_length=1, description="Short, sanitized, machine-checkable reason for this decision.")
     policy_version: str = Field(min_length=1, description="The governed Gate-B policy version this decision was made against.")
+
+    @property
+    def effective_scope_summary(self) -> str:
+        """Day 10 Task 14's named `effective_scope_summary` field, computed
+        once here so every observability call site (an OTel span attribute,
+        a future structured log line) reads the identical sanitized
+        summary rather than each re-deriving its own. Deliberately a
+        *summary*, not the raw scope itself: `effective_tenant_scope` is
+        reported as a bare count (a real deployment's tenant id can be an
+        actual customer name -- Task 14's "do not log ... full policy
+        internals unnecessarily" is read conservatively here), while
+        `effective_data_classes`/`effective_pii_policy` are reported as
+        their governed, closed-vocabulary LABELS (`internal`, `contact`,
+        ...) -- categories, never a raw protected value, the same
+        "governed id, not raw content" rule `gate_a`'s own
+        `domain`/`intent_id` span attributes already follow."""
+        data_classes = ",".join(sorted(c.value for c in self.effective_data_classes))
+        pii_categories = ",".join(sorted(c.value for c in self.effective_pii_policy))
+        return (
+            f"tenants={len(self.effective_tenant_scope)}"
+            f";data_classes=[{data_classes}]"
+            f";pii_categories=[{pii_categories}]"
+        )

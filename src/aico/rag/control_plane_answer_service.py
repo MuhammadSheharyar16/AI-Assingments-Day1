@@ -173,18 +173,21 @@ actually covers the corpus it gates.
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from opentelemetry import trace
 
 from aico.api.identity import TrustedIdentity
 from aico.control.config import ControlPlaneConfig
+from aico.control.disclosure import ProtectedField, SafeDisclosureView, apply_disclosure
 from aico.control.gate_a import GateA
 from aico.control.gate_b import GateB, GateBRequest
 from aico.control.lane_selector import LaneSelector
-from aico.control.models import GateADecision, GateBStatus, LaneDecision
+from aico.control.models import GateADecision, GateBDecision, GateBStatus, LaneDecision
 from aico.control.ontology import LaneId, LifecycleStatus
 from aico.control.ontology_registry import OntologyRegistry
+from aico.control.policy_models import DisclosureAction, DisclosureProfile
 from aico.control.policy_registry import PolicyRegistry
 from aico.memory.context_builder import MemoryContext, SessionReferenceContext, resolve_reference
 from aico.platform.model_gateway import CancellationToken
@@ -437,17 +440,23 @@ class ControlPlaneAnswerService:
         # and `safe_fast_path` never touches protected data at all (see
         # its own branch below), so Gate-B is not invoked for either.
         # `identity` is never logged here -- only `gate_b_decision`'s own
-        # already-sanitized fields become span attributes.
+        # already-sanitized fields become span attributes (Task 14: "do
+        # not log ... authorization tokens, full claims").
         gate_b_decision = None
         if self.gate_b is not None and lane_decision.lane in (LaneId.RAG, LaneId.MODE_B):
             with _tracer.start_as_current_span("gate_b") as span:
                 start = time.monotonic()
                 gate_b_decision = self.gate_b.authorize(identity, gate_decision, lane_decision, requested)
                 latency_ms = (time.monotonic() - start) * 1000
+                span.set_attribute("gate_b.ontology_version", gate_decision.ontology_version)
                 span.set_attribute("gate_b.policy_version", gate_b_decision.policy_version)
                 span.set_attribute("gate_b.decision", gate_b_decision.decision.value)
                 span.set_attribute("gate_b.rule_id", gate_b_decision.rule_id or "")
+                span.set_attribute("gate_b.intent_id", gate_b_decision.intent_id or "")
+                span.set_attribute("gate_b.lane", gate_b_decision.lane.value if gate_b_decision.lane else "")
                 span.set_attribute("gate_b.reason_code", gate_b_decision.reason_code)
+                span.set_attribute("gate_b.effective_scope_summary", gate_b_decision.effective_scope_summary)
+                span.set_attribute("gate_b.disclosure_profile", gate_b_decision.disclosure_profile or "")
                 span.set_attribute("gate_b.latency_ms", latency_ms)
 
             if gate_b_decision.decision is GateBStatus.DENY:
@@ -513,3 +522,43 @@ class ControlPlaneAnswerService:
         matched_intent = self.registry.get_intent(intent_id)
         supported = [i.description for i in self.registry.intents if i.status is LifecycleStatus.ACTIVE]
         return matched_intent.description + " Supported requests: " + "; ".join(supported) + "."
+
+    def disclose(
+        self, gate_b_decision: GateBDecision, profile: DisclosureProfile | None, candidate_fields: Sequence[ProtectedField]
+    ) -> SafeDisclosureView:
+        """Day 10 Task 14's `"safe_disclosure"` span, wrapping Task 9's
+        pure `apply_disclosure()` -- the same "orchestration layer adds
+        tracing, decision logic itself stays pure/span-free" split this
+        class already applies to Gate-A/the lane selector/Gate-B (Task 11)
+        and `disclosure.py`/`redaction.py` deliberately keep (see their
+        own module docstrings: no I/O, no tracing import, of their own).
+
+        Not called from `.answer()` itself: this pipeline's `rag`/`mode_b`
+        lanes have no structured, per-field-classified protected record to
+        disclose yet (see the module docstring's "Gate-B integration is
+        opt-in" section on the same underlying reason `answer()` cannot
+        supply a `requested.data_class` on a caller's behalf either) -- a
+        free-text RAG answer and a not-yet-executed Mode-B selection are
+        not `ProtectedField` sequences. This method is the concrete,
+        traced, directly-tested orchestration point a future caller uses
+        once one exists; `test_day10_observability.py` proves the span
+        end to end today with a hand-built `candidate_fields` sequence.
+
+        Span attributes are counts and governed labels only -- never a raw
+        field name, value, or masked value (Task 14: "do not log ... raw
+        protected records")."""
+        with _tracer.start_as_current_span("safe_disclosure") as span:
+            start = time.monotonic()
+            view = apply_disclosure(gate_b_decision, profile, candidate_fields)
+            latency_ms = (time.monotonic() - start) * 1000
+            allowed = sum(1 for f in view.fields if f.action is DisclosureAction.ALLOW)
+            redacted = sum(1 for f in view.fields if f.action is DisclosureAction.REDACT)
+            denied = sum(1 for f in view.fields if f.action is DisclosureAction.DENY)
+            span.set_attribute("safe_disclosure.policy_version", view.policy_version)
+            span.set_attribute("safe_disclosure.disclosure_profile", view.disclosure_profile or "")
+            span.set_attribute("safe_disclosure.field_count", len(view.fields))
+            span.set_attribute("safe_disclosure.allowed_count", allowed)
+            span.set_attribute("safe_disclosure.redacted_count", redacted)
+            span.set_attribute("safe_disclosure.denied_count", denied)
+            span.set_attribute("safe_disclosure.latency_ms", latency_ms)
+        return view

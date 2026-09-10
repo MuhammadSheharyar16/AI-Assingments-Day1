@@ -185,6 +185,32 @@ def test_gate_b_decision_exposes_every_required_field(gate_b):
     assert decision.policy_version == "1.0"
 
 
+def test_effective_scope_summary_reports_counts_and_labels_never_raw_tenant_ids(gate_b):
+    """Day 10 Task 14's own named `effective_scope_summary` field: a
+    tenant COUNT (never the raw tenant id), governed data-class/PII-
+    category LABELS (closed vocabulary, not raw protected content)."""
+    identity = TrustedIdentity(tenant_id="TENANT-SENSITIVE-CUSTOMER-NAME", user_id="USER-1", roles=("supplier_reader",))
+    decision = gate_b.authorize(
+        identity,
+        _matched("INT-POLICY-QUESTION"),
+        _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION"),
+        GateBRequest(data_class=DataClassification.INTERNAL),
+    )
+    summary = decision.effective_scope_summary
+
+    assert "tenants=1" in summary
+    assert "internal" in summary
+    assert "TENANT-SENSITIVE-CUSTOMER-NAME" not in summary
+
+
+def test_effective_scope_summary_is_empty_shaped_on_deny(gate_b):
+    identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-1", roles=("made_up_role",))
+    decision = gate_b.authorize(
+        identity, _matched("INT-POLICY-QUESTION"), _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION")
+    )
+    assert decision.effective_scope_summary == "tenants=0;data_classes=[];pii_categories=[]"
+
+
 def test_gate_b_request_carries_no_role_tenant_permission_or_clearance_field():
     """Structural proof of Task 10's boundary: there is nowhere on this
     type for a caller to even attempt to self-assert a higher role/tenant
