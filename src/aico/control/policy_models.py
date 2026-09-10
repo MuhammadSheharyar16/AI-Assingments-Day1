@@ -96,24 +96,42 @@ supply a `lanes` list that agrees with every intent's `allowed_lanes`.
 
 ## Task 7/8 -- shared policy-decision primitives
 
-Two small, pure functions live here rather than in `gate_b.py` or a future
-`disclosure.py`, precisely so neither ever gets re-implemented in the other
-(Task 7: "Do not hardcode behavior in multiple unrelated files"):
+Three small, pure functions live here rather than in `gate_b.py` or
+`disclosure.py`, precisely so none of them ever gets re-implemented
+elsewhere (Task 7: "Do not hardcode behavior in multiple unrelated
+files"):
 
     - `is_data_classification_permitted()` (Task 7) -- is a
-      `DataClassification` a member of an authorized set.
+      `DataClassification` a member of an authorized set. `GateB.authorize()`
+      (Task 3) is this function's only caller: the *requested*
+      classification, checked against one matched
+      `PermissionRule.allowed_data_classes`, before a `GateBDecision`
+      exists at all.
     - `is_pii_category_permitted()` (Task 8) -- the identical membership
-      check for `PiiCategory`.
+      check for `PiiCategory`. Used both by policy validation and, a
+      second time, by Task 9's `disclosure.py` as a defense-in-depth
+      safety net: each protected field's own governed PII category,
+      checked against an already-decided `GateBDecision.effective_pii_policy`
+      (which -- unlike `effective_data_classes` -- is never narrower than
+      the matched rule's own `allowed_pii_categories`, so this check can
+      only ever catch a genuinely disallowed category, never a false
+      positive against a field the rule does authorize).
     - `resolve_disclosure_action()` (Task 8) -- the one deterministic
       `(DisclosureProfile, field_name) -> DisclosureAction` lookup, fail
       closed (`DENY`) for any field the matched profile does not declare.
-
-`GateB.authorize()` (Task 3) calls the first for the *requested*
-classification, before a `GateBDecision` exists at all. Task 9's
-`disclosure.py` is expected to call all three again, this time for each
-protected field's own already-classified *result* data against an
-already-decided `GateBDecision` -- reusing these functions, never
-duplicating their logic.
+      This -- not a fresh `is_data_classification_permitted()` check per
+      field -- is `disclosure.py`'s primary, authoritative decision for a
+      *known*, declared field: the committed profiles are deliberately
+      authored to sometimes `redact` (not `deny`) a field whose own
+      classification exceeds what the matched rule's `allowed_data_classes`
+      would otherwise suggest (`pii_disclosure_cases.json` PII-002:
+      `contact_email` is tagged `confidential` while `GB-R001` only
+      authorizes `public`/`internal`, yet `policy_reader` still redacts
+      rather than denies it) -- re-deriving that decision from
+      `allowed_data_classes` in `disclosure.py` would silently override
+      the policy author's own, deliberate per-field choice. Data
+      classification is authorized once, at Gate-B time (Task 7); it is
+      not re-checked per field at disclosure time.
 
 ## Not covered here
 
@@ -160,17 +178,14 @@ def is_data_classification_permitted(
     docstring), so `internal` being permitted never implies `restricted`
     is too, and this function does not invent one.
 
-    Two callers share this function rather than each re-implementing the
-    same one-line check: `gate_b.py`'s `GateB.authorize()` (the
+    `gate_b.py`'s `GateB.authorize()` is this function's caller: the
     *requested* classification, checked against one matched
-    `PermissionRule.allowed_data_classes`, before a decision exists at
-    all) and Task 9's `disclosure.py` (each protected field's own,
-    already-classified *result* data, checked against an already-decided
-    `GateBDecision.effective_data_classes`). Both are "is this
-    classification in that governed set" -- the same rule, two different
-    stages of the pipeline; a future policy version that changes what
-    "permitted" means (e.g. an explicit hierarchy) only has to change it
-    here."""
+    `PermissionRule.allowed_data_classes`, before a `GateBDecision` exists
+    at all. Task 9's `disclosure.py` does *not* call this a second time
+    per field -- see this module's "Task 7/8" docstring section for why a
+    field-level re-check against classification would silently override a
+    disclosure profile's own deliberate per-field choice
+    (`pii_disclosure_cases.json` PII-002)."""
     return data_class in allowed_data_classes
 
 
@@ -195,14 +210,18 @@ def is_pii_category_permitted(pii_category: PiiCategory, allowed_pii_categories:
     ordering (`sensitive_personal` being disallowed says nothing about
     `contact`, and vice versa).
 
-    Shared the same way across the pipeline: `GateB`/policy validation
-    reason about a matched rule's own `allowed_pii_categories`
-    (`PermissionRule`, Task 1) before a decision exists; Task 9's
-    `disclosure.py` is expected to call this again for each protected
-    field's own governed PII category against an already-decided
-    `GateBDecision.effective_pii_policy` -- one function, not two
-    independently-maintained membership checks that could silently drift
-    apart."""
+    Unlike `is_data_classification_permitted()`, this one genuinely is
+    called twice across the pipeline: `GateBPolicyDocument`'s own
+    validation reasons about a matched rule's `allowed_pii_categories`
+    indirectly (Task 1), and Task 9's `disclosure.py` calls this function
+    a second time, per protected field, as a defense-in-depth check
+    against an already-decided `GateBDecision.effective_pii_policy` --
+    safe to do for PII specifically (unlike data classification) because
+    `effective_pii_policy` is always the matched rule's complete
+    `allowed_pii_categories`, never narrowed to a single caller-requested
+    category the way `effective_data_classes` sometimes is; a category
+    genuinely absent from it is always safe to deny, never a false
+    positive against a field the matched rule does authorize."""
     return pii_category in allowed_pii_categories
 
 

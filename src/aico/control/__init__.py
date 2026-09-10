@@ -37,14 +37,21 @@ authorization/disclosure boundary, run from a trusted identity plus a
 `GateADecision`/`LaneDecision`, before any protected evidence access.
 Task 7 adds `is_data_classification_permitted()` (`policy_models.py`) --
 the single membership check a data classification is ever tested against
-an authorized set with, shared by `GateB` (the *requested* classification)
-and Task 9's future `disclosure.py` (each protected field's own *result*
-classification). Task 8 adds its PII analogs, `is_pii_category_permitted()`
-and `resolve_disclosure_action()` (`policy_models.py`) -- the one place a
-PII category is checked against an authorized set, and the one place a
-protected field name is resolved to a governed `DisclosureAction`
-(fail-closed `DENY` for an undeclared field), both pure/deterministic and
-built directly on the committed policy's own `disclosure_profiles` data.
+an authorized set with; `GateB.authorize()` is its only caller (the
+*requested* classification, before a `GateBDecision` exists). Task 8 adds
+its PII analog, `is_pii_category_permitted()` (`policy_models.py`) -- used
+a second time by Task 9's `disclosure.py`, per protected field, as a
+defense-in-depth check against an already-decided
+`GateBDecision.effective_pii_policy` -- and `resolve_disclosure_action()`
+(`policy_models.py`), the one place a protected field name is resolved to
+a governed `DisclosureAction` (fail-closed `DENY` for an undeclared
+field), both pure/deterministic and built directly on the committed
+policy's own `disclosure_profiles` data. Task 9 adds `mask_value()` and
+friends (`redaction.py`) -- deterministic value masking, never a model --
+and `apply_disclosure()`/`SafeDisclosureView` (`disclosure.py`), the safe-
+disclosure view builder that combines all of the above into the final,
+policy-approved output for one `GateBDecision` and its candidate
+`ProtectedField`s.
 """
 from aico.control.config import (
     DEFAULT_CONTROL_PLANE_CONFIG_PATH,
@@ -53,6 +60,7 @@ from aico.control.config import (
     ModelAssistedInterpretationConfig,
     load_control_plane_config,
 )
+from aico.control.disclosure import DisclosedField, ProtectedField, SafeDisclosureView, apply_disclosure
 from aico.control.errors import (
     ControlPlaneConfigurationError,
     GateBError,
@@ -91,6 +99,7 @@ from aico.control.policy_models import (
     resolve_disclosure_action,
 )
 from aico.control.policy_registry import DEFAULT_POLICY_PATH, PolicyRegistry
+from aico.control.redaction import mask_email, mask_identifier, mask_phone, mask_value
 
 __all__ = [
     "Concept",
@@ -137,4 +146,12 @@ __all__ = [
     "is_data_classification_permitted",
     "is_pii_category_permitted",
     "resolve_disclosure_action",
+    "mask_value",
+    "mask_email",
+    "mask_phone",
+    "mask_identifier",
+    "apply_disclosure",
+    "ProtectedField",
+    "DisclosedField",
+    "SafeDisclosureView",
 ]

@@ -98,9 +98,12 @@ own tiered classification (cheapest/most-certain checks first) and equally
      that enum's own docstring). `is_data_classification_permitted()` is
      the one place this membership check is made at all (Task 7: "Do not
      hardcode behavior in multiple unrelated files") - Task 9's
-     `disclosure.py` is expected to call the same function for each
-     protected field's own *result* classification against this
-     decision's `effective_data_classes`, never re-implement the check.
+     `disclosure.py` deliberately does *not* re-run this check per
+     protected field (see `policy_models.py`'s "Task 7/8" docstring
+     section for why: a disclosure profile's own per-field
+     `DisclosureAction` is authoritative and can legitimately `redact`
+     rather than `deny` a field whose classification exceeds what this
+     stage authorized, `pii_disclosure_cases.json` PII-002).
      When the caller declared none at all and the rule authorizes more
      than one classification, Gate-B does not guess which one to grant -
      Task 10's `clarify` ("request references two allowed resource types
