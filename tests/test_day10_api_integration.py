@@ -5,38 +5,51 @@ real HTTP request (`api/app.py`, `api/control_plane.py`,
 
 `test_day10_control_plane_integration.py` already proves the full
 required order at the `ControlPlaneAnswerService` level (constructing the
-service directly with a real `policy_registry`). This file closes the one
-gap that left open: whether the live route actually reaches Gate-B at
-all. It did not, by default, before this file's own change set --
-`get_control_plane_answer_service` (`dependencies.py`) never passed
-`policy_registry` into the service, and `ask_governed()` (`control_plane.py`)
-never forwarded the already-resolved trusted `identity` into `.answer()`
-either. Both gaps are closed; `config/control-plane.yaml`'s own
-`gate_b.enabled` (default `false`, preserving `test_day09_api_
-integration.py`'s exact behavior unchanged) is overridden `true` here via
-`get_control_plane_config`, mirroring the override pattern every other
-test file in this project uses.
+service directly with a real `policy_registry`). This file closes the two
+gaps that left open: whether the live route actually reaches Gate-B at
+all, and whether a genuine `allow` (not just `deny`/`clarify`) is
+reachable through it. Neither was true, by default, before this file's
+own change set:
+
+  - `get_control_plane_answer_service` (`dependencies.py`) never passed
+    `policy_registry` into the service, and `ask_governed()`
+    (`control_plane.py`) never forwarded the already-resolved trusted
+    `identity` into `.answer()` -- so Gate-B never ran at all. Fixed via
+    `config/control-plane.yaml`'s `gate_b.enabled` (default `false`,
+    preserving `test_day09_api_integration.py`'s exact behavior
+    unchanged) plus unconditional `identity` forwarding.
+  - Even with Gate-B reachable, `/ask/governed`'s public request body had
+    no field to declare a data-classification preference, and every
+    committed rule (`GB-R001`/`GB-R003`/`GB-R004`/`GB-R005`) authorizes
+    2+ data classes -- so `clarify` was the only HTTP-reachable non-deny
+    outcome; `allow` could never actually be reached over HTTP. Fixed by
+    `GovernedAskRequest.data_class` (`control_plane_contracts.py`, Day 10
+    Task 13's *one* Gate-B-relevant request-body field -- a narrowing
+    preference only, never a grant: a value the matched rule does not
+    itself authorize still denies).
+
+`config/control-plane.yaml`'s `gate_b.enabled` is overridden `true` here
+via `get_control_plane_config`, mirroring the override pattern every
+other test file in this project uses.
 
 Proves, over a real `TestClient(app)` request:
 
   - Gate-B `deny` (missing governed role) -> `status="gate_b_denied"`,
     zero retrieval/model calls (counting fakes, same discipline
     `test_day09_api_integration.py`/`test_day10_no_fallthrough.py` use).
+  - Gate-B `deny` (a `data_class` the matched rule does not authorize --
+    `restricted` for `supplier_reader`) -> `status="gate_b_denied"`,
+    `reason_code="data_classification_not_allowed"`, zero protected
+    calls -- proving the field can only narrow, never widen.
   - Gate-B `clarify` (a matched, allowed rule authorizing more than one
-    data classification, and `/ask/governed`'s `AskRequest` carries no
-    per-request classification hint today) -> `status="gate_b_clarify"`,
-    zero retrieval/model calls. This is the *only* HTTP-reachable
-    non-deny outcome for `rag`/`mode_b` today -- every committed rule
-    (`GB-R001`/`GB-R003`/`GB-R004`/`GB-R005`) authorizes 2+ data
-    classes, and `AskRequest` has no field to disambiguate one, exactly
-    as `control_plane_answer_service.py`'s own module docstring
-    documents. A true HTTP-reachable Gate-B `allow` would require
-    extending the public `AskRequest`/`GovernedAskResponse` contract with
-    a `data_class` field -- out of this fix's scope; `allow` reaching
-    retrieval/the Model Gateway exactly once is already proven at the
-    `ControlPlaneAnswerService` level by `test_day10_control_plane_
-    integration.py::test_allowed_rag_request_reaches_retrieval_and_model_
-    exactly_once`, which this file does not duplicate.
+    data classification, `data_class` omitted) -> `status="gate_b_clarify"`,
+    zero retrieval/model calls.
+  - Gate-B `allow` (a `data_class` the matched rule *does* authorize) ->
+    `status="answered"`, retrieval/the Model Gateway reached exactly once
+    each -- the genuine HTTP-reachable `allow` this file's own change set
+    unlocks, not merely inferred from the `ControlPlaneAnswerService`-level
+    proof `test_day10_control_plane_integration.py::test_allowed_rag_
+    request_reaches_retrieval_and_model_exactly_once` already gives.
   - `gate_b.enabled: false` (the committed default) reproduces Day 9's
     exact `/ask/governed` behavior unchanged for the identical request --
     a direct side-by-side confirmation that activating Gate-B is genuinely
@@ -135,6 +148,30 @@ def test_unknown_role_denies_through_the_live_route_with_zero_protected_calls():
     assert retriever.call_count == 0
 
 
+def test_disallowed_data_class_denies_through_the_live_route_with_zero_protected_calls():
+    """`supplier_reader`'s matched rule (`GB-R001`) authorizes
+    `[public, internal]` -- `restricted` is a real governed classification
+    (`policy/gate_b_policy.v1.json`'s own `data_classifications`) this
+    caller's rule simply does not authorize. Proves `GovernedAskRequest.
+    data_class` can only ever narrow what Gate-B considers, never widen
+    it -- declaring a classification the matched rule does not authorize
+    still denies, exactly as if nothing had been declared at all."""
+    gateway, retriever = CountingGateway(), CountingRetriever()
+    client = _client(_SUPPLIER_READER, gateway, retriever)
+
+    resp = client.post(
+        "/ask/governed", json={"question": "What are the payment terms?", "data_class": "restricted"}
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "gate_b_denied"
+    assert body["reason_code"] == "data_classification_not_allowed"
+    assert body["rule_id"] == "GB-R001"
+    assert gateway.call_count == 0
+    assert retriever.call_count == 0
+
+
 # ---------------------------------------------------------------------------
 # Gate-B clarify, reached through a real HTTP request
 # ---------------------------------------------------------------------------
@@ -154,6 +191,35 @@ def test_ambiguous_data_class_clarifies_through_the_live_route_with_zero_protect
     assert body["policy_version"] == "1.0"
     assert gateway.call_count == 0
     assert retriever.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Gate-B allow, reached through a real HTTP request
+# ---------------------------------------------------------------------------
+
+
+def test_authorized_data_class_answers_through_the_live_route_reaching_retrieval_and_model_exactly_once():
+    """The genuine HTTP-reachable Gate-B `allow`: same identity/question
+    as the clarify case above, but with `data_class="internal"` declared
+    -- a value `GB-R001` (`supplier_reader`'s matched rule) does
+    authorize. Retrieval/the Model Gateway are reached exactly once each,
+    the same sanity check `test_day09_api_integration.py`'s own rag-lane
+    test gives, now proven with Gate-B genuinely in front of it rather
+    than absent."""
+    gateway, retriever = CountingGateway(), CountingRetriever()
+    client = _client(_SUPPLIER_READER, gateway, retriever)
+
+    resp = client.post(
+        "/ask/governed", json={"question": "What are the payment terms?", "data_class": "internal"}
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "answered"
+    assert body["lane"] == "rag"
+    assert body["answer"] == "Payment terms are net 30 days."
+    assert gateway.call_count == 1
+    assert retriever.call_count == 1
 
 
 # ---------------------------------------------------------------------------

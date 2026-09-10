@@ -1267,16 +1267,24 @@ memory, request body, and repair logic may never widen it."
   `supplier_reader` / `sourcing_analyst` / `compliance_reviewer`) are
   deliberately separate synthetic spaces; leaving Gate-B off by default
   keeps `test_day09_api_integration.py`'s already-accepted behavior
-  exactly unchanged. `test_day10_api_integration.py` proves the live
-  route really does reach Gate-B once a deployment turns `gate_b.enabled`
-  on and supplies a real Day 10 governed identity — a `deny` (unknown
-  role) and a `clarify` (ambiguous data classification — `/ask/governed`'s
-  public `AskRequest` carries no per-request classification field yet, so
-  every committed rule's 2+ allowed classes make `clarify` the only
-  HTTP-reachable non-deny outcome today) each reach zero retrieval/model
-  calls over a real HTTP request, and the identical request with
-  `gate_b.enabled: false` reproduces Day 9's own `"answered"` outcome
-  unchanged, side by side.
+  exactly unchanged.
+- `api/control_plane_contracts.py` — `GovernedAskRequest` extends `AskRequest`
+  with exactly one Gate-B-relevant field, `data_class`: an optional,
+  caller-declared *preference* among the classifications the caller's own
+  matched rule authorizes — never a grant (a value the matched rule does
+  not itself authorize still denies, `data_classification_not_allowed`).
+  Without it, every committed rule's 2+ allowed data classes made
+  `clarify` the only HTTP-reachable non-deny Gate-B outcome; declaring it
+  is what makes a genuine `allow` reachable over a real request.
+  `test_day10_api_integration.py` proves the live route really does reach
+  Gate-B once a deployment turns `gate_b.enabled` on and supplies a real
+  Day 10 governed identity — `deny` (unknown role), `deny` (a declared
+  `data_class` the matched rule does not authorize), `clarify` (no
+  `data_class` declared, matched rule authorizes more than one), and a
+  genuine `allow` (an authorized `data_class` declared — retrieval/the
+  Model Gateway reached exactly once each) all proven over real HTTP
+  requests, plus the identical request with `gate_b.enabled: false`
+  reproducing Day 9's own `"answered"` outcome unchanged, side by side.
 
 ```
 uv run pytest -q
@@ -1284,7 +1292,7 @@ uv run python -m aico.evals.day07
 uv run python scripts/day10_generate_gate_b_artifacts.py
 ```
 
-1469 tests pass overall (up from 1208 after Day 9) across `tests/test_day10_*.py`
+1471 tests pass overall (up from 1208 after Day 9) across `tests/test_day10_*.py`
 (policy model/registry validation incl. every "Required validation"
 rejection and the real committed policy, Gate-B's fail-closed stages incl.
 the `permission_not_granted` defense-in-depth check, tenant-scope/effective-
@@ -1463,7 +1471,12 @@ aico-ai-engineer-lab/
                                       config/control-plane.yaml's gate_b.enabled is true
       control_plane_contracts.py     Day 9 Task 9 — public GovernedAskResponse contract, all nine
                                       pipeline outcomes mapped to it; Day 10 Task 13 — the two
-                                      Gate-B-native outcomes (gate_b_denied/gate_b_clarify) added
+                                      Gate-B-native outcomes (gate_b_denied/gate_b_clarify) added, plus
+                                      GovernedAskRequest(AskRequest) adding the one Gate-B-relevant
+                                      request field (data_class — a narrowing preference, never a grant)
+      session_flow.py                Day 8 Task 4/11 (extracted for Day 9) — resolve_session/record_turn,
+                                      shared unmodified by POST /ask and POST /ask/governed so neither
+                                      route drifts out of sync on isolation/logging/retry semantics
     observability/                   Day 6 — telemetry configuration (Tasks 7-9)
       logging.py                     Task 7 — structured JSON log_event() + stdout handler setup
       metrics.py                     Task 8 — OpenTelemetry Metrics API, in-memory reader
@@ -1694,6 +1707,9 @@ aico-ai-engineer-lab/
                                      protected PII value anywhere in the report itself
   tests/
     __init__.py
+    conftest.py                     Day 8 Task 4 — shared fixtures (get_session_store override so
+                                     every /ask-exercising test uses InMemorySessionStore, never the
+                                     real on-disk SqliteSessionStore)
     fixtures/
       day04/
         existing_caller_v1.json           mirrors data/day04_pack/fixtures/, read by test_day04_compatibility.py
@@ -1825,17 +1841,19 @@ aico-ai-engineer-lab/
                                      ControlPlaneAnswerService with a real policy_registry, rag/mode_b
                                      routing, no-fall-through at the service level (15)
     test_day10_api_integration.py   Day 10 Task 13 — the same pipeline order over a real HTTP request
-                                     to POST /ask/governed with gate_b.enabled: true, plus the
-                                     side-by-side gate_b.enabled: false confirmation (3)
+                                     to POST /ask/governed with gate_b.enabled: true, incl. a genuine
+                                     allow (GovernedAskRequest.data_class declared and authorized) and
+                                     a deny for a declared-but-unauthorized data_class, plus the
+                                     side-by-side gate_b.enabled: false confirmation (5)
     test_day10_regression.py        Day 10 Task 16 — the real Day 7 evaluation CLI and the Day 8/9
                                      regression suites re-run in-process (6)
 ```
 
-1469 tests pass in total (`uv run pytest -q`, verified 2026-09-10, count
+1471 tests pass in total (`uv run pytest -q`, verified 2026-09-10, count
 includes parametrized cases as pytest reports them — the per-file counts
 in the tree above are the same pytest-collected counts, and do sum to
 this number): 544 for Day 1-6, 212 for Day 7, 225 for Day 8, 227 for
-Day 9, 261 new for Day 10 (251 across `test_day10_*.py`, 2 gate_b
+Day 9, 263 new for Day 10 (253 across `test_day10_*.py`, 2 gate_b
 activation-toggle cases folded into `test_day09_control_plane_config.py`
 above, and 8 in `test_day06_identity.py` proving `TrustedIdentity`'s new
 `roles` claim — Day 10 Task 3's extension to Day 6's own trust boundary —

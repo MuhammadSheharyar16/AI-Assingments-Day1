@@ -64,13 +64,13 @@ from fastapi import APIRouter, Depends, Request, Security
 from fastapi.security import HTTPAuthorizationCredentials
 from opentelemetry import trace
 
-from aico.api.contracts import AskRequest
-from aico.api.control_plane_contracts import GovernedAskResponse, governed_ask_response_from_result
+from aico.api.control_plane_contracts import GovernedAskRequest, GovernedAskResponse, governed_ask_response_from_result
 from aico.api.correlation import RequestContext, get_request_context
 from aico.api.dependencies import get_control_plane_answer_service, get_memory_service, get_summarizer
 from aico.api.identity import TrustedIdentity, bearer_scheme, get_trusted_identity
 from aico.api.request_cancellation import run_cancellable
 from aico.api.session_flow import record_turn, resolve_session
+from aico.control.gate_b import GateBRequest
 from aico.memory.context_builder import build_memory_context, build_reference_context
 from aico.memory.service import MemorySessionService
 from aico.memory.summarizer import Summarizer
@@ -90,7 +90,7 @@ router = APIRouter()
     tags=["ask"],
 )
 async def ask_governed(
-    request: AskRequest,
+    request: GovernedAskRequest,
     http_request: Request,
     context: RequestContext = Depends(get_request_context),
     identity: TrustedIdentity = Depends(get_trusted_identity),
@@ -162,6 +162,17 @@ async def ask_governed(
         # makes it the real, trusted, Day 6-established identity Gate-B
         # authorizes against - never a request-body value, and never
         # something this handler has to conditionally decide to pass.
+        #
+        # `request.data_class` (`GovernedAskRequest`'s one Gate-B-relevant
+        # field, `control_plane_contracts.py`) is forwarded the identical
+        # way - a caller-declared *preference*, never authorization by
+        # itself: Gate-B still denies if the matched rule does not
+        # authorize it, and still ignores it entirely when Gate-B is
+        # inactive. Without it, every committed rule's 2+ allowed data
+        # classes would make `clarify` the only reachable non-deny Gate-B
+        # outcome over HTTP; declaring it is what makes `allow` itself
+        # reachable through a real `/ask/governed` request.
+        requested = GateBRequest(data_class=request.data_class)
         result = await run_cancellable(
             http_request,
             lambda token: service.answer(
@@ -170,6 +181,7 @@ async def ask_governed(
                 memory_context=memory_context,
                 reference_context=reference_context,
                 identity=identity,
+                requested=requested,
             ),
         )
         response = governed_ask_response_from_result(

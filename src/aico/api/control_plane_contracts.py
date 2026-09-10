@@ -32,6 +32,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aico.api.contracts import AskRequest
+from aico.control.policy_models import DataClassification
 from aico.rag.answer_service import (
     AnswerResult,
     Blocked,
@@ -49,6 +51,46 @@ from aico.rag.control_plane_answer_service import (
     ModeBSelected,
     SafeFastPathAnswer,
 )
+
+
+class GovernedAskRequest(AskRequest):
+    """Public request body for `POST /ask/governed`. Extends `AskRequest`
+    (`contracts.py`, Day 6) with exactly one Day 10 Task 13 addition:
+    `data_class`, an *optional, caller-declared* data-classification
+    preference among the ones the caller's own governed rule authorizes.
+
+    This is deliberately the one and only Gate-B-relevant field a request
+    body may ever carry — see `gate_b.py`'s own `GateBRequest` docstring
+    for the parallel rule: "Notably absent: role, tenant *ownership*,
+    permission, clearance". `data_class` can only ever *narrow* what
+    Gate-B considers (the same "scope-narrowing exception" `GateBRequest.
+    tenant_ids` already documents) — supplying one that the caller's
+    matched rule does not itself authorize still denies
+    (`data_classification_not_allowed`), never grants it. Without this
+    field, a caller matched to any committed rule (every one of which
+    authorizes 2+ data classes) can only ever reach Gate-B's `clarify`
+    outcome for `rag`/`mode_b`, never `allow` — this field is what makes
+    `allow` itself reachable over a real `/ask/governed` request, closing
+    that gap.
+
+    Declared here (`control_plane_contracts.py`, the Day 9/10-owned
+    governed-contract module) rather than on `AskRequest` itself: `/ask`
+    never runs Gate-A/Gate-B at all, so a Gate-B-only field has no reason
+    to exist on its request body — the same layering rule that keeps
+    `GovernedAskResponse`'s own Day 10 fields (`policy_version`/`rule_id`)
+    off `AskResponse`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    data_class: DataClassification | None = Field(
+        default=None,
+        description=(
+            "Optional data-classification preference, among the ones the caller's own "
+            "governed rule authorizes (Day 10 Task 7). Never a source of authorization by "
+            "itself — a value the matched rule does not authorize still denies. Omit to let "
+            "Gate-B ask for clarification when the matched rule authorizes more than one."
+        ),
+    )
 
 
 class GovernedAskStatus(str, Enum):
@@ -300,6 +342,7 @@ def governed_ask_response_from_result(
 # input union without importing `aico.rag` directly.
 __all__ = [
     "AnswerResult",
+    "GovernedAskRequest",
     "GovernedAskResponse",
     "GovernedAskStatus",
     "GovernedCitationOut",
