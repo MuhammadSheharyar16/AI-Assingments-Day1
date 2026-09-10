@@ -106,3 +106,18 @@ class PolicyLookupError(PolicyRegistryError):
         self.kind = kind
         self.identifier = identifier
         super().__init__(f"unknown {kind}: {identifier!r}")
+
+
+class GateBError(Exception):
+    """Raised by `GateB.authorize()` (Day 10 Task 3) when it is given
+    inputs that violate an invariant it depends on -- e.g. a `MATCHED`
+    `GateADecision` with no `intent_id`, or a `PermissionRule` returned by
+    `PolicyRegistry.find_rule()` naming a `disclosure_profile` the same
+    registry does not actually govern. `GateA.classify()` /
+    `PolicyRegistry.load()` never produce such inputs by construction;
+    this exists to fail loudly rather than silently misauthorize if some
+    other caller ever constructs or passes a malformed decision/registry
+    by hand -- the identical role `LaneSelectionError` plays for
+    `LaneSelector`. Never raised for an ordinary authorization outcome
+    (allow/clarify/deny are all normal, typed `GateBDecision` results, not
+    exceptions)."""

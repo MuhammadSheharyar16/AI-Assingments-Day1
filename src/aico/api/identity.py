@@ -1,5 +1,6 @@
 """
 Day 6 Task 2 — trusted identity context.
+Day 10 Task 3 — extended with trusted `roles`.
 
 Tenant and user identity are authorization context, not operational
 convenience (Day 6 rule: "Correlation context may be generated.
@@ -8,6 +9,21 @@ API that is allowed to decide what `tenant_id`/`user_id` a request is
 acting as, and it decides that exclusively from verified authentication
 claims - never from anything the caller wrote into the request body or an
 arbitrary header.
+
+`roles` (Day 10) is the identical trust boundary applied to one more verified
+claim: a role is exactly as much authorization context as tenant/user id, so
+it comes from the same place, the same way - never from the request body,
+never from session memory (`gate_b.py`'s own working rule: "Session memory
+cannot grant a permission"). Unlike `tenant_id`/`user_id`, a missing/empty
+`roles` claim does NOT reject the request here - it produces a
+`TrustedIdentity` with `roles=()`, a validly *authenticated* caller who
+simply carries no governed role yet. "Role missing" is then Gate-B's own
+deny-by-default outcome (Day 10 Task 4), not an authentication failure -
+Day 6's boundary is about verifying *who* the caller is, Day 10's Gate-B is
+what decides whether that verified caller may act. A `roles` claim that IS
+present but malformed (not a list of non-empty strings) is still rejected
+here, exactly like a malformed `tenant_id`/`user_id` - a well-formed but
+empty claim and a garbled one are different failures.
 
 Trust boundary implemented here:
 
@@ -68,11 +84,17 @@ bearer_scheme = HTTPBearer(
 
 @dataclass(frozen=True)
 class TrustedIdentity:
-    """Verified tenant/user context for one request. Never constructed
-    from unverified input - see `build_trusted_identity`."""
+    """Verified tenant/user/role context for one request. Never constructed
+    from unverified input - see `build_trusted_identity`.
+
+    `roles` (Day 10) defaults to an empty tuple - a caller can be validly
+    authenticated (real, verified tenant/user identity) while carrying no
+    governed role at all; see the module docstring for why that is not
+    itself a rejection here."""
 
     tenant_id: str
     user_id: str
+    roles: tuple[str, ...] = ()
 
 
 class IdentityError(ApiError):
@@ -107,7 +129,23 @@ def build_trusted_identity(claims: Mapping[str, object]) -> TrustedIdentity:
     if not isinstance(user_id, str) or not user_id.strip():
         raise IdentityError("trusted claims are missing a non-empty user_id")
 
-    return TrustedIdentity(tenant_id=tenant_id, user_id=user_id)
+    roles = _parse_roles_claim(claims.get("roles"))
+
+    return TrustedIdentity(tenant_id=tenant_id, user_id=user_id, roles=roles)
+
+
+def _parse_roles_claim(raw_roles: object) -> tuple[str, ...]:
+    """A `roles` claim is optional (Day 10 module docstring: missing is a
+    validly-authenticated caller with no governed role, not a rejection),
+    but a *present* one must be well-formed - a list of non-empty strings,
+    same strictness as `tenant_id`/`user_id` above. `bool` is explicitly
+    excluded even though `isinstance(True, str)` is irrelevant here -
+    consistency with the same guard pattern used for the other claims."""
+    if raw_roles is None:
+        return ()
+    if not isinstance(raw_roles, list) or not all(isinstance(r, str) and r.strip() for r in raw_roles):
+        raise IdentityError("trusted claims carry a malformed roles claim (expected a list of non-empty strings)")
+    return tuple(raw_roles)
 
 
 def _decode_bearer_token(request: Request) -> Mapping[str, object]:

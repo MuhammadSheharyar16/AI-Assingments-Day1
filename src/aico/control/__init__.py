@@ -31,7 +31,10 @@ the read-only, typed loader/lookup service Gate-B (Task 3) is built
 against -- loading the committed `policy/gate_b_policy.v1.json` through
 `GateBPolicyDocument`, cross-checked against the real committed
 `OntologyRegistry`'s governed intent ids -- plus its typed failures
-(`errors.py`).
+(`errors.py`). Task 3 adds `GateB` (`gate_b.py`) and its typed result,
+`GateBDecision`/`GateBStatus` (`models.py`) -- the deterministic
+authorization/disclosure boundary, run from a trusted identity plus a
+`GateADecision`/`LaneDecision`, before any protected evidence access.
 """
 from aico.control.config import (
     DEFAULT_CONTROL_PLANE_CONFIG_PATH,
@@ -42,6 +45,7 @@ from aico.control.config import (
 )
 from aico.control.errors import (
     ControlPlaneConfigurationError,
+    GateBError,
     LaneSelectionError,
     OntologyLoadError,
     OntologyLookupError,
@@ -51,8 +55,9 @@ from aico.control.errors import (
     PolicyRegistryError,
 )
 from aico.control.gate_a import GateA
+from aico.control.gate_b import GateB, GateBRequest
 from aico.control.lane_selector import LaneSelector
-from aico.control.models import GateADecision, GateAStatus, LaneDecision
+from aico.control.models import GateADecision, GateAStatus, GateBDecision, GateBStatus, LaneDecision
 from aico.control.ontology import (
     Concept,
     Domain,
@@ -111,4 +116,9 @@ __all__ = [
     "PolicyRegistryError",
     "PolicyLoadError",
     "PolicyLookupError",
+    "GateB",
+    "GateBRequest",
+    "GateBDecision",
+    "GateBStatus",
+    "GateBError",
 ]

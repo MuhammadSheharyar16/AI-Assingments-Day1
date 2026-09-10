@@ -99,6 +99,36 @@ def test_non_string_or_blank_claim_values_are_rejected(bad_value):
         build_trusted_identity({"tenant_id": "TENANT-SYN-001", "user_id": bad_value})
 
 
+# ── roles claim (Day 10 Task 3 extension) ────────────────────────────────
+
+
+def test_missing_roles_claim_produces_an_authenticated_identity_with_no_roles():
+    """A missing `roles` claim is NOT a rejection here - a validly
+    authenticated caller can carry no governed role at all; "role
+    missing" is Gate-B's own deny-by-default outcome (Day 10 Task 4), not
+    an authentication failure."""
+    identity = build_trusted_identity({"tenant_id": "TENANT-SYN-001", "user_id": "USER-SYN-001"})
+    assert identity.roles == ()
+
+
+def test_present_roles_claim_is_parsed_into_a_tuple():
+    identity = build_trusted_identity(
+        {"tenant_id": "TENANT-SYN-001", "user_id": "USER-SYN-001", "roles": ["sourcing_analyst"]}
+    )
+    assert identity.roles == ("sourcing_analyst",)
+
+
+@pytest.mark.parametrize("bad_roles", ["not_a_list", [""], [42], [None], "sourcing_analyst"])
+def test_malformed_roles_claim_is_rejected(bad_roles):
+    with pytest.raises(IdentityError, match="roles"):
+        build_trusted_identity({"tenant_id": "TENANT-SYN-001", "user_id": "USER-SYN-001", "roles": bad_roles})
+
+
+def test_trusted_identity_roles_defaults_to_empty_tuple_when_constructed_directly():
+    identity = TrustedIdentity(tenant_id="TENANT-SYN-001", user_id="USER-SYN-001")
+    assert identity.roles == ()
+
+
 # ── /ask route: the dependency actually gates the endpoint ──────────────
 
 
