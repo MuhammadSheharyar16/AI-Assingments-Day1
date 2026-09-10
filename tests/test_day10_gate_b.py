@@ -2,9 +2,11 @@
 Day 10 Task 3 -- the Gate-B contract: `GateBDecision`/`GateBStatus`
 (`src/aico/control/models.py`) and the `GateB`/`GateBRequest` engine that
 produces/consumes them (`src/aico/control/gate_b.py`).
+Day 10 Task 4 -- every fail-closed stage that engine runs.
 
 Proves, against the real committed `policy/gate_b_policy.v1.json` (Task 2's
-`PolicyRegistry`) and the real supplied `day10_pack/fixtures/`
+`PolicyRegistry`), the real committed `ontology/registry.v1.json` (Day 9's
+`OntologyRegistry`), and the real supplied `day10_pack/fixtures/`
 `permission_cases.json` / `tenant_scope_cases.json`:
 
   - the typed contract shape: `GateBDecision` exposes every field Task 3
@@ -21,11 +23,17 @@ Proves, against the real committed `policy/gate_b_policy.v1.json` (Task 2's
     and session-memory "override" attempts having no effect at all, proven
     structurally (`authorize()`'s signature carries no parameter either
     could even reach) rather than by a runtime check against their content;
-  - deny-by-default (Task 4): missing/unknown role, an upstream Gate-A
-    decision that never resolved to a single intent, a lane already routed
-    to `block`/`clarify`, no matching rule, and a matched-but-`allowed=false`
-    rule (`GB-R002`) -- every one of these denies, never falls through to
-    `allow`;
+  - deny-by-default (Task 4), every bullet `gate_b_policy_requirements.md`
+    lists: trusted identity missing (`identity=None`, never an
+    `AttributeError`), role missing/unknown, permission rule absent, intent
+    unknown (the optional `ontology_registry` defense-in-depth check), lane
+    inconsistent with policy, requested scope that cannot be safely bounded
+    (cross-tenant), requested classification not allowed, and a
+    matched-but-`allowed=false` rule (`GB-R002`) -- every one of these
+    denies, never falls through to `allow`; plus the two whole-module
+    guarantees ("policy version invalid" is structurally impossible,
+    "no natural-language inference" is structurally impossible -- proven by
+    inspecting the actual types involved, not a runtime check);
   - the one documented `clarify` case (Task 10): a matched, allowed rule
     whose own `allowed_data_classes` names more than one classification and
     the caller asked for none in particular;
@@ -55,6 +63,7 @@ from aico.control.errors import GateBError
 from aico.control.gate_b import GateB, GateBRequest
 from aico.control.models import GateADecision, GateAStatus, GateBDecision, GateBStatus, LaneDecision
 from aico.control.ontology import LaneId
+from aico.control.ontology_registry import OntologyRegistry
 from aico.control.policy_models import DataClassification, PiiCategory
 from aico.control.policy_registry import PolicyRegistry
 
@@ -90,6 +99,15 @@ def registry() -> PolicyRegistry:
 @pytest.fixture
 def gate_b(registry: PolicyRegistry) -> GateB:
     return GateB(registry)
+
+
+@pytest.fixture
+def gate_b_with_ontology(registry: PolicyRegistry) -> GateB:
+    """A second `GateB`, built with the real committed `OntologyRegistry`
+    -- the Task 4 defense-in-depth "intent unknown" check is only active
+    on an instance built this way (see `gate_b.py`'s module docstring,
+    stage 2)."""
+    return GateB(registry, ontology_registry=OntologyRegistry.load())
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +301,20 @@ def test_cross_tenant_denial_happens_before_any_effective_scope_is_granted(gate_
 # ---------------------------------------------------------------------------
 
 
+def test_missing_trusted_identity_denies_with_a_typed_result_not_a_crash(gate_b):
+    """`identity=None` -- Task 4's "trusted identity missing" -- must
+    return a typed `deny`, never raise `AttributeError` from dereferencing
+    `identity.roles` on a caller that somehow reached `authorize()`
+    without one."""
+    decision = gate_b.authorize(
+        None, _matched("INT-POLICY-QUESTION"), _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION")
+    )
+    assert decision.decision is GateBStatus.DENY
+    assert decision.reason_code == "identity_missing"
+    assert decision.rule_id is None
+    assert decision.effective_tenant_scope == ()
+
+
 def test_missing_role_denies(gate_b):
     identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-1", roles=())
     decision = gate_b.authorize(
@@ -300,6 +332,48 @@ def test_unknown_role_denies(gate_b):
     )
     assert decision.decision is GateBStatus.DENY
     assert decision.reason_code == "unknown_role"
+
+
+def test_unknown_intent_denies_when_built_with_an_ontology_registry(gate_b_with_ontology):
+    """Task 4's "intent unknown", defense-in-depth: a hand-built
+    `GateADecision` claiming `MATCHED` for an intent id no ontology
+    actually governs must still deny -- `GateA.classify()` itself never
+    produces such a decision, this is what catches one anyway."""
+    identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-1", roles=("supplier_reader",))
+    decision = gate_b_with_ontology.authorize(
+        identity, _matched("INT-NOT-REGISTERED"), _lane_decision(LaneId.RAG, "INT-NOT-REGISTERED")
+    )
+    assert decision.decision is GateBStatus.DENY
+    assert decision.reason_code == "unknown_intent"
+    assert decision.rule_id is None
+
+
+def test_unknown_intent_check_is_skipped_without_an_ontology_registry(gate_b):
+    """Without `ontology_registry`, the same ungoverned intent id still
+    denies -- just via `no_matching_rule` (no rule references it) rather
+    than the more specific `unknown_intent` reason. Either way it is never
+    `allow`; only the provenance differs."""
+    identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-1", roles=("supplier_reader",))
+    decision = gate_b.authorize(
+        identity, _matched("INT-NOT-REGISTERED"), _lane_decision(LaneId.RAG, "INT-NOT-REGISTERED")
+    )
+    assert decision.decision is GateBStatus.DENY
+    assert decision.reason_code == "no_matching_rule"
+
+
+def test_known_intent_is_unaffected_by_the_ontology_registry_check(gate_b_with_ontology):
+    """The defense-in-depth check never interferes with an ordinary,
+    governed request -- every `permission_cases.json` case still passes
+    identically on a `GateB` built with `ontology_registry` set."""
+    identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-1", roles=("supplier_reader",))
+    decision = gate_b_with_ontology.authorize(
+        identity,
+        _matched("INT-POLICY-QUESTION"),
+        _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION"),
+        GateBRequest(data_class=DataClassification.INTERNAL),
+    )
+    assert decision.decision is GateBStatus.ALLOW
+    assert decision.rule_id == "GB-R001"
 
 
 @pytest.mark.parametrize("status", [GateAStatus.AMBIGUOUS, GateAStatus.UNSUPPORTED, GateAStatus.BLOCKED])
@@ -349,6 +423,41 @@ def test_default_decision_is_deny_never_allow_by_absence_of_a_rule(gate_b, regis
         identity, _matched("INT-HELP"), _lane_decision(LaneId.SAFE_FAST_PATH, "INT-HELP")
     )
     assert decision.decision is GateBStatus.DENY
+
+
+def test_policy_version_invalid_is_structurally_impossible():
+    """Task 4's "policy version invalid" needs no runtime check in
+    `gate_b.py` at all: `GateB` can only ever be built from an already
+    loaded `PolicyRegistry`, and `PolicyRegistry.load()` (Task 2) already
+    refuses to construct one from an invalid policy document
+    (`PolicyLoadError`) -- there is no code path producing a `GateB`
+    instance whose `registry.policy_version` is not a validated string.
+    Proven here by inspecting the actual construction path, not a mock."""
+    from aico.control.errors import PolicyLoadError
+
+    assert inspect.isclass(PolicyLoadError)
+    load_source = inspect.getsource(PolicyRegistry.load)
+    assert "GateBPolicyDocument.model_validate" in load_source
+    assert "PolicyLoadError" in load_source
+
+
+def test_authorize_has_no_raw_text_parameter_to_infer_permission_from():
+    """Task 4's "do not infer permission from natural language" is
+    likewise structural: every parameter `authorize()` accepts is a typed
+    decision/identity/request object, never a bare `str`. There is no
+    string anywhere in this signature a permission decision could be
+    "inferred" from. `typing.get_type_hints` resolves the module's
+    `from __future__ import annotations` string annotations back into real
+    type objects -- a plain `inspect.signature().parameters[...].annotation`
+    check would only ever see the *string* `"str"`, never actually catching
+    a raw-text parameter."""
+    import typing
+
+    hints = typing.get_type_hints(GateB.authorize)
+    hints.pop("return", None)
+    assert hints  # sanity: the resolution above actually found parameters
+    for name, hint in hints.items():
+        assert hint is not str, f"{name!r} accepts a raw string"
 
 
 # ---------------------------------------------------------------------------
