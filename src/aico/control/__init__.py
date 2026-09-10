@@ -20,6 +20,13 @@ validated loading of `config/control-plane.yaml` -- registry path, the
 deployment-level `enabled_lanes` restriction `LaneSelector` accepts,
 clarification policy, and (inert today) model-assisted-interpretation
 settings.
+
+Day 10 Task 1 adds the typed Gate-B policy model (`policy_models.py`):
+`GateBPolicyDocument`, made of `Role` / `DisclosureProfile` /
+`PermissionRule` records and the closed `DataClassification` /
+`PiiCategory` / `DisclosureAction` / `TenantScopeKind` enums, self-
+validating against every rule in `gate_b_policy_requirements.md` /
+`disclosure_rules.md`.
 """
 from aico.control.config import (
     DEFAULT_CONTROL_PLANE_CONFIG_PATH,
@@ -47,6 +54,16 @@ from aico.control.ontology import (
     OntologyDocument,
 )
 from aico.control.ontology_registry import DEFAULT_REGISTRY_PATH, OntologyRegistry
+from aico.control.policy_models import (
+    DataClassification,
+    DisclosureAction,
+    DisclosureProfile,
+    GateBPolicyDocument,
+    PermissionRule,
+    PiiCategory,
+    Role,
+    TenantScopeKind,
+)
 
 __all__ = [
     "Concept",
@@ -72,4 +89,12 @@ __all__ = [
     "load_control_plane_config",
     "ControlPlaneConfigurationError",
     "DEFAULT_CONTROL_PLANE_CONFIG_PATH",
+    "GateBPolicyDocument",
+    "Role",
+    "PermissionRule",
+    "DisclosureProfile",
+    "DataClassification",
+    "PiiCategory",
+    "DisclosureAction",
+    "TenantScopeKind",
 ]

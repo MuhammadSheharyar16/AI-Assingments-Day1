@@ -1,0 +1,103 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "PERM-001",
+      "name": "reader_policy_allowed",
+      "trusted_identity": {
+        "tenant_id": "TENANT-A",
+        "user_id": "USER-1",
+        "roles": [
+          "supplier_reader"
+        ]
+      },
+      "intent_id": "INT-POLICY-QUESTION",
+      "lane": "rag",
+      "requested_operation": "read",
+      "requested_data_class": "internal",
+      "expected_decision": "allow",
+      "expected_rule_id": "GB-R001"
+    },
+    {
+      "id": "PERM-002",
+      "name": "reader_structured_denied",
+      "trusted_identity": {
+        "tenant_id": "TENANT-A",
+        "user_id": "USER-1",
+        "roles": [
+          "supplier_reader"
+        ]
+      },
+      "intent_id": "INT-STRUCTURED-LOOKUP",
+      "lane": "mode_b",
+      "requested_operation": "read",
+      "requested_data_class": "internal",
+      "expected_decision": "deny"
+    },
+    {
+      "id": "PERM-003",
+      "name": "analyst_structured_allowed",
+      "trusted_identity": {
+        "tenant_id": "TENANT-A",
+        "user_id": "USER-2",
+        "roles": [
+          "sourcing_analyst"
+        ]
+      },
+      "intent_id": "INT-STRUCTURED-LOOKUP",
+      "lane": "mode_b",
+      "requested_operation": "read",
+      "requested_data_class": "internal",
+      "expected_decision": "allow",
+      "expected_rule_id": "GB-R004"
+    },
+    {
+      "id": "PERM-004",
+      "name": "unknown_role",
+      "trusted_identity": {
+        "tenant_id": "TENANT-A",
+        "user_id": "USER-3",
+        "roles": [
+          "unknown_role"
+        ]
+      },
+      "intent_id": "INT-POLICY-QUESTION",
+      "lane": "rag",
+      "requested_operation": "read",
+      "requested_data_class": "internal",
+      "expected_decision": "deny"
+    },
+    {
+      "id": "PERM-005",
+      "name": "unknown_intent",
+      "trusted_identity": {
+        "tenant_id": "TENANT-A",
+        "user_id": "USER-2",
+        "roles": [
+          "sourcing_analyst"
+        ]
+      },
+      "intent_id": "INT-NOT-REGISTERED",
+      "lane": "rag",
+      "requested_operation": "read",
+      "requested_data_class": "internal",
+      "expected_decision": "deny"
+    },
+    {
+      "id": "PERM-006",
+      "name": "lane_mismatch",
+      "trusted_identity": {
+        "tenant_id": "TENANT-A",
+        "user_id": "USER-2",
+        "roles": [
+          "sourcing_analyst"
+        ]
+      },
+      "intent_id": "INT-POLICY-QUESTION",
+      "lane": "mode_b",
+      "requested_operation": "read",
+      "requested_data_class": "internal",
+      "expected_decision": "deny"
+    }
+  ]
+}

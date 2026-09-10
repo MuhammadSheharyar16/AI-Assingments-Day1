@@ -1,0 +1,85 @@
+{
+  "version": "1.0",
+  "synthetic_record": {
+    "supplier_name": "Synthetic Supplier Alpha",
+    "contract_status": "active",
+    "payment_terms": "net 30",
+    "invoice_window": "30 days",
+    "contact_email": "alice@example.test",
+    "tax_identifier": "SYN-ID-123456",
+    "bank_account": "SYN-BANK-00001234",
+    "personal_notes": "Synthetic confidential note"
+  },
+  "field_metadata": {
+    "supplier_name": {
+      "data_class": "public",
+      "pii_category": "none"
+    },
+    "contract_status": {
+      "data_class": "internal",
+      "pii_category": "none"
+    },
+    "payment_terms": {
+      "data_class": "internal",
+      "pii_category": "none"
+    },
+    "invoice_window": {
+      "data_class": "internal",
+      "pii_category": "none"
+    },
+    "contact_email": {
+      "data_class": "confidential",
+      "pii_category": "contact"
+    },
+    "tax_identifier": {
+      "data_class": "confidential",
+      "pii_category": "personal_identifier"
+    },
+    "bank_account": {
+      "data_class": "restricted",
+      "pii_category": "financial"
+    },
+    "personal_notes": {
+      "data_class": "restricted",
+      "pii_category": "sensitive_personal"
+    }
+  },
+  "cases": [
+    {
+      "id": "PII-001",
+      "profile": "policy_reader",
+      "field": "supplier_name",
+      "expected_action": "allow"
+    },
+    {
+      "id": "PII-002",
+      "profile": "policy_reader",
+      "field": "contact_email",
+      "expected_action": "redact"
+    },
+    {
+      "id": "PII-003",
+      "profile": "policy_reader",
+      "field": "tax_identifier",
+      "expected_action": "deny"
+    },
+    {
+      "id": "PII-004",
+      "profile": "structured_reader",
+      "field": "tax_identifier",
+      "expected_action": "redact"
+    },
+    {
+      "id": "PII-005",
+      "profile": "compliance_view",
+      "field": "contact_email",
+      "expected_action": "allow"
+    },
+    {
+      "id": "PII-006",
+      "profile": "compliance_view",
+      "field": "bank_account",
+      "expected_action": "deny"
+    }
+  ]
+}
