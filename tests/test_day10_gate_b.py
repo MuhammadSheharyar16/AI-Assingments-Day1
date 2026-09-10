@@ -6,8 +6,8 @@ Day 10 Task 4 -- every fail-closed stage that engine runs.
 
 Proves, against the real committed `policy/gate_b_policy.v1.json` (Task 2's
 `PolicyRegistry`), the real committed `ontology/registry.v1.json` (Day 9's
-`OntologyRegistry`), and the real supplied `day10_pack/fixtures/`
-`permission_cases.json` / `tenant_scope_cases.json`:
+`OntologyRegistry`), and the real supplied
+`day10_pack/fixtures/permission_cases.json`:
 
   - the typed contract shape: `GateBDecision` exposes every field Task 3
     requires, `GateBStatus` is exactly `{allow, clarify, deny}`;
@@ -16,13 +16,6 @@ Proves, against the real committed `policy/gate_b_policy.v1.json` (Task 2's
     policy-document read, denied structured-data lookup, allowed structured
     lookup for a specifically authorized role, unknown role, unknown
     intent, lane mismatch;
-  - every `tenant_scope_cases.json` case (TEN-001..005) resolves per its
-    fixture-declared expectation -- same-tenant allow, cross-tenant deny
-    with an empty effective scope, a mixed request narrowed (never denied
-    *and* never widened past) the trusted tenant, and both the request-body
-    and session-memory "override" attempts having no effect at all, proven
-    structurally (`authorize()`'s signature carries no parameter either
-    could even reach) rather than by a runtime check against their content;
   - deny-by-default (Task 4), every bullet `gate_b_policy_requirements.md`
     lists: trusted identity missing (`identity=None`, never an
     `AttributeError`), role missing/unknown, permission rule absent, intent
@@ -37,17 +30,19 @@ Proves, against the real committed `policy/gate_b_policy.v1.json` (Task 2's
   - the one documented `clarify` case (Task 10): a matched, allowed rule
     whose own `allowed_data_classes` names more than one classification and
     the caller asked for none in particular;
-  - effective scope only narrows, never widens (Task 5): every `ALLOW`
-    decision's `effective_data_classes`/`effective_tenant_scope` is a
-    subset of what the matched rule / trusted identity respectively permit;
+  - effective data-classification scope only narrows, never widens: every
+    `ALLOW` decision's `effective_data_classes` is a subset of what the
+    matched rule permits;
   - `GateBRequest` structurally carries no role/tenant-ownership/permission/
     clearance field at all (Task 10's "do not ask the user to self-assert
     a higher role/tenant/permission/clearance" -- enforced by the type
     itself having nowhere to put one, not by a runtime check rejecting one).
 
+Tenant-scope enforcement (Task 5, `tenant_scope_cases.json`-driven) has its
+own dedicated file, `test_day10_tenant_scope.py` -- not duplicated here.
 Task 8/9 (PII/disclosure field-level behavior) and Task 11 (no-fall-through
-call-count proof) are out of scope here -- this file only proves the Gate-B
-authorization contract and its implemented matching engine.
+call-count proof) are also out of scope here -- this file only proves the
+Gate-B authorization contract and its implemented matching engine.
 """
 from __future__ import annotations
 
@@ -69,10 +64,8 @@ from aico.control.policy_registry import PolicyRegistry
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PERMISSION_CASES_PATH = REPO_ROOT / "data" / "day10_pack" / "fixtures" / "permission_cases.json"
-TENANT_SCOPE_CASES_PATH = REPO_ROOT / "data" / "day10_pack" / "fixtures" / "tenant_scope_cases.json"
 
 PERMISSION_CASES = json.loads(PERMISSION_CASES_PATH.read_text(encoding="utf-8"))["cases"]
-TENANT_SCOPE_CASES = json.loads(TENANT_SCOPE_CASES_PATH.read_text(encoding="utf-8"))["cases"]
 
 
 def _identity(case_identity: dict) -> TrustedIdentity:
@@ -231,69 +224,6 @@ def test_perm_003_analyst_structured_lookup_allowed_with_bounded_scope(gate_b):
     assert decision.rule_id == "GB-R004"
     assert decision.disclosure_profile == "structured_reader"
     assert PiiCategory.PERSONAL_IDENTIFIER in decision.effective_pii_policy
-
-
-# ---------------------------------------------------------------------------
-# tenant_scope_cases.json -- fixture-driven
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("case", TENANT_SCOPE_CASES, ids=[c["id"] for c in TENANT_SCOPE_CASES])
-def test_tenant_scope_case_matches_fixture_expectation(gate_b, case):
-    """Every case authorized against `sourcing_analyst` +
-    `INT-POLICY-QUESTION` + `rag` (`GB-R003`, `allowed_data_classes:
-    [public, internal]`) so a specific `data_class` is supplied to avoid
-    the unrelated `clarify` path -- these cases are about tenant scope,
-    not data classification."""
-    identity = _identity(case["trusted_identity"])
-    tenant_ids = tuple(case.get("requested_scope", {}).get("tenant_ids", ()))
-    requested = GateBRequest(data_class=DataClassification.INTERNAL, tenant_ids=tenant_ids)
-
-    decision = gate_b.authorize(
-        identity, _matched("INT-POLICY-QUESTION"), _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION"), requested
-    )
-
-    if case["id"] == "TEN-001":
-        assert decision.decision is GateBStatus.ALLOW
-        assert decision.effective_tenant_scope == ("TENANT-A",)
-    elif case["id"] == "TEN-002":
-        assert decision.decision.value == case["expected_decision"]
-        assert decision.effective_tenant_scope == ()
-        assert decision.reason_code == "cross_tenant_denied"
-    elif case["id"] == "TEN-003":
-        # Fixture explicitly allows either outcome (`allowed_outcomes`:
-        # "narrow_to_TENANT-A" or "deny" -- descriptive labels, not
-        # `GateBStatus` values); this build narrows rather than denies --
-        # either way it must never grant TENANT-B.
-        assert "narrow_to_TENANT-A" in case["allowed_outcomes"]
-        assert decision.decision is GateBStatus.ALLOW
-        assert decision.effective_tenant_scope == ("TENANT-A",)
-        assert "TENANT-B" not in decision.effective_tenant_scope
-    elif case["id"] in ("TEN-004", "TEN-005"):
-        # `request_body_identity`/`memory_text` are present in the fixture
-        # case dict but never read here at all -- `authorize()`'s
-        # signature has nowhere to accept them (see
-        # test_authorize_signature_has_no_memory_or_request_body_parameter).
-        # Trusted identity alone decides the outcome.
-        assert decision.decision is GateBStatus.ALLOW
-        assert decision.effective_tenant_scope == ("TENANT-A",)
-    else:  # pragma: no cover - guard against an unhandled fixture case id
-        pytest.fail(f"unhandled tenant scope case id: {case['id']!r}")
-
-
-def test_cross_tenant_denial_happens_before_any_effective_scope_is_granted(gate_b):
-    identity = _identity({"tenant_id": "TENANT-A", "user_id": "USER-2", "roles": ["sourcing_analyst"]})
-    decision = gate_b.authorize(
-        identity,
-        _matched("INT-POLICY-QUESTION"),
-        _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION"),
-        GateBRequest(data_class=DataClassification.INTERNAL, tenant_ids=("TENANT-B",)),
-    )
-    assert decision.decision is GateBStatus.DENY
-    assert decision.effective_tenant_scope == ()
-    assert decision.effective_data_classes == ()
-    assert decision.effective_pii_policy == ()
-    assert decision.disclosure_profile is None
 
 
 # ---------------------------------------------------------------------------
@@ -506,7 +436,7 @@ def test_clarify_never_needed_when_matched_rule_allows_exactly_one_class(gate_b)
 
 
 # ---------------------------------------------------------------------------
-# Effective scope only narrows, never widens (Task 5)
+# Effective data-classification scope only narrows, never widens
 # ---------------------------------------------------------------------------
 
 
@@ -524,18 +454,6 @@ def test_effective_data_classes_is_always_a_subset_of_the_matched_rules_allowed_
             )
             assert decision.decision is GateBStatus.ALLOW
             assert set(decision.effective_data_classes) <= set(rule.allowed_data_classes)
-
-
-def test_effective_tenant_scope_never_includes_a_tenant_the_caller_did_not_ask_for(gate_b):
-    identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-2", roles=("sourcing_analyst",))
-    decision = gate_b.authorize(
-        identity,
-        _matched("INT-POLICY-QUESTION"),
-        _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION"),
-        GateBRequest(data_class=DataClassification.INTERNAL, tenant_ids=("TENANT-A", "TENANT-B", "TENANT-C")),
-    )
-    assert decision.decision is GateBStatus.ALLOW
-    assert decision.effective_tenant_scope == ("TENANT-A",)
 
 
 def test_data_classification_not_allowed_by_matched_rule_denies(gate_b):
