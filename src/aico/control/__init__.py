@@ -26,7 +26,12 @@ Day 10 Task 1 adds the typed Gate-B policy model (`policy_models.py`):
 `PermissionRule` records and the closed `DataClassification` /
 `PiiCategory` / `DisclosureAction` / `TenantScopeKind` enums, self-
 validating against every rule in `gate_b_policy_requirements.md` /
-`disclosure_rules.md`.
+`disclosure_rules.md`. Task 2 adds `PolicyRegistry` (`policy_registry.py`),
+the read-only, typed loader/lookup service Gate-B (Task 3) is built
+against -- loading the committed `policy/gate_b_policy.v1.json` through
+`GateBPolicyDocument`, cross-checked against the real committed
+`OntologyRegistry`'s governed intent ids -- plus its typed failures
+(`errors.py`).
 """
 from aico.control.config import (
     DEFAULT_CONTROL_PLANE_CONFIG_PATH,
@@ -41,6 +46,9 @@ from aico.control.errors import (
     OntologyLoadError,
     OntologyLookupError,
     OntologyRegistryError,
+    PolicyLoadError,
+    PolicyLookupError,
+    PolicyRegistryError,
 )
 from aico.control.gate_a import GateA
 from aico.control.lane_selector import LaneSelector
@@ -64,6 +72,7 @@ from aico.control.policy_models import (
     Role,
     TenantScopeKind,
 )
+from aico.control.policy_registry import DEFAULT_POLICY_PATH, PolicyRegistry
 
 __all__ = [
     "Concept",
@@ -97,4 +106,9 @@ __all__ = [
     "PiiCategory",
     "DisclosureAction",
     "TenantScopeKind",
+    "PolicyRegistry",
+    "DEFAULT_POLICY_PATH",
+    "PolicyRegistryError",
+    "PolicyLoadError",
+    "PolicyLookupError",
 ]

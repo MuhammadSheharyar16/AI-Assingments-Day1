@@ -1,0 +1,176 @@
+{
+  "policy_version": "1.0",
+  "status": "active",
+  "roles": [
+    {
+      "role_id": "supplier_reader",
+      "permissions": [
+        "read_policy"
+      ],
+      "tenant_scope": "own_tenant",
+      "status": "active"
+    },
+    {
+      "role_id": "sourcing_analyst",
+      "permissions": [
+        "read_policy",
+        "read_structured_supplier"
+      ],
+      "tenant_scope": "own_tenant",
+      "status": "active"
+    },
+    {
+      "role_id": "compliance_reviewer",
+      "permissions": [
+        "read_policy",
+        "read_structured_supplier",
+        "read_confidential"
+      ],
+      "tenant_scope": "own_tenant",
+      "status": "active"
+    }
+  ],
+  "permissions": [
+    "read_policy",
+    "read_structured_supplier",
+    "read_confidential"
+  ],
+  "data_classifications": [
+    "public",
+    "internal",
+    "confidential",
+    "restricted"
+  ],
+  "pii_categories": [
+    "none",
+    "contact",
+    "personal_identifier",
+    "financial",
+    "sensitive_personal"
+  ],
+  "disclosure_profiles": [
+    {
+      "profile_id": "policy_reader",
+      "field_actions": {
+        "supplier_name": "allow",
+        "payment_terms": "allow",
+        "invoice_window": "allow",
+        "contact_email": "redact",
+        "tax_identifier": "deny",
+        "bank_account": "deny",
+        "personal_notes": "deny"
+      }
+    },
+    {
+      "profile_id": "structured_reader",
+      "field_actions": {
+        "supplier_name": "allow",
+        "contract_status": "allow",
+        "contact_email": "redact",
+        "tax_identifier": "redact",
+        "bank_account": "deny",
+        "personal_notes": "deny"
+      }
+    },
+    {
+      "profile_id": "compliance_view",
+      "field_actions": {
+        "supplier_name": "allow",
+        "contract_status": "allow",
+        "contact_email": "allow",
+        "tax_identifier": "redact",
+        "bank_account": "deny",
+        "personal_notes": "deny"
+      }
+    }
+  ],
+  "rules": [
+    {
+      "rule_id": "GB-R001",
+      "role": "supplier_reader",
+      "intent_id": "INT-POLICY-QUESTION",
+      "lane": "rag",
+      "required_permission": "read_policy",
+      "allowed": true,
+      "allowed_data_classes": [
+        "public",
+        "internal"
+      ],
+      "allowed_pii_categories": [
+        "none",
+        "contact"
+      ],
+      "disclosure_profile": "policy_reader",
+      "status": "active"
+    },
+    {
+      "rule_id": "GB-R002",
+      "role": "supplier_reader",
+      "intent_id": "INT-STRUCTURED-LOOKUP",
+      "lane": "mode_b",
+      "required_permission": "read_structured_supplier",
+      "allowed": false,
+      "allowed_data_classes": [],
+      "allowed_pii_categories": [],
+      "disclosure_profile": "policy_reader",
+      "status": "active"
+    },
+    {
+      "rule_id": "GB-R003",
+      "role": "sourcing_analyst",
+      "intent_id": "INT-POLICY-QUESTION",
+      "lane": "rag",
+      "required_permission": "read_policy",
+      "allowed": true,
+      "allowed_data_classes": [
+        "public",
+        "internal"
+      ],
+      "allowed_pii_categories": [
+        "none",
+        "contact"
+      ],
+      "disclosure_profile": "policy_reader",
+      "status": "active"
+    },
+    {
+      "rule_id": "GB-R004",
+      "role": "sourcing_analyst",
+      "intent_id": "INT-STRUCTURED-LOOKUP",
+      "lane": "mode_b",
+      "required_permission": "read_structured_supplier",
+      "allowed": true,
+      "allowed_data_classes": [
+        "public",
+        "internal"
+      ],
+      "allowed_pii_categories": [
+        "none",
+        "contact",
+        "personal_identifier"
+      ],
+      "disclosure_profile": "structured_reader",
+      "status": "active"
+    },
+    {
+      "rule_id": "GB-R005",
+      "role": "compliance_reviewer",
+      "intent_id": "INT-STRUCTURED-LOOKUP",
+      "lane": "mode_b",
+      "required_permission": "read_structured_supplier",
+      "allowed": true,
+      "allowed_data_classes": [
+        "public",
+        "internal",
+        "confidential"
+      ],
+      "allowed_pii_categories": [
+        "none",
+        "contact",
+        "personal_identifier"
+      ],
+      "disclosure_profile": "compliance_view",
+      "status": "active"
+    }
+  ]
+}

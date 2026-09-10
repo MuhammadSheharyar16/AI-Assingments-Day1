@@ -1,21 +1,17 @@
 """
-Day 10 Task 1 -- the typed Gate-B policy model
-(`src/aico/control/policy_models.py`).
+Day 10 Task 1/2 -- the typed Gate-B policy model
+(`src/aico/control/policy_models.py`) and the policy registry that loads it
+(`src/aico/control/policy_registry.py`).
 
-Task 2's `policy_registry.py` (loading/read-only exposure of the committed
-`policy/gate_b_policy.v1.json`) does not exist yet -- this file proves the
-acceptance-relevant behaviors of `GateBPolicyDocument` / `Role` /
-`PermissionRule` / `DisclosureProfile` directly against Pydantic, the same
-way `test_day09_ontology.py`'s Task 1 section proves `OntologyDocument`
-directly before `OntologyRegistry` (Task 2) is exercised. This file is
-expected to grow a Task 2 section once `policy_registry.py` lands, mirroring
-`test_day09_ontology.py`'s two-section shape.
+Task 1 section proves the acceptance-relevant behaviors of
+`GateBPolicyDocument` / `Role` / `PermissionRule` / `DisclosureProfile`
+directly against Pydantic, the same way `test_day09_ontology.py`'s Task 1
+section proves `OntologyDocument` directly before `OntologyRegistry`
+(Task 2) is exercised:
 
-Proves, against the real supplied `day10_pack/fixtures/gate_b_policy_v1.json`
-(copied verbatim into `data/day10_pack/fixtures/`) and a minimal hand-built
-document for isolated negative-path mutations:
-
-  - the supplied fixture loads into nested typed objects, not dicts;
+  - the supplied fixture (`day10_pack/fixtures/gate_b_policy_v1.json`,
+    copied verbatim into `data/day10_pack/fixtures/`) loads into nested
+    typed objects, not dicts;
   - every "Required validation" bullet from
     `data/day10_pack/gate_b_policy_requirements.md` is rejected when
     violated: missing/empty policy version, duplicate rule id, unknown
@@ -29,8 +25,16 @@ document for isolated negative-path mutations:
   - `extra="forbid"` rejects an unchecked/unknown field anywhere in the
     document.
 
+Task 2 section proves `PolicyRegistry` end to end: loading the real
+committed file (success and every documented failure mode, including the
+registry's own ambiguous-rule-combination check), that its collection/
+version accessors are read-only, that `get_role` / `get_disclosure_profile`
+/ `get_rule` correctly resolve or reject against the real policy's ids, and
+that `find_rule` deterministically matches (or fails to match) one
+role/intent/lane combination.
+
 Gate-B itself (Task 3+) is not implemented yet and is out of scope here --
-this file only proves the typed policy model boundary.
+this file only proves the typed policy model and registry boundary.
 """
 from __future__ import annotations
 
@@ -41,7 +45,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from aico.control.ontology import LaneId, LifecycleStatus
+from aico.control.errors import PolicyLoadError, PolicyLookupError
+from aico.control.ontology import LaneId, LifecycleStatus, OntologyDocument
+from aico.control.ontology_registry import OntologyRegistry
 from aico.control.policy_models import (
     DataClassification,
     DisclosureAction,
@@ -52,8 +58,11 @@ from aico.control.policy_models import (
     Role,
     TenantScopeKind,
 )
+from aico.control.policy_registry import DEFAULT_POLICY_PATH, PolicyRegistry
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+COMMITTED_POLICY_PATH = REPO_ROOT / "policy" / "gate_b_policy.v1.json"
+COMMITTED_ONTOLOGY_PATH = REPO_ROOT / "ontology" / "registry.v1.json"
 PACK_FIXTURE_PATH = REPO_ROOT / "data" / "day10_pack" / "fixtures" / "gate_b_policy_v1.json"
 
 # The real Mode-A ontology intents this fixture's rules reference
@@ -66,6 +75,14 @@ KNOWN_ONTOLOGY_INTENT_IDS = {"INT-POLICY-QUESTION", "INT-STRUCTURED-LOOKUP", "IN
 
 def _load_pack_fixture_dict() -> dict:
     return json.loads(PACK_FIXTURE_PATH.read_text(encoding="utf-8"))
+
+
+def _load_committed_policy_dict() -> dict:
+    return json.loads(COMMITTED_POLICY_PATH.read_text(encoding="utf-8"))
+
+
+def _load_committed_ontology_registry() -> OntologyRegistry:
+    return OntologyRegistry.load(COMMITTED_ONTOLOGY_PATH)
 
 
 def _minimal_valid_policy() -> dict:
@@ -116,6 +133,15 @@ def _minimal_valid_policy() -> dict:
 # ---------------------------------------------------------------------------
 # Fixture loads into typed objects
 # ---------------------------------------------------------------------------
+
+
+def test_committed_policy_matches_pack_fixture_verbatim():
+    """`policy/gate_b_policy.v1.json` must be the same governed document
+    the pack shipped -- Task 1/2 do not get to quietly edit fixture data
+    to make the model happy (`day10_pack/README.md`: "Do not edit a
+    failing fixture to make the implementation pass")."""
+    committed = json.loads(COMMITTED_POLICY_PATH.read_text(encoding="utf-8"))
+    assert committed == _load_pack_fixture_dict()
 
 
 def test_pack_fixture_loads_into_typed_objects():
@@ -424,3 +450,288 @@ def test_unknown_field_on_a_record_rejected(record_key, index):
     data[record_key][index]["not_a_governed_field"] = "should be rejected"
     with pytest.raises(ValidationError):
         GateBPolicyDocument.model_validate(data)
+
+
+# ===========================================================================
+# Task 2 -- PolicyRegistry
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Load committed policy / validate it
+# ---------------------------------------------------------------------------
+
+
+def test_default_policy_path_points_at_committed_file():
+    assert DEFAULT_POLICY_PATH == Path("policy/gate_b_policy.v1.json")
+
+
+def test_load_reads_the_real_committed_policy():
+    registry = PolicyRegistry.load()
+
+    assert registry.policy_version == "1.0"
+    assert len(registry.roles) == 3
+    assert len(registry.rules) == 5
+    assert set(registry.permissions) == {"read_policy", "read_structured_supplier", "read_confidential"}
+    assert len(registry.disclosure_profiles) == 3
+
+
+def test_load_accepts_an_explicit_path(tmp_path):
+    explicit_path = tmp_path / "gate_b_policy.v1.json"
+    explicit_path.write_text(COMMITTED_POLICY_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+
+    registry = PolicyRegistry.load(explicit_path)
+
+    assert registry.policy_version == "1.0"
+
+
+def test_load_missing_file_raises_policy_load_error(tmp_path):
+    missing_path = tmp_path / "does_not_exist.json"
+    with pytest.raises(PolicyLoadError, match="not found"):
+        PolicyRegistry.load(missing_path)
+
+
+def test_load_malformed_json_raises_policy_load_error(tmp_path):
+    bad_path = tmp_path / "bad.json"
+    bad_path.write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(PolicyLoadError, match="not valid JSON"):
+        PolicyRegistry.load(bad_path)
+
+
+def test_load_policy_failing_typed_validation_raises_policy_load_error(tmp_path):
+    invalid_data = _minimal_valid_policy()
+    del invalid_data["policy_version"]
+    bad_path = tmp_path / "invalid.json"
+    bad_path.write_text(json.dumps(invalid_data), encoding="utf-8")
+
+    with pytest.raises(PolicyLoadError, match="failed validation"):
+        PolicyRegistry.load(bad_path)
+
+
+# ---------------------------------------------------------------------------
+# Ontology cross-reference is mandatory by default
+# ---------------------------------------------------------------------------
+
+
+def test_load_defaults_to_the_real_committed_ontology_registry(tmp_path):
+    """No `ontology_registry` passed -- `load()` resolves the real
+    committed `ontology/registry.v1.json` itself and rejects a rule
+    referencing an intent that registry does not govern, exactly as
+    `policy_models.py`'s docstring documents."""
+    data = _minimal_valid_policy()
+    data["rules"][0]["intent_id"] = "INT-NOT-REGISTERED"
+    bad_path = tmp_path / "unknown_intent.json"
+    bad_path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(PolicyLoadError, match="unknown ontology intent"):
+        PolicyRegistry.load(bad_path)
+
+
+def test_load_accepts_an_explicit_ontology_registry(tmp_path):
+    """An explicitly supplied `OntologyRegistry` is honored instead of the
+    default committed one -- a policy rule referencing an intent that
+    registry *does* govern (even one absent from the real committed
+    registry) is accepted."""
+    throwaway_ontology = OntologyDocument.model_validate(
+        {
+            "ontology_version": "throwaway",
+            "lanes": ["rag"],
+            "domains": [{"domain_id": "d1", "name": "D1", "owner": "team", "status": "active"}],
+            "concepts": [],
+            "intents": [
+                {
+                    "intent_id": "INT-THROWAWAY",
+                    "domain": "d1",
+                    "description": "Throwaway intent for this test only.",
+                    "allowed_lanes": ["rag"],
+                    "clarification_required_when_ambiguous": False,
+                    "status": "active",
+                }
+            ],
+        }
+    )
+    data = _minimal_valid_policy()
+    data["rules"][0]["intent_id"] = "INT-THROWAWAY"
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps(data), encoding="utf-8")
+
+    registry = PolicyRegistry.load(policy_path, ontology_registry=OntologyRegistry(throwaway_ontology))
+
+    assert registry.rules[0].intent_id == "INT-THROWAWAY"
+
+
+def test_pack_fixture_rules_all_reference_real_committed_ontology_intents():
+    """The real committed policy loads cleanly against the real committed
+    ontology by default -- proves the two Day 9/Day 10 committed resources
+    actually agree end to end, not just that the mechanism exists."""
+    registry = PolicyRegistry.load()
+    assert registry.policy_version == "1.0"
+
+
+# ---------------------------------------------------------------------------
+# Ambiguous rule combinations rejected (registry-level integrity)
+# ---------------------------------------------------------------------------
+
+
+def test_load_rejects_two_rules_governing_the_same_role_intent_lane(tmp_path):
+    data = _minimal_valid_policy()
+    duplicate_rule = copy.deepcopy(data["rules"][0])
+    duplicate_rule["rule_id"] = "GB-R999"  # distinct rule_id -- passes Task 1's own duplicate check
+    data["rules"].append(duplicate_rule)
+    bad_path = tmp_path / "ambiguous.json"
+    bad_path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(PolicyLoadError, match="ambiguous policy"):
+        PolicyRegistry.load(bad_path, ontology_registry=_load_committed_ontology_registry())
+
+
+def test_committed_policy_has_no_ambiguous_rule_combinations():
+    """The real committed policy itself must load without tripping this
+    check -- `PolicyRegistry.load()` succeeding at all already proves it,
+    this just names the property explicitly."""
+    registry = PolicyRegistry.load()
+    assert len(registry.rules) == len({(r.role, r.intent_id, r.lane) for r in registry.rules})
+
+
+# ---------------------------------------------------------------------------
+# Expose active policy version / read-only lookups
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def registry() -> PolicyRegistry:
+    ontology_registry = _load_committed_ontology_registry()
+    known_intent_ids = {intent.intent_id for intent in ontology_registry.intents}
+    document = GateBPolicyDocument.model_validate(
+        _load_committed_policy_dict(), context={"known_intent_ids": known_intent_ids}
+    )
+    return PolicyRegistry(document)
+
+
+def test_policy_version_property(registry):
+    assert registry.policy_version == "1.0"
+
+
+def test_collection_accessors_return_tuples_not_lists(registry):
+    assert isinstance(registry.roles, tuple)
+    assert isinstance(registry.permissions, tuple)
+    assert isinstance(registry.data_classifications, tuple)
+    assert isinstance(registry.pii_categories, tuple)
+    assert isinstance(registry.disclosure_profiles, tuple)
+    assert isinstance(registry.rules, tuple)
+
+
+def test_collection_accessor_returns_a_fresh_immutable_tuple_each_call(registry):
+    """A caller gets a `tuple` (no `.append`/`.remove`/item assignment at
+    all) and a *fresh* one on every access -- not a cached reference to a
+    mutable list living inside the registry that a caller could reach
+    through and mutate for everyone else (Day 10 working rule: "Runtime
+    callers, model output and session memory may not mutate policy")."""
+    first_read = registry.rules
+    assert not hasattr(first_read, "append")
+    with pytest.raises(TypeError):
+        first_read[0] = first_read[0]  # tuples reject item assignment
+
+    second_read = registry.rules
+    assert first_read == second_read
+    assert first_read is not second_read
+
+
+def test_registry_has_no_public_mutator_methods(registry):
+    forbidden_prefixes = ("add_", "set_", "update_", "delete_", "remove_", "mutate_")
+    public_methods = [name for name in dir(registry) if not name.startswith("_")]
+    offending = [name for name in public_methods if name.startswith(forbidden_prefixes)]
+    assert offending == []
+
+
+# ---------------------------------------------------------------------------
+# Resolve roles/disclosure profiles/rules by id
+# ---------------------------------------------------------------------------
+
+
+def test_get_role_resolves_known_role(registry):
+    role = registry.get_role("sourcing_analyst")
+    assert isinstance(role, Role)
+    assert role.tenant_scope is TenantScopeKind.OWN_TENANT
+
+
+def test_get_role_unknown_id_raises_policy_lookup_error(registry):
+    with pytest.raises(PolicyLookupError) as exc_info:
+        registry.get_role("does_not_exist")
+    assert exc_info.value.kind == "role"
+    assert exc_info.value.identifier == "does_not_exist"
+
+
+def test_get_disclosure_profile_resolves_known_profile(registry):
+    profile = registry.get_disclosure_profile("compliance_view")
+    assert isinstance(profile, DisclosureProfile)
+    assert profile.field_actions["contact_email"] is DisclosureAction.ALLOW
+
+
+def test_get_disclosure_profile_unknown_id_raises_policy_lookup_error(registry):
+    with pytest.raises(PolicyLookupError) as exc_info:
+        registry.get_disclosure_profile("does_not_exist")
+    assert exc_info.value.kind == "disclosure_profile"
+
+
+def test_get_rule_resolves_known_rule(registry):
+    rule = registry.get_rule("GB-R004")
+    assert isinstance(rule, PermissionRule)
+    assert rule.allowed is True
+
+
+def test_get_rule_unknown_id_raises_policy_lookup_error(registry):
+    with pytest.raises(PolicyLookupError) as exc_info:
+        registry.get_rule("GB-R999")
+    assert exc_info.value.kind == "rule"
+
+
+def test_has_role_disclosure_profile_rule_membership_checks(registry):
+    assert registry.has_role("supplier_reader") is True
+    assert registry.has_role("nope") is False
+    assert registry.has_disclosure_profile("structured_reader") is True
+    assert registry.has_disclosure_profile("nope") is False
+    assert registry.has_rule("GB-R005") is True
+    assert registry.has_rule("nope") is False
+
+
+# ---------------------------------------------------------------------------
+# find_rule: deterministic role/intent/lane matching
+# ---------------------------------------------------------------------------
+
+
+def test_find_rule_matches_every_governed_combination_in_the_real_policy(registry):
+    """Every rule in the real committed policy must be findable by its own
+    (role, intent_id, lane) -- the exact primitive Gate-B (Task 3) will
+    match a trusted request against."""
+    for rule in registry.rules:
+        found = registry.find_rule(rule.role, rule.intent_id, rule.lane)
+        assert found is not None
+        assert found.rule_id == rule.rule_id
+
+
+def test_find_rule_returns_none_for_lane_mismatch(registry):
+    """`permission_cases.json` PERM-006: `sourcing_analyst` is governed for
+    `INT-POLICY-QUESTION` only on lane `rag` (`GB-R003`) -- no rule governs
+    the same role/intent pair on `mode_b`."""
+    found = registry.find_rule("sourcing_analyst", "INT-POLICY-QUESTION", LaneId.MODE_B)
+    assert found is None
+
+
+def test_find_rule_returns_none_for_unknown_role(registry):
+    assert registry.find_rule("unknown_role", "INT-POLICY-QUESTION", LaneId.RAG) is None
+
+
+def test_find_rule_returns_none_for_unknown_intent(registry):
+    assert registry.find_rule("supplier_reader", "INT-NOT-REGISTERED", LaneId.RAG) is None
+
+
+def test_find_rule_result_for_denied_rule_still_surfaces_allowed_false(registry):
+    """`permission_cases.json` PERM-002: a matched rule can itself be
+    `allowed=false` (`GB-R002`) -- `find_rule` still returns it (a matched
+    rule, whatever its `allowed` value, is not the same as "no rule
+    matched"); it is Gate-B's (Task 3) job to read `.allowed`, not the
+    registry's job to hide the rule."""
+    found = registry.find_rule("supplier_reader", "INT-STRUCTURED-LOOKUP", LaneId.MODE_B)
+    assert found is not None
+    assert found.rule_id == "GB-R002"
+    assert found.allowed is False
