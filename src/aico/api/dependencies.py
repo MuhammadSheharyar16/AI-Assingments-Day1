@@ -272,15 +272,16 @@ def get_control_plane_answer_service(
 
     Gate-B is only actually activated on the service (`policy_registry=`
     is only passed, rather than left `None`) when
-    `control_plane_config.gate_b.enabled` is true - see
-    `config/control-plane.yaml`'s own `gate_b` section and
-    `GateBActivationConfig`'s docstring for why this defaults off (the
-    Day 9 synthetic ontology/identity space and the Day 10 Gate-B policy's
-    governed roles are deliberately separate synthetic spaces; flipping
-    Gate-B on unconditionally for a deployment still using Day 9's own
-    synthetic identities would deny/clarify every request). A deployment
-    whose identity provider actually issues Day 10 governed roles sets
-    `gate_b.enabled: true` to activate it - no code change required."""
+    `control_plane_config.gate_b.enabled` is true - `true` is the
+    committed default (see `config/control-plane.yaml`'s own `gate_b`
+    section and `GateBActivationConfig`'s docstring: a shipped deployment
+    should authorize by default, not silently run ungoverned until an
+    operator remembers to flip a flag). The one committed opt-out is Day
+    9's own synthetic ontology/identity space (`test_day09_api_
+    integration.py`), which carries no governed role at all and
+    explicitly overrides this to `false` for its own requests rather than
+    depending on the shipped default to stay ungoverned on its behalf -
+    no other deployment needs to set anything to get Gate-B active."""
 
     return ControlPlaneAnswerService(
         registry=registry,

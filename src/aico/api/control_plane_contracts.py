@@ -104,10 +104,9 @@ class GovernedAskStatus(str, Enum):
     `gate_b_clarify`) name Gate-B's own two non-allow outcomes (Day 10
     Task 13) - reachable from a `ControlPlaneAnswerService` built with
     `policy_registry` set (always true at the unit/service level;
-    reachable through the live `/ask/governed` route too, once
-    `config/control-plane.yaml`'s `gate_b.enabled` is set `true` for a
-    deployment whose identity provider issues Day 10 governed roles -
-    `false` is the committed default, see `dependencies.py`'s
+    reachable through the live `/ask/governed` route by default too -
+    `config/control-plane.yaml`'s `gate_b.enabled` is `true` for every
+    deployment unless explicitly opted out (see `dependencies.py`'s
     `get_control_plane_answer_service`), so this mapper handles them
     completely either way."""
 

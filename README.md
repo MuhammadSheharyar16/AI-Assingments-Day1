@@ -1260,14 +1260,17 @@ memory, request body, and repair logic may never widen it."
   route now forwards the already-resolved trusted `identity` (Day 6) into
   `service.answer()` unconditionally, and `get_control_plane_answer_service`
   resolves a real `get_policy_registry()` and activates it on the service
-  only when `config/control-plane.yaml`'s new `gate_b.enabled` flag is
-  `true`. **Committed default: `false`** — the Day 9 synthetic ontology's
-  three intents (identities like `TENANT-SYN-001`, no governed role at
-  all) and the Day 10 policy's governed roles/tenant (`TENANT-A` /
-  `supplier_reader` / `sourcing_analyst` / `compliance_reviewer`) are
-  deliberately separate synthetic spaces; leaving Gate-B off by default
-  keeps `test_day09_api_integration.py`'s already-accepted behavior
-  exactly unchanged.
+  whenever `config/control-plane.yaml`'s `gate_b.enabled` flag is `true`.
+  **Committed default: `true`** — a shipped deployment authorizes through
+  Gate-B by default; it does not ship ungoverned waiting for an operator
+  to flip a flag. The Day 9 synthetic ontology's three intents (identities
+  like `TENANT-SYN-001`, no governed role at all) and the Day 10 policy's
+  governed roles/tenant (`TENANT-A` / `supplier_reader` /
+  `sourcing_analyst` / `compliance_reviewer`) are deliberately separate
+  synthetic spaces, so `test_day09_api_integration.py` explicitly
+  overrides this flag back to `false` for its own requests rather than
+  depending on the shipped default to stay ungoverned on its behalf —
+  the one committed opt-out, not the default anyone else inherits.
 - `api/control_plane_contracts.py` — `GovernedAskRequest` extends `AskRequest`
   with exactly one Gate-B-relevant field, `data_class`: an optional,
   caller-declared *preference* among the classifications the caller's own
@@ -1277,8 +1280,8 @@ memory, request body, and repair logic may never widen it."
   `clarify` the only HTTP-reachable non-deny Gate-B outcome; declaring it
   is what makes a genuine `allow` reachable over a real request.
   `test_day10_api_integration.py` proves the live route really does reach
-  Gate-B once a deployment turns `gate_b.enabled` on and supplies a real
-  Day 10 governed identity — `deny` (unknown role), `deny` (a declared
+  Gate-B (the committed `gate_b.enabled: true` default, against a real
+  Day 10 governed identity) — `deny` (unknown role), `deny` (a declared
   `data_class` the matched rule does not authorize), `clarify` (no
   `data_class` declared, matched rule authorizes more than one), and a
   genuine `allow` (an authorized `data_class` declared — retrieval/the
@@ -1409,7 +1412,7 @@ aico-ai-engineer-lab/
     model-routing.yaml              Day 3 — deployment aliases, resilience/budget/routing policy (no secrets)
     control-plane.yaml              Day 9 Task 12 — registry path, enabled lanes, clarification policy,
                                      model-assisted-interpretation setting (off); Day 10 Task 13 —
-                                     gate_b.enabled/policy_path (off by default, see Day 10 section above);
+                                     gate_b.enabled/policy_path (on by default, see Day 10 section above);
                                      no ontology/policy data of its own, no secrets
   ontology/
     registry.v1.json                Day 9 Task 1/2 — committed, read-only governed Mode-A registry (byte-identical

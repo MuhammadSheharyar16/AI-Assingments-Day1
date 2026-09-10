@@ -88,14 +88,15 @@ class ModelAssistedInterpretationConfig:
 @dataclass(frozen=True)
 class GateBActivationConfig:
     """Day 10 Task 13 -- whether the live `/ask/governed` route actually
-    activates Gate-B. `enabled=False` (the committed default) preserves
-    Day 9's exact behavior -- see `config/control-plane.yaml`'s own
-    `gate_b` section for why this defaults off (the Day 9 synthetic
-    ontology/identity space and the Day 10 Gate-B policy's governed roles
-    are deliberately separate, and flipping this on for a deployment
-    still using Day 9's own synthetic identities would deny/clarify every
-    request). `policy_path` is validated (non-empty) unconditionally, the
-    same "always validated, read only when actually turned on" rule
+    activates Gate-B. `enabled=True` (the committed default) means every
+    request is authorized through Gate-B unless a deployment explicitly
+    opts out -- see `config/control-plane.yaml`'s own `gate_b` section
+    for why the default is fail-safe rather than fail-open. The one
+    committed opt-out is `test_day09_api_integration.py`'s own synthetic
+    identity space (no governed role at all), which explicitly overrides
+    this to `false` rather than relying on the shipped default to stay
+    ungoverned. `policy_path` is validated (non-empty) unconditionally,
+    the same "always validated, read only when actually turned on" rule
     `model_assisted_interpretation` already follows in this module."""
 
     enabled: bool

@@ -156,10 +156,12 @@ async def ask_governed(
         # own trust boundary, `get_trusted_identity` above) is forwarded
         # into `.answer()` unconditionally - safe and correct either way.
         # When `service.gate_b is None` (Gate-B not activated for this
-        # deployment; `config/control-plane.yaml`'s `gate_b.enabled:
-        # false` default), `identity` is accepted but never read, exactly
-        # Day 9's own behavior. When Gate-B *is* activated, this is what
-        # makes it the real, trusted, Day 6-established identity Gate-B
+        # deployment; `config/control-plane.yaml`'s `gate_b.enabled` set
+        # `false`, the one committed opt-out being Day 9's own synthetic
+        # identity space), `identity` is accepted but never read, exactly
+        # Day 9's own behavior. When Gate-B *is* activated (`true` is the
+        # committed default), this is what makes it the real, trusted,
+        # Day 6-established identity Gate-B
         # authorizes against - never a request-body value, and never
         # something this handler has to conditionally decide to pass.
         #

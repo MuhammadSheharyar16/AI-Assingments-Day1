@@ -15,9 +15,11 @@ own change set:
     `policy_registry` into the service, and `ask_governed()`
     (`control_plane.py`) never forwarded the already-resolved trusted
     `identity` into `.answer()` -- so Gate-B never ran at all. Fixed via
-    `config/control-plane.yaml`'s `gate_b.enabled` (default `false`,
-    preserving `test_day09_api_integration.py`'s exact behavior
-    unchanged) plus unconditional `identity` forwarding.
+    `config/control-plane.yaml`'s `gate_b.enabled` (`true` is the
+    committed default -- a shipped deployment authorizes through Gate-B
+    unless it explicitly opts out, the way `test_day09_api_integration.py`
+    does for its own ungoverned synthetic identity) plus unconditional
+    `identity` forwarding.
   - Even with Gate-B reachable, `/ask/governed`'s public request body had
     no field to declare a data-classification preference, and every
     committed rule (`GB-R001`/`GB-R003`/`GB-R004`/`GB-R005`) authorizes
@@ -28,9 +30,14 @@ own change set:
     preference only, never a grant: a value the matched rule does not
     itself authorize still denies).
 
-`config/control-plane.yaml`'s `gate_b.enabled` is overridden `true` here
-via `get_control_plane_config`, mirroring the override pattern every
-other test file in this project uses.
+Every request below overrides `get_control_plane_config` explicitly to
+one of two variants (`_gate_b_enabled_config()`/`_gate_b_disabled_config()`)
+rather than relying on whatever the committed file's default happens to
+be at the time this file runs -- an explicit override is the same
+override-pattern every other test file in this project uses, and it is
+what lets `test_gate_b_disabled_reproduces_day9_behavior_unchanged_for_
+the_identical_request` below stay meaningful (and still compile the same
+way) regardless of which value `config/control-plane.yaml` ships with.
 
 Proves, over a real `TestClient(app)` request:
 
@@ -50,10 +57,11 @@ Proves, over a real `TestClient(app)` request:
     unlocks, not merely inferred from the `ControlPlaneAnswerService`-level
     proof `test_day10_control_plane_integration.py::test_allowed_rag_
     request_reaches_retrieval_and_model_exactly_once` already gives.
-  - `gate_b.enabled: false` (the committed default) reproduces Day 9's
-    exact `/ask/governed` behavior unchanged for the identical request --
-    a direct side-by-side confirmation that activating Gate-B is genuinely
-    opt-in at the deployment level, not a silent behavior change.
+  - `gate_b.enabled: false`, explicitly requested via override, reproduces
+    Day 9's exact `/ask/governed` behavior unchanged for the identical
+    request -- a direct side-by-side confirmation that Gate-B activation
+    is a genuine, working toggle in both directions, not a label with no
+    effect.
 """
 from __future__ import annotations
 
@@ -104,13 +112,17 @@ class CountingRetriever:
         return [EvidenceChunk(chunk_id="C1", source_file="DOC-001.md", text="Payment terms are net 30 days.")]
 
 
-def _gate_b_enabled_config():
+def _config_with_gate_b(enabled: bool):
     """The real committed `config/control-plane.yaml`, with only
-    `gate_b.enabled` flipped `true` -- every other governed value
-    (registry path, enabled lanes, clarification policy) stays exactly
-    the committed default, `dataclasses.replace` touching nothing else."""
+    `gate_b.enabled` explicitly set to `enabled` -- every other governed
+    value (registry path, enabled lanes, clarification policy) stays
+    exactly the committed default, `dataclasses.replace` touching nothing
+    else. Used for both directions (`True`/`False`) so every test below
+    is explicit about which one it needs, rather than a `True` case
+    leaning on an override and a `False` case leaning on whatever the
+    committed file's own default happens to be."""
     real = load_control_plane_config()
-    return dataclasses.replace(real, gate_b=dataclasses.replace(real.gate_b, enabled=True))
+    return dataclasses.replace(real, gate_b=dataclasses.replace(real.gate_b, enabled=enabled))
 
 
 def _client(identity: TrustedIdentity, gateway: CountingGateway, retriever: CountingRetriever, *, gate_b_enabled: bool = True) -> TestClient:
@@ -119,8 +131,7 @@ def _client(identity: TrustedIdentity, gateway: CountingGateway, retriever: Coun
     app.dependency_overrides[get_answer_service] = lambda: service
     app.dependency_overrides[get_trusted_identity] = lambda: identity
     app.dependency_overrides[get_session_store] = lambda: store
-    if gate_b_enabled:
-        app.dependency_overrides[get_control_plane_config] = _gate_b_enabled_config
+    app.dependency_overrides[get_control_plane_config] = lambda: _config_with_gate_b(gate_b_enabled)
     return TestClient(app)
 
 
@@ -223,19 +234,20 @@ def test_authorized_data_class_answers_through_the_live_route_reaching_retrieval
 
 
 # ---------------------------------------------------------------------------
-# gate_b.enabled: false (the committed default) -- unchanged from Day 9
+# gate_b.enabled: false, explicitly requested -- the opt-out, not the default
 # ---------------------------------------------------------------------------
 
 
 def test_gate_b_disabled_reproduces_day9_behavior_unchanged_for_the_identical_request():
     """The exact same request/identity as the clarify case above, but with
-    the committed `gate_b.enabled: false` default left untouched (no
-    config override) -- Gate-B never runs at all, and the request answers
-    exactly as `test_day09_api_integration.py::
-    test_rag_lane_answers_and_calls_gateway_and_retriever_exactly_once`
-    already proves for Day 9's own identity. Same identity, same
-    question, materially different outcome shape -- the side-by-side
-    confirmation that `gate_b.enabled` is a genuine, working toggle, not
+    `gate_b.enabled` explicitly overridden `false` (`true` is the
+    committed default -- see the module docstring) -- Gate-B never runs
+    at all, and the request answers exactly as `test_day09_api_
+    integration.py::test_rag_lane_answers_and_calls_gateway_and_retriever_
+    exactly_once` already proves for Day 9's own identity. Same identity,
+    same question, materially different outcome shape depending only on
+    this one override -- the side-by-side confirmation that
+    `gate_b.enabled` is a genuine, working toggle in both directions, not
     a label with no effect."""
     gateway, retriever = CountingGateway(), CountingRetriever()
     client = _client(_SUPPLIER_READER, gateway, retriever, gate_b_enabled=False)

@@ -10,8 +10,21 @@ PlaneAnswerService` existed, was fully tested standalone
 full required order - "trusted identity -> session resolution -> Day 5
 input policy -> Gate-A -> lane selector -> selected-lane behavior" - over
 one real HTTP request per case, against the real committed ontology
-registry (`ontology/registry.v1.json`) and the real `config/control-
-plane.yaml`, neither overridden here.
+registry (`ontology/registry.v1.json`).
+
+Day 10 Task 13 note: `config/control-plane.yaml`'s `gate_b.enabled` is
+`true` by committed default (a shipped deployment authorizes through
+Gate-B unless it explicitly opts out - see that file's own comments and
+`ControlPlaneAnswerService`'s "Gate-B integration is opt-out, not
+opt-in" docstring section). This file's `_IDENTITY`/`_OTHER_IDENTITY`
+carry no governed Day 10 role at all - they are Day 9's own synthetic
+identity space, deliberately kept separate from Day 10's governed
+`policy/gate_b_policy.v1.json` roles - so `_client()` below explicitly
+overrides `get_control_plane_config` back to `gate_b.enabled: false` for
+every request this file makes, rather than depending on the shipped
+default to stay ungoverned on its behalf. That override is this file's
+entire interaction with Day 10; everything else here proves Day 9's own,
+unchanged behavior.
 
 Same no-network-call discipline every other API test file in this project
 uses: `get_answer_service` is overridden with a `CountingGateway`/
@@ -22,13 +35,15 @@ now also at the HTTP boundary the Day 9 review specifically asked for.
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 
 from fastapi.testclient import TestClient
 
 from aico.api.app import app
-from aico.api.dependencies import get_answer_service, get_session_store
+from aico.api.dependencies import get_answer_service, get_control_plane_config, get_session_store
 from aico.api.identity import TrustedIdentity, get_trusted_identity
+from aico.control.config import load_control_plane_config
 from aico.memory.store import InMemorySessionStore
 from aico.platform.model_gateway import CallMetadata, ChatRequest, ChatResult
 from aico.rag.answer_service import GroundedAnswerService
@@ -78,6 +93,20 @@ class CountingRetriever:
         return [EvidenceChunk(chunk_id="C1", source_file="DOC-001.md", text="Payment terms are net 30 days.")]
 
 
+def _gate_b_disabled_config():
+    """The real committed `config/control-plane.yaml`, with only
+    `gate_b.enabled` flipped back `false` - every other governed value
+    (registry path, enabled lanes, clarification policy) stays exactly
+    the committed default. `_IDENTITY`/`_OTHER_IDENTITY` carry no
+    governed Day 10 role at all, so leaving the committed `true` default
+    in place would deny/clarify every request below for reasons this
+    file has nothing to do with proving - this is Day 9's own explicit,
+    documented opt-out, not a rediscovery of Day 9's old accidental
+    default."""
+    real = load_control_plane_config()
+    return dataclasses.replace(real, gate_b=dataclasses.replace(real.gate_b, enabled=False))
+
+
 def _client(gateway: CountingGateway, retriever: CountingRetriever) -> TestClient:
     service = GroundedAnswerService(gateway=gateway, retriever=retriever)
     # One store instance, reused across every request this client makes -
@@ -90,6 +119,7 @@ def _client(gateway: CountingGateway, retriever: CountingRetriever) -> TestClien
     app.dependency_overrides[get_answer_service] = lambda: service
     app.dependency_overrides[get_trusted_identity] = lambda: _IDENTITY
     app.dependency_overrides[get_session_store] = lambda: store
+    app.dependency_overrides[get_control_plane_config] = _gate_b_disabled_config
     return TestClient(app)
 
 

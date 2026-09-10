@@ -64,20 +64,26 @@ gate_b:
   # pipeline entirely (Day 9's exact behavior -- `service.gate_b is
   # None`, `identity`/`requested` accepted but unread).
   #
-  # `false` here, same convention as `model_assisted_interpretation.enabled`
-  # above: the committed Mode-A ontology (`ontology/registry.v1.json`,
-  # three synthetic Day 9 intents/TENANT-SYN-001 identities) and the
-  # committed Gate-B policy (`policy/gate_b_policy.v1.json`, TENANT-A /
-  # supplier_reader / sourcing_analyst / compliance_reviewer roles) are
-  # two deliberately separate synthetic spaces -- flipping this on for a
-  # deployment still using Day 9's own synthetic identities would deny or
-  # clarify every request (no governed role at all), silently changing
-  # `test_day09_api_integration.py`'s already-accepted behavior out from
-  # under itself. A deployment whose real identity provider actually
-  # issues Day 10 governed roles sets this `true`; `test_day10_api_
-  # integration.py` proves the live route's full required order end to
-  # end with it enabled, against the real committed policy.
-  enabled: false
+  # `true` here: Gate-B is authorization, not an optional feature -- a
+  # committed deployment config that ships ungoverned by default, waiting
+  # for an operator to remember to flip a flag, is exactly the "no
+  # implicit allow" failure mode Day 10 exists to close. `/ask/governed`
+  # now authorizes through the real committed Gate-B policy
+  # (`policy/gate_b_policy.v1.json`, TENANT-A / supplier_reader /
+  # sourcing_analyst / compliance_reviewer roles) for every request by
+  # default.
+  #
+  # The committed Mode-A ontology (`ontology/registry.v1.json`, three
+  # synthetic Day 9 intents/TENANT-SYN-001 identities) and the Day 10
+  # Gate-B policy's governed roles remain two deliberately separate
+  # synthetic spaces -- Day 9's own synthetic identity carries no governed
+  # role, so `test_day09_api_integration.py` explicitly overrides this
+  # toggle back to `false` for its own requests (see that file's module
+  # docstring) rather than relying on the shipped default to stay
+  # ungoverned on its behalf. `test_day10_api_integration.py` proves the
+  # live route's full required order end to end against a real Day 10
+  # governed identity with this committed `true` default left untouched.
+  enabled: true
   # Path to the committed, read-only Gate-B policy (Task 2) -- relative
   # to the process working directory, same convention as
   # `ontology.registry_path` above.

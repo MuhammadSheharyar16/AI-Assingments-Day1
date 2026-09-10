@@ -112,7 +112,7 @@ def test_load_reads_the_real_committed_config():
     assert config.clarification.max_candidate_intents > 0
     assert config.clarification.min_overlap_score > 0
     assert config.model_assisted_interpretation.enabled is False
-    assert config.gate_b.enabled is False
+    assert config.gate_b.enabled is True
     assert config.gate_b.policy_path == Path("policy/gate_b_policy.v1.json")
 
 

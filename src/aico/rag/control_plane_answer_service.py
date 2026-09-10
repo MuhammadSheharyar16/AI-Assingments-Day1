@@ -16,7 +16,7 @@ input policy" onward -- "session resolution" is, exactly as for
 `GroundedAnswerService` today, `api/app.py`'s job (`MemorySessionService`),
 not this module's. "Trusted identity" is different from Day 9: Gate-B
 needs it directly (`identity: TrustedIdentity | None = None`, Task 13's
-one new parameter on `answer()`) -- see "Gate-B integration is opt-in"
+one new parameter on `answer()`) -- see "Gate-B integration is opt-out, not opt-in"
 below for why it is optional here rather than required.
 
     1. Day 5 input policy (`evaluate_policy`, unchanged) -- a `block` or
@@ -53,7 +53,7 @@ below for why it is optional here rather than required.
                             validation -- Day 5's pipeline, unmodified;
                             reached only after Gate-B `allow` (or when
                             Gate-B is not active for this service at all --
-                            see "Gate-B integration is opt-in" below).
+                            see "Gate-B integration is opt-out, not opt-in" below).
          mode_b         -> `ModeBSelected`: the governed, now Gate-B-
                             authorized selection is returned; nothing
                             executes it (Day 9/10 working rule: "Do not
@@ -80,18 +80,26 @@ below for why it is optional here rather than required.
        only ever does so from the single `rag` branch, now additionally
        gated behind Gate-B `allow` (or an inactive Gate-B) for that branch.
 
-## Gate-B integration is opt-in on this class (Task 13)
+## Gate-B integration is opt-out, not opt-in (Task 13)
 
 `policy_registry: PolicyRegistry | None = None` (a new, optional
 constructor field) is what activates Gate-B on a given
 `ControlPlaneAnswerService` instance -- `None` preserves Day 9's exact
 behavior: no Gate-B span, no `GateBDenied`/`GateBAuthorizationClarify`
 outcome ever produced, `identity`/`requested` accepted by `.answer()` but
-unread. This is deliberate, not a shortcut: `ontology/registry.v1.json`'s
-three synthetic intents each map to exactly one/two-or-more governed data
-classifications in `policy/gate_b_policy.v1.json`'s own committed rules,
-and this module's `.answer()` takes a bare free-text `question` with no
-per-request classification hint -- meaning a caller that does not supply
+unread. Wiring this to `None` is a real, supported mode (unit tests build
+one this way to exercise Day 9 behavior directly), but it is not what a
+deployment gets by default: `config/control-plane.yaml`'s `gate_b.enabled`
+is `true` unless a deployment explicitly opts out -- shipping ungoverned
+until an operator remembers to flip a flag is exactly the fail-open shape
+Day 10 exists to close.
+
+The one committed opt-out is Day 9's own synthetic identity space:
+`ontology/registry.v1.json`'s three synthetic intents each map to exactly
+one/two-or-more governed data classifications in
+`policy/gate_b_policy.v1.json`'s own committed rules, and this module's
+`.answer()` takes a bare free-text `question` with no per-request
+classification hint -- meaning a caller that does not supply
 `requested.data_class` will genuinely hit Task 10's `clarify` path for
 every `rag`/`mode_b` request against a rule that allows more than one
 classification (`GB-R001`/`GB-R003`/`GB-R004`, all real, all in the
@@ -99,24 +107,24 @@ committed policy). That is correct Gate-B behavior (Task 10: "policy needs
 one selected" is a real, safe ambiguity here), not a bug -- but it is also
 a materially different outcome shape than Day 9's own already-passing
 regression suite (`test_day09_api_integration.py` and friends) exercises
-against an identity with no governed role at all.
+against an identity with no governed role at all. Rather than relying on
+the shipped default to stay ungoverned on its behalf, that file explicitly
+overrides `config/control-plane.yaml`'s `gate_b.enabled` to `false` for
+its own requests (see its own module docstring) -- an explicit,
+documented exception, not the default anyone else inherits silently.
 
-`/ask/governed` (`api/control_plane.py`) now forwards `identity`
+`/ask/governed` (`api/control_plane.py`) forwards `identity`
 unconditionally and resolves `policy_registry` from
 `api/dependencies.py`'s `get_policy_registry`, so Gate-B *is* reachable
-through a real request today -- but `get_control_plane_answer_service`
-only actually passes that resolved `policy_registry` into this class
-(rather than leaving it `None`) when `control_plane_config.gate_b.enabled`
-is true (`config/control-plane.yaml`'s own `gate_b` section, default
-`false`). This is the deployment-level switch that avoids silently
-changing Day 9's own already-accepted regression file out from under
-itself while Day 9's synthetic ontology/identity space and Day 10's
-governed policy roles remain two separate synthetic spaces --
-`test_day10_control_plane_integration.py` proves the full required order
-end to end at this class's own level (constructing the service *with* a
-real `policy_registry` directly), and `test_day10_api_integration.py`
-proves the identical order through a real HTTP request to `/ask/governed`
-with `gate_b.enabled: true` and a real Day 10 governed identity.
+through a real request today -- `get_control_plane_answer_service` passes
+that resolved `policy_registry` into this class (rather than leaving it
+`None`) whenever `control_plane_config.gate_b.enabled` is true, which is
+the committed default. `test_day10_control_plane_integration.py` proves
+the full required order end to end at this class's own level
+(constructing the service *with* a real `policy_registry` directly), and
+`test_day10_api_integration.py` proves the identical order through a real
+HTTP request to `/ask/governed` with the committed `gate_b.enabled: true`
+default left untouched and a real Day 10 governed identity.
 
 Task 11 -- decision provenance / observability: steps 3, 4 and (when
 active) 5 above each run inside their own OTel span (`"gate_a"`,
@@ -343,7 +351,7 @@ class ControlPlaneAnswerService:
     when given, `gate_b` (`GateB`, built from it plus `registry`) is
     activated for every `.answer()` call. `None` (the default) leaves
     `gate_b` unset and Gate-B entirely out of the pipeline -- see the
-    module docstring's "Gate-B integration is opt-in" section for why."""
+    module docstring's "Gate-B integration is opt-out, not opt-in" section for why."""
 
     registry: OntologyRegistry
     rag_service: GroundedAnswerService
@@ -541,7 +549,7 @@ class ControlPlaneAnswerService:
         Not called from `.answer()` itself: this pipeline's `rag`/`mode_b`
         lanes have no structured, per-field-classified protected record to
         disclose yet (see the module docstring's "Gate-B integration is
-        opt-in" section on the same underlying reason `answer()` cannot
+        opt-out, not opt-in" section on the same underlying reason `answer()` cannot
         supply a `requested.data_class` on a caller's behalf either) -- a
         free-text RAG answer and a not-yet-executed Mode-B selection are
         not `ProtectedField` sequences. This method is the concrete,
