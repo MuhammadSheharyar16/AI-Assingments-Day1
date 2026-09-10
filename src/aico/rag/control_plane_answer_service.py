@@ -84,8 +84,8 @@ below for why it is optional here rather than required.
 
 `policy_registry: PolicyRegistry | None = None` (a new, optional
 constructor field) is what activates Gate-B on a given
-`ControlPlaneAnswerService` instance -- `None` (the default) preserves Day
-9's exact behavior: no Gate-B span, no `GateBDenied`/`GateBAuthorizationClarify`
+`ControlPlaneAnswerService` instance -- `None` preserves Day 9's exact
+behavior: no Gate-B span, no `GateBDenied`/`GateBAuthorizationClarify`
 outcome ever produced, `identity`/`requested` accepted by `.answer()` but
 unread. This is deliberate, not a shortcut: `ontology/registry.v1.json`'s
 three synthetic intents each map to exactly one/two-or-more governed data
@@ -99,19 +99,24 @@ committed policy). That is correct Gate-B behavior (Task 10: "policy needs
 one selected" is a real, safe ambiguity here), not a bug -- but it is also
 a materially different outcome shape than Day 9's own already-passing
 regression suite (`test_day09_api_integration.py` and friends) exercises
-against an identity with no governed role at all. Exactly the same
-reasoning `ControlPlaneAnswerService` itself already documents for why it
-is "not wired into `api/app.py`'s `/ask` today" (see below) applies one
-layer up here: this class is Task 13's complete, independently testable,
-correct integration -- `test_day10_control_plane_integration.py` proves
-the full required order end to end, constructing the service *with* a
-real `policy_registry` -- ready for a caller to activate once it can
-supply a real trusted identity with a governed role (and, ideally, a
-`requested.data_class`) for every request, exactly as `/ask/governed`'s
-real `get_trusted_identity` dependency already can. Activating it on the
-live `/ask/governed` route is a deliberate follow-up, not done in this
-pass, precisely to avoid silently changing Day 9's own already-accepted
-regression file out from under itself.
+against an identity with no governed role at all.
+
+`/ask/governed` (`api/control_plane.py`) now forwards `identity`
+unconditionally and resolves `policy_registry` from
+`api/dependencies.py`'s `get_policy_registry`, so Gate-B *is* reachable
+through a real request today -- but `get_control_plane_answer_service`
+only actually passes that resolved `policy_registry` into this class
+(rather than leaving it `None`) when `control_plane_config.gate_b.enabled`
+is true (`config/control-plane.yaml`'s own `gate_b` section, default
+`false`). This is the deployment-level switch that avoids silently
+changing Day 9's own already-accepted regression file out from under
+itself while Day 9's synthetic ontology/identity space and Day 10's
+governed policy roles remain two separate synthetic spaces --
+`test_day10_control_plane_integration.py` proves the full required order
+end to end at this class's own level (constructing the service *with* a
+real `policy_registry` directly), and `test_day10_api_integration.py`
+proves the identical order through a real HTTP request to `/ask/governed`
+with `gate_b.enabled: true` and a real Day 10 governed identity.
 
 Task 11 -- decision provenance / observability: steps 3, 4 and (when
 active) 5 above each run inside their own OTel span (`"gate_a"`,

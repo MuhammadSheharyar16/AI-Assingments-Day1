@@ -55,3 +55,30 @@ model_assisted_interpretation:
   enabled: false
   timeout_seconds: 5.0
   max_output_tokens: 200
+
+gate_b:
+  # Day 10 Task 13 -- deployment-level toggle for whether the live
+  # `/ask/governed` route actually authorizes through Gate-B (loads
+  # `policy_path` and forwards the caller's trusted identity into
+  # `ControlPlaneAnswerService.answer()`) or leaves Gate-B out of the
+  # pipeline entirely (Day 9's exact behavior -- `service.gate_b is
+  # None`, `identity`/`requested` accepted but unread).
+  #
+  # `false` here, same convention as `model_assisted_interpretation.enabled`
+  # above: the committed Mode-A ontology (`ontology/registry.v1.json`,
+  # three synthetic Day 9 intents/TENANT-SYN-001 identities) and the
+  # committed Gate-B policy (`policy/gate_b_policy.v1.json`, TENANT-A /
+  # supplier_reader / sourcing_analyst / compliance_reviewer roles) are
+  # two deliberately separate synthetic spaces -- flipping this on for a
+  # deployment still using Day 9's own synthetic identities would deny or
+  # clarify every request (no governed role at all), silently changing
+  # `test_day09_api_integration.py`'s already-accepted behavior out from
+  # under itself. A deployment whose real identity provider actually
+  # issues Day 10 governed roles sets this `true`; `test_day10_api_
+  # integration.py` proves the live route's full required order end to
+  # end with it enabled, against the real committed policy.
+  enabled: false
+  # Path to the committed, read-only Gate-B policy (Task 2) -- relative
+  # to the process working directory, same convention as
+  # `ontology.registry_path` above.
+  policy_path: policy/gate_b_policy.v1.json

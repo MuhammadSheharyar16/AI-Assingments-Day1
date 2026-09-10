@@ -286,6 +286,61 @@ def test_perm_002_denied_structured_lookup_is_rule_denied_not_no_match(gate_b):
     assert decision.disclosure_profile is None
 
 
+def test_rule_matched_and_allowed_but_role_lacks_required_permission_still_denies():
+    """Defense-in-depth (`gate_b.py` stage 4, added alongside this test):
+    `find_rule` matches a rule to one exact `role_id`, so every committed
+    fixture role/rule pair is authored consistently and this never
+    actually fires against the real policy -- but a hand-built policy
+    that authors them *inconsistently* (a rule with `allowed=true`
+    naming a `required_permission` its own matched role was never
+    granted) must still fail closed on that alone, not be authorized just
+    because `rule.allowed` says yes."""
+    from aico.control.policy_models import (
+        DisclosureProfile,
+        GateBPolicyDocument,
+        PermissionRule,
+        Role,
+        TenantScopeKind,
+    )
+
+    document = GateBPolicyDocument(
+        policy_version="1.0",
+        status="active",
+        roles=[Role(role_id="supplier_reader", permissions=["read_policy"], tenant_scope=TenantScopeKind.OWN_TENANT, status="active")],
+        permissions=["read_policy", "read_structured_supplier"],
+        data_classifications=[DataClassification.PUBLIC],
+        pii_categories=[PiiCategory.NONE],
+        disclosure_profiles=[DisclosureProfile(profile_id="policy_reader", field_actions={})],
+        rules=[
+            PermissionRule(
+                rule_id="GB-INCONSISTENT",
+                role="supplier_reader",
+                intent_id="INT-POLICY-QUESTION",
+                lane=LaneId.RAG,
+                required_permission="read_structured_supplier",  # supplier_reader was never granted this
+                allowed=True,
+                allowed_data_classes=[DataClassification.PUBLIC],
+                allowed_pii_categories=[PiiCategory.NONE],
+                disclosure_profile="policy_reader",
+                status="active",
+            )
+        ],
+    )
+    inconsistent_registry = PolicyRegistry(document)
+    inconsistent_gate_b = GateB(inconsistent_registry)
+    identity = _identity({"tenant_id": "TENANT-A", "user_id": "USER-1", "roles": ["supplier_reader"]})
+
+    decision = inconsistent_gate_b.authorize(
+        identity, _matched("INT-POLICY-QUESTION"), _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION")
+    )
+
+    assert decision.decision is GateBStatus.DENY
+    assert decision.reason_code == "permission_not_granted"
+    assert decision.rule_id == "GB-INCONSISTENT"
+    assert decision.effective_data_classes == ()
+    assert decision.disclosure_profile is None
+
+
 def test_perm_003_analyst_structured_lookup_allowed_with_bounded_scope(gate_b):
     identity = _identity({"tenant_id": "TENANT-A", "user_id": "USER-2", "roles": ["sourcing_analyst"]})
     decision = gate_b.authorize(

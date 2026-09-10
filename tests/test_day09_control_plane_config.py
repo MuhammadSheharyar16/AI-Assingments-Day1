@@ -72,6 +72,10 @@ model_assisted_interpretation:
   enabled: false
   timeout_seconds: 5.0
   max_output_tokens: 200
+
+gate_b:
+  enabled: false
+  policy_path: policy/gate_b_policy.v1.json
 """.strip()
 
 
@@ -108,6 +112,24 @@ def test_load_reads_the_real_committed_config():
     assert config.clarification.max_candidate_intents > 0
     assert config.clarification.min_overlap_score > 0
     assert config.model_assisted_interpretation.enabled is False
+    assert config.gate_b.enabled is False
+    assert config.gate_b.policy_path == Path("policy/gate_b_policy.v1.json")
+
+
+def test_load_missing_gate_b_section_raises(tmp_path):
+    path = tmp_path / "control-plane.yaml"
+    text = _valid_config_text().replace("\n\ngate_b:\n  enabled: false\n  policy_path: policy/gate_b_policy.v1.json", "")
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ControlPlaneConfigurationError, match="gate_b"):
+        load_control_plane_config(path)
+
+
+def test_gate_b_enabled_true_loads(tmp_path):
+    path = tmp_path / "control-plane.yaml"
+    text = _valid_config_text().replace("gate_b:\n  enabled: false", "gate_b:\n  enabled: true")
+    path.write_text(text, encoding="utf-8")
+    config = load_control_plane_config(path)
+    assert config.gate_b.enabled is True
 
 
 def test_load_accepts_an_explicit_path(tmp_path):
@@ -281,6 +303,7 @@ def test_control_plane_answer_service_honors_config_lane_restriction(real_regist
         enabled_lanes=frozenset({LaneId.RAG, LaneId.CLARIFY, LaneId.BLOCK, LaneId.SAFE_FAST_PATH}),
         clarification=config.clarification,
         model_assisted_interpretation=config.model_assisted_interpretation,
+        gate_b=config.gate_b,
     )
     rag_service = GroundedAnswerService(gateway=_NeverCalledGateway(), retriever=_never_called_retriever)
     service = ControlPlaneAnswerService(registry=real_registry, rag_service=rag_service, control_plane_config=narrowed)

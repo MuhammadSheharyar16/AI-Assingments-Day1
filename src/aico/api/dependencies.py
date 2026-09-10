@@ -91,6 +91,7 @@ from fastapi import Depends
 from aico.api.instrumentation import MetricsGateway, MetricsRetriever, MetricsSessionStore
 from aico.control.config import ControlPlaneConfig, load_control_plane_config
 from aico.control.ontology_registry import OntologyRegistry
+from aico.control.policy_registry import PolicyRegistry
 from aico.memory.service import MemorySessionService
 from aico.memory.store import DEFAULT_SESSION_DB_PATH, SessionStore, SqliteSessionStore
 from aico.memory.summarizer import FakeSummarizer, Summarizer
@@ -230,23 +231,60 @@ def get_control_plane_config() -> ControlPlaneConfig:
     return _default_control_plane_config()
 
 
+@lru_cache(maxsize=1)
+def _default_policy_registry() -> PolicyRegistry:
+    control_plane_config = get_control_plane_config()
+    return PolicyRegistry.load(control_plane_config.gate_b.policy_path, ontology_registry=get_ontology_registry())
+
+
+def get_policy_registry() -> PolicyRegistry:
+    """Default provider: the real committed Gate-B policy registry (Day
+    10 Task 2, `policy/gate_b_policy.v1.json`, path taken from
+    `control_plane_config.gate_b.policy_path`), loaded and validated
+    exactly once via `_default_policy_registry`'s cache - the identical
+    `lru_cache`d-singleton pattern `get_ontology_registry`/
+    `get_control_plane_config` already use. Always resolvable regardless
+    of `gate_b.enabled` (loading the committed policy is cheap and always
+    valid); `get_control_plane_answer_service` below is what actually
+    decides whether the loaded registry is *wired in* or left unused.
+    Tests override this to build against a throwaway policy without
+    touching the committed file."""
+
+    return _default_policy_registry()
+
+
 def get_control_plane_answer_service(
     registry: OntologyRegistry = Depends(get_ontology_registry),
     control_plane_config: ControlPlaneConfig = Depends(get_control_plane_config),
     rag_service: GroundedAnswerService = Depends(get_answer_service),
+    policy_registry: PolicyRegistry = Depends(get_policy_registry),
 ) -> ControlPlaneAnswerService:
-    """Default provider: `ControlPlaneAnswerService` (Day 9 Task 9),
-    assembled from the real ontology registry and control-plane config
-    plus `get_answer_service`'s own real, metrics-wrapped Day 5 pipeline -
-    see module docstring for why this reuses `get_answer_service` rather
-    than wiring `get_gateway`/`get_retriever`/`get_policy_evaluator` a
-    second time. Tests override this dependency as a whole, or any one of
-    `get_ontology_registry`/`get_control_plane_config`/`get_answer_service`
+    """Default provider: `ControlPlaneAnswerService` (Day 9 Task 9; Day 10
+    Task 13), assembled from the real ontology registry and control-plane
+    config plus `get_answer_service`'s own real, metrics-wrapped Day 5
+    pipeline - see module docstring for why this reuses
+    `get_answer_service` rather than wiring `get_gateway`/`get_retriever`/
+    `get_policy_evaluator` a second time. Tests override this dependency
+    as a whole, or any one of `get_ontology_registry`/
+    `get_control_plane_config`/`get_answer_service`/`get_policy_registry`
     (or the providers those in turn depend on) individually - the same
-    layered-override shape every other provider in this module offers."""
+    layered-override shape every other provider in this module offers.
+
+    Gate-B is only actually activated on the service (`policy_registry=`
+    is only passed, rather than left `None`) when
+    `control_plane_config.gate_b.enabled` is true - see
+    `config/control-plane.yaml`'s own `gate_b` section and
+    `GateBActivationConfig`'s docstring for why this defaults off (the
+    Day 9 synthetic ontology/identity space and the Day 10 Gate-B policy's
+    governed roles are deliberately separate synthetic spaces; flipping
+    Gate-B on unconditionally for a deployment still using Day 9's own
+    synthetic identities would deny/clarify every request). A deployment
+    whose identity provider actually issues Day 10 governed roles sets
+    `gate_b.enabled: true` to activate it - no code change required."""
 
     return ControlPlaneAnswerService(
         registry=registry,
         rag_service=rag_service,
         control_plane_config=control_plane_config,
+        policy_registry=policy_registry if control_plane_config.gate_b.enabled else None,
     )

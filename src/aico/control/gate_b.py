@@ -76,6 +76,17 @@ own tiered classification (cheapest/most-certain checks first) and equally
      "denied permission" case). Neither case ever falls through to allow
      (Task 4: "Do not implement: if no rule matched: allow" -- see
      `test_default_decision_is_deny_never_allow_by_absence_of_a_rule`).
+     Defense-in-depth, one more check even once a rule matches and
+     `allowed` is `True`: `rule.required_permission` must actually be one
+     of the matched `role.permissions` - `deny` ("permission not
+     granted") otherwise. Every committed fixture role/rule pair is
+     authored consistently (`find_rule` already ties a rule to one exact
+     `role_id`, so this never actually fires against the real committed
+     policy today), but `Role.permissions`/`PermissionRule.
+     required_permission` are both real, governed policy fields (Task 1's
+     required rule/role shape) - a policy that ever authored them
+     inconsistently must still fail closed on `rule.allowed` alone, not
+     silently authorize a permission the matched role was never granted.
 
   5. Tenant scope (Task 5).  The trusted caller's own tenant
      (`identity.tenant_id` - the only tenant a role scoped `own_tenant`
@@ -292,6 +303,24 @@ class GateB:
         if not rule.allowed:
             return _deny(
                 reason_code="rule_denied",
+                policy_version=version,
+                role_id=role_id,
+                intent_id=intent_id,
+                lane=lane,
+                rule_id=rule.rule_id,
+            )
+        if rule.required_permission not in role.permissions:
+            # Defense-in-depth: `find_rule` already matched this rule to
+            # this exact `role_id`, so a committed policy authored
+            # consistently (every fixture role/rule pair today) never
+            # reaches this - but `Role.permissions` and
+            # `PermissionRule.required_permission` are both real, governed
+            # policy fields (Task 1's own required rule/role shape), and a
+            # rule whose own declared `required_permission` its matched
+            # role was never actually granted must still fail closed, not
+            # be authorized on `rule.allowed` alone.
+            return _deny(
+                reason_code="permission_not_granted",
                 policy_version=version,
                 role_id=role_id,
                 intent_id=intent_id,

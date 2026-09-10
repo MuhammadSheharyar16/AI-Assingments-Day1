@@ -60,11 +60,14 @@ class GovernedAskStatus(str, Enum):
     lane outcomes `/ask` never produces, since `/ask` never runs Gate-A/
     lane selection at all. The two Day-10-only values (`gate_b_denied`,
     `gate_b_clarify`) name Gate-B's own two non-allow outcomes (Day 10
-    Task 13) - reachable only from a `ControlPlaneAnswerService` built
-    with `policy_registry` set; `/ask/governed`'s own DI wiring does not
-    activate Gate-B yet (see that module's own docstring), so these two
-    values are not produced by the live route today, but this mapper
-    still handles them completely for whenever a caller does."""
+    Task 13) - reachable from a `ControlPlaneAnswerService` built with
+    `policy_registry` set (always true at the unit/service level;
+    reachable through the live `/ask/governed` route too, once
+    `config/control-plane.yaml`'s `gate_b.enabled` is set `true` for a
+    deployment whose identity provider issues Day 10 governed roles -
+    `false` is the committed default, see `dependencies.py`'s
+    `get_control_plane_answer_service`), so this mapper handles them
+    completely either way."""
 
     ANSWERED = "answered"
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"

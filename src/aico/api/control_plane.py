@@ -2,12 +2,21 @@
 Day 9 Task 9 — `POST /ask/governed`: the live HTTP boundary over the
 Day 9 control plane (Gate-A -> lane selector -> selected-lane behavior,
 `aico.rag.control_plane_answer_service.ControlPlaneAnswerService`).
+Day 10 Task 13 — the already-resolved trusted `identity` below is now
+forwarded into `service.answer()`, making Gate-B genuinely reachable from
+a real request (`config/control-plane.yaml`'s `gate_b.enabled` toggle
+decides, at the dependency-injection layer in `dependencies.py`, whether
+`service.gate_b` is actually built - this handler forwards `identity`
+unconditionally either way, since it is simply unread when Gate-B is
+inactive). See `test_day10_api_integration.py` for the live, HTTP-level
+proof with Gate-B enabled.
 
-Required order (Day 9 assignment), all now reachable through a real
+Required order (Day 9/10 assignment), all now reachable through a real
 request, not only through direct instantiation in tests/scripts:
 
     trusted identity -> session resolution -> Day 5 input policy
-    -> Gate-A -> lane selector -> selected-lane behavior
+    -> Gate-A -> lane selector -> Gate-B (when enabled) -> selected-lane
+    behavior
 
 This module is `app.py`'s peer for `/ask`, not a replacement for it -
 same shape as `health.router`: its own `APIRouter`, included into `app`
@@ -143,10 +152,24 @@ async def ask_governed(
         # the current question - only genuinely prior turns are ever a
         # resolution candidate.
         reference_context = build_reference_context(session)
+        # Day 10 Task 13: the already-resolved trusted `identity` (Day 6's
+        # own trust boundary, `get_trusted_identity` above) is forwarded
+        # into `.answer()` unconditionally - safe and correct either way.
+        # When `service.gate_b is None` (Gate-B not activated for this
+        # deployment; `config/control-plane.yaml`'s `gate_b.enabled:
+        # false` default), `identity` is accepted but never read, exactly
+        # Day 9's own behavior. When Gate-B *is* activated, this is what
+        # makes it the real, trusted, Day 6-established identity Gate-B
+        # authorizes against - never a request-body value, and never
+        # something this handler has to conditionally decide to pass.
         result = await run_cancellable(
             http_request,
             lambda token: service.answer(
-                request.question, token, memory_context=memory_context, reference_context=reference_context
+                request.question,
+                token,
+                memory_context=memory_context,
+                reference_context=reference_context,
+                identity=identity,
             ),
         )
         response = governed_ask_response_from_result(

@@ -1,5 +1,6 @@
 """
 Day 9 Task 12 -- control-plane configuration.
+Day 10 Task 13 -- extended with the `gate_b` deployment-activation toggle.
 
 Validated loading of `config/control-plane.yaml`: operational settings
 for the control plane (Tasks 1-11) --
@@ -12,6 +13,8 @@ for the control plane (Tasks 1-11) --
                                                (only meaningful "if model
                                                assistance exists" - Task 12's
                                                own wording; see below)
+    Gate-B live-route activation           -> gate_b (Day 10 Task 13;
+                                               `GateBActivationConfig` below)
 
 Ontology definitions themselves (domains/concepts/intents, and which
 lanes an intent is allowed to route through) are never here -- only a
@@ -83,6 +86,23 @@ class ModelAssistedInterpretationConfig:
 
 
 @dataclass(frozen=True)
+class GateBActivationConfig:
+    """Day 10 Task 13 -- whether the live `/ask/governed` route actually
+    activates Gate-B. `enabled=False` (the committed default) preserves
+    Day 9's exact behavior -- see `config/control-plane.yaml`'s own
+    `gate_b` section for why this defaults off (the Day 9 synthetic
+    ontology/identity space and the Day 10 Gate-B policy's governed roles
+    are deliberately separate, and flipping this on for a deployment
+    still using Day 9's own synthetic identities would deny/clarify every
+    request). `policy_path` is validated (non-empty) unconditionally, the
+    same "always validated, read only when actually turned on" rule
+    `model_assisted_interpretation` already follows in this module."""
+
+    enabled: bool
+    policy_path: Path
+
+
+@dataclass(frozen=True)
 class ControlPlaneConfig:
     """The fully validated, typed contents of `config/control-plane.yaml`."""
 
@@ -91,6 +111,7 @@ class ControlPlaneConfig:
     enabled_lanes: frozenset[LaneId]
     clarification: ClarificationPolicy
     model_assisted_interpretation: ModelAssistedInterpretationConfig
+    gate_b: GateBActivationConfig
 
 
 def _build_config(raw: dict, *, source: Path) -> ControlPlaneConfig:
@@ -139,12 +160,19 @@ def _build_config(raw: dict, *, source: Path) -> ControlPlaneConfig:
         max_output_tokens=max_output_tokens,
     )
 
+    gate_b_raw = section(raw, "gate_b", "$")
+    gate_b = GateBActivationConfig(
+        enabled=_require_bool(gate_b_raw, "enabled", "gate_b"),
+        policy_path=Path(str(_require(gate_b_raw, "policy_path", "gate_b"))),
+    )
+
     return ControlPlaneConfig(
         version=version,
         registry_path=registry_path,
         enabled_lanes=enabled_lanes,
         clarification=clarification,
         model_assisted_interpretation=model_assisted_interpretation,
+        gate_b=gate_b,
     )
 
 

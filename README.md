@@ -1,4 +1,4 @@
-# AICO — Retrieval Engineering (Day 1: Lexical Baseline · Day 2: Embeddings & Hybrid · Day 3: Model Gateway · Day 4: Structured Contracts · Day 5: Grounded Answering · Day 6: API Surface & Observability · Day 7: Evaluation & Regression Gate · Day 8: Session State & Memory · Day 9: Ontology Registry, Gate-A & Lane Selection)
+# AICO — Retrieval Engineering (Day 1: Lexical Baseline · Day 2: Embeddings & Hybrid · Day 3: Model Gateway · Day 4: Structured Contracts · Day 5: Grounded Answering · Day 6: API Surface & Observability · Day 7: Evaluation & Regression Gate · Day 8: Session State & Memory · Day 9: Ontology Registry, Gate-A & Lane Selection · Day 10: Gate-B Permissions, Tenant Isolation & Safe Disclosure)
 
 Day 1 is a from-scratch chunker and BM25 lexical search baseline. Day 2 adds
 semantic retrieval on top of it: a real embedding provider behind one
@@ -1194,6 +1194,118 @@ no-fall-through tests use) — including one real invalid-registry
 rejection (a duplicate `concept_id`) captured as evidence, not described
 hypothetically.
 
+## Day 10 — Gate-B Permissions, Tenant Isolation, PII & Safe Disclosure
+
+Adds the authorization/disclosure boundary Day 9's own module docstring
+named as a later day: Gate-A/the lane selector decide what a request
+*means* and which governed route it takes; Gate-B decides whether the
+*trusted caller* may actually proceed, under which tenant/data scope, and
+what may be disclosed. The assignment's standing rule: "authorization
+scope comes from trusted identity and governed policy — the model,
+memory, request body, and repair logic may never widen it."
+
+- `policy_models.py` — typed, self-validating `GateBPolicyDocument`
+  (`policy_version`/`status`/`roles`/`permissions`/`data_classifications`/
+  `pii_categories`/`disclosure_profiles`/`rules`, Pydantic, `extra="forbid"`):
+  duplicate role/permission/disclosure-profile/rule ids, an unknown
+  role/permission/data-classification/PII-category/disclosure-profile
+  reference, an unrecognized lane (typed against Day 9's own closed
+  `LaneId`), and — when a governed `OntologyRegistry`'s intent ids are
+  supplied as validation context — an unrecognized ontology intent are
+  all rejected at parse time. Also defines the three shared, pure
+  decision primitives every other Day 10 module builds on rather than
+  re-implementing: `is_data_classification_permitted()`,
+  `is_pii_category_permitted()`, `resolve_disclosure_action()` (fail-closed
+  `DENY` for any field a disclosure profile does not declare).
+- `policy_registry.py` — loads and cross-validates the committed
+  `policy/gate_b_policy.v1.json` (byte-identical to the Day 10 resource
+  pack's fixture) against the real committed `OntologyRegistry`, then
+  exposes read-only lookups and an O(1) `find_rule(role_id, intent_id,
+  lane)` index — rejecting a policy where more than one rule would govern
+  the same combination, so rule matching is always unambiguous.
+- `gate_b.py` — `GateB.authorize()`: ordered, fail-closed stages (trusted
+  identity present → upstream Gate-A/lane actually resolved something →
+  governed intent → trusted role → matching, allowed rule → the matched
+  role was actually granted the rule's own `required_permission` →
+  tenant scope → data classification), each denying immediately rather
+  than falling through. No stage, and no code path in this module at all,
+  can widen scope — `effective_tenant_scope`/`effective_data_classes`/
+  `effective_pii_policy` are always `requested ∩ trusted ∩ policy rule`,
+  never a union, and there is no "if no rule matched: allow" anywhere.
+  `clarify` is reserved for exactly one safe case (a matched, allowed
+  rule authorizing more than one data classification and none requested)
+  — never a missing role/tenant/permission/clearance, which always
+  denies instead of prompting the caller to self-assert one.
+- `disclosure.py` / `redaction.py` — `apply_disclosure()` turns one
+  `GateBDecision` plus typed candidate fields into a `SafeDisclosureView`:
+  a disallowed/undeclared field is omitted, a redactable field is masked
+  by `redaction.py`'s pure, deterministic string transforms (no model
+  call, ever), a permitted field passes through unchanged, and the
+  original candidate object is never mutated (every type involved is a
+  frozen dataclass).
+- `aico/rag/control_plane_answer_service.py` — extended (Day 9's own
+  class, not a new one) with an optional `policy_registry:
+  PolicyRegistry | None` constructor field: when set, Gate-B runs after
+  the lane selector and before any `rag`/`mode_b` protected-lane
+  behavior, in its own `"gate_b"` OTel span
+  (`ontology_version`/`policy_version`/`rule_id`/`intent_id`/`lane`/
+  `decision`/`reason_code`/`effective_scope_summary`/`disclosure_profile`/
+  `latency_ms` — never the raw question or an identity field), and a
+  `deny`/`clarify` decision returns a typed `GateBDenied`/
+  `GateBAuthorizationClarify` result with zero retrieval or Model Gateway
+  calls, proven with the same instrumented-counting-fake technique Day 9's
+  no-fall-through tests use (`test_day10_no_fallthrough.py`,
+  `test_day10_control_plane_integration.py`).
+- `api/dependencies.py` / `api/control_plane.py` — the live `/ask/governed`
+  route now forwards the already-resolved trusted `identity` (Day 6) into
+  `service.answer()` unconditionally, and `get_control_plane_answer_service`
+  resolves a real `get_policy_registry()` and activates it on the service
+  only when `config/control-plane.yaml`'s new `gate_b.enabled` flag is
+  `true`. **Committed default: `false`** — the Day 9 synthetic ontology's
+  three intents (identities like `TENANT-SYN-001`, no governed role at
+  all) and the Day 10 policy's governed roles/tenant (`TENANT-A` /
+  `supplier_reader` / `sourcing_analyst` / `compliance_reviewer`) are
+  deliberately separate synthetic spaces; leaving Gate-B off by default
+  keeps `test_day09_api_integration.py`'s already-accepted behavior
+  exactly unchanged. `test_day10_api_integration.py` proves the live
+  route really does reach Gate-B once a deployment turns `gate_b.enabled`
+  on and supplies a real Day 10 governed identity — a `deny` (unknown
+  role) and a `clarify` (ambiguous data classification — `/ask/governed`'s
+  public `AskRequest` carries no per-request classification field yet, so
+  every committed rule's 2+ allowed classes make `clarify` the only
+  HTTP-reachable non-deny outcome today) each reach zero retrieval/model
+  calls over a real HTTP request, and the identical request with
+  `gate_b.enabled: false` reproduces Day 9's own `"answered"` outcome
+  unchanged, side by side.
+
+```
+uv run pytest -q
+uv run python -m aico.evals.day07
+uv run python scripts/day10_generate_gate_b_artifacts.py
+```
+
+1469 tests pass overall (up from 1208 after Day 9) across `tests/test_day10_*.py`
+(policy model/registry validation incl. every "Required validation"
+rejection and the real committed policy, Gate-B's fail-closed stages incl.
+the `permission_not_granted` defense-in-depth check, tenant-scope/effective-
+scope intersection, PII/disclosure against every `pii_disclosure_cases.json`
+case, no-fall-through counters at both the `GateB`-direct and
+`ControlPlaneAnswerService` levels, decision-provenance/observability
+spans, `/ask/governed` reached live over real HTTP with Gate-B activated,
+and a dedicated regression file re-running Day 7's evaluation CLI plus the
+Day 8/9 regression suites in-process), plus two `gate_b.enabled`
+activation-toggle tests in `tests/test_day09_control_plane_config.py`. The
+Day 7 regression gate and Day 8/9 tests are unmodified and still pass —
+`evals/baseline_v1.json` is untouched by any Day 10 change.
+
+`scripts/day10_generate_gate_b_artifacts.py` regenerates
+`artifacts/day10/gate_b_decisions.md`, `tenant_isolation.md` and
+`disclosure_report.md` from real `GateB.authorize()` /
+`ControlPlaneAnswerService.answer()` / `apply_disclosure()` calls against
+the real committed policy — including the cross-tenant/zero-protected-call
+proof and a deterministic redaction example, no raw PII value anywhere in
+the output.
+
 ## Key design decisions
 
 **Day 1**
@@ -1266,7 +1378,7 @@ hypothetically.
 
 ## Folder structure
 
-Verified against `git ls-files` on 2026-09-09 — every path below exists in
+Verified against `git ls-files` on 2026-09-10 — every path below exists in
 the repo as shown; nothing here is aspirational.
 
 ```
@@ -1288,11 +1400,17 @@ aico-ai-engineer-lab/
   config/
     model-routing.yaml              Day 3 — deployment aliases, resilience/budget/routing policy (no secrets)
     control-plane.yaml              Day 9 Task 12 — registry path, enabled lanes, clarification policy,
-                                     model-assisted-interpretation setting (off), no ontology data, no secrets
+                                     model-assisted-interpretation setting (off); Day 10 Task 13 —
+                                     gate_b.enabled/policy_path (off by default, see Day 10 section above);
+                                     no ontology/policy data of its own, no secrets
   ontology/
     registry.v1.json                Day 9 Task 1/2 — committed, read-only governed Mode-A registry (byte-identical
                                      to data/day09_pack/fixtures/ontology_registry_v1.json)
     README.md                       Day 9 — what the registry is, why it's read-only, how a v2 would be added
+  policy/
+    gate_b_policy.v1.json           Day 10 Task 1/2 — committed, read-only governed Gate-B policy
+                                     (byte-identical to data/day10_pack/fixtures/gate_b_policy_v1.json)
+    README.md                       Day 10 — what the policy is, why it's read-only, how a v2 would be added
   contracts/schema/
     cited_answer.v1.schema.json           Day 4 — generated from CitedAnswer, never hand-edited
     response_envelope.v1.schema.json      Day 4 — generated from ResponseEnvelope, never hand-edited
@@ -1322,6 +1440,9 @@ aico-ai-engineer-lab/
                                               MemorySessionService/SessionStore/context-builder/compaction calls
     day09_generate_control_plane_artifacts.py  Day 9 Task 13 — regenerates artifacts/day09/*.md from real
                                                 OntologyRegistry/GateA/ControlPlaneAnswerService calls
+    day10_generate_gate_b_artifacts.py         Day 10 Task 15 — regenerates artifacts/day10/*.md from real
+                                                GateB.authorize()/ControlPlaneAnswerService.answer()/
+                                                apply_disclosure() calls against the real committed policy
   src/aico/
     api/                             Day 6 — the typed FastAPI service (Tasks 1-6, 10)
       app.py                         Task 1 — FastAPI app, POST /ask, middleware/router wiring
@@ -1334,7 +1455,15 @@ aico-ai-engineer-lab/
       health.py                      Task 6 — liveness/readiness/dependency-health endpoints + policy
       instrumentation.py             Task 8 — MetricsGateway/MetricsRetriever wrappers
       dependencies.py                Task 10 — every DI provider (answer service, gateway, retriever,
-                                      policy evaluator, both dependency-health checks)
+                                      policy evaluator, both dependency-health checks, Day 9's ontology
+                                      registry/control-plane config, Day 10's policy registry)
+      control_plane.py               Day 9 Task 9 — POST /ask/governed: the live HTTP boundary over
+                                      ControlPlaneAnswerService; Day 10 Task 13 — forwards trusted
+                                      identity into it unconditionally, activating Gate-B whenever
+                                      config/control-plane.yaml's gate_b.enabled is true
+      control_plane_contracts.py     Day 9 Task 9 — public GovernedAskResponse contract, all nine
+                                      pipeline outcomes mapped to it; Day 10 Task 13 — the two
+                                      Gate-B-native outcomes (gate_b_denied/gate_b_clarify) added
     observability/                   Day 6 — telemetry configuration (Tasks 7-9)
       logging.py                     Task 7 — structured JSON log_event() + stdout handler setup
       metrics.py                     Task 8 — OpenTelemetry Metrics API, in-memory reader
@@ -1410,21 +1539,39 @@ aico-ai-engineer-lab/
                                      ModelGatewaySummarizer (real, via the Day 3 gateway only)
       errors.py                     Task 2 — typed SessionError family (SessionNotFoundError, ...),
                                      cross-owner and nonexistent-session denials carry an identical reason
-    control/                        Day 9 — the Mode-A control-plane boundary (Tasks 1-3, 5, 12)
-      ontology.py                   Task 1 — typed OntologyDocument/Domain/Concept/Intent/LaneId, self-
-                                     validating (duplicate ids, dangling relationship/lane refs, enum/status)
-      ontology_registry.py          Task 2 — loads + validates ontology/registry.v1.json, read-only
+    control/                        Day 9/10 — the Mode-A control-plane + Gate-B authorization/
+                                     disclosure boundary (Day 9 Tasks 1-3, 5, 12; Day 10 Tasks 1-9, 13)
+      ontology.py                   Day 9 Task 1 — typed OntologyDocument/Domain/Concept/Intent/LaneId,
+                                     self-validating (duplicate ids, dangling relationship/lane refs, enum/status)
+      ontology_registry.py          Day 9 Task 2 — loads + validates ontology/registry.v1.json, read-only
                                      lookups (fresh tuples, no mutator methods), exposes the active version
-      gate_a.py                     Task 3/6 — GateA.classify(): Day 5 policy -> exact governed phrase ->
-                                     governed content-term overlap; matched/ambiguous/unsupported/blocked,
-                                     deterministic clarification-question generation, no Model Gateway call
-      lane_selector.py              Task 5 — LaneSelector.select(): routes a GateADecision to one of the
-                                     5 governed lanes from the matched intent's own allowed_lanes only
-      models.py                     Task 3/5 — shared GateADecision/LaneDecision typed result shapes
-      config.py                     Task 12 — validated config/control-plane.yaml loading (registry path,
-                                     enabled lanes, clarification policy, model-assisted-interpretation)
-      errors.py                     Tasks 2/5/12 — OntologyLoadError/OntologyLookupError/
-                                     LaneSelectionError/ControlPlaneConfigurationError
+      gate_a.py                     Day 9 Task 3/6 — GateA.classify(): Day 5 policy -> exact governed
+                                     phrase -> governed content-term overlap; matched/ambiguous/
+                                     unsupported/blocked, deterministic clarification-question
+                                     generation, no Model Gateway call
+      lane_selector.py              Day 9 Task 5 — LaneSelector.select(): routes a GateADecision to one
+                                     of the 5 governed lanes from the matched intent's own allowed_lanes only
+      policy_models.py              Day 10 Task 1 — typed, self-validating GateBPolicyDocument/Role/
+                                     PermissionRule/DisclosureProfile, plus the shared pure decision
+                                     primitives is_data_classification_permitted/is_pii_category_permitted/
+                                     resolve_disclosure_action
+      policy_registry.py            Day 10 Task 2 — loads + cross-validates policy/gate_b_policy.v1.json
+                                     against the real OntologyRegistry, read-only lookups, O(1) find_rule
+      gate_b.py                     Day 10 Task 3-7/10/12 — GateB.authorize(): ordered fail-closed
+                                     stages, effective scope as intersection only, the one safe clarify
+                                     case, no memory/model-widening parameter anywhere in its signature
+      disclosure.py                 Day 10 Task 9 — apply_disclosure(): GateBDecision + typed candidate
+                                     fields -> SafeDisclosureView, no fall-through, no source mutation
+      redaction.py                  Day 10 Task 9 — pure, deterministic mask_value() (email/phone/
+                                     identifier shapes), never a model call
+      models.py                     Day 9/10 Task 3/5 — shared GateADecision/LaneDecision/GateBDecision
+                                     typed result shapes
+      config.py                     Day 9/10 Task 12/13 — validated config/control-plane.yaml loading
+                                     (registry path, enabled lanes, clarification policy,
+                                     model-assisted-interpretation, gate_b activation toggle)
+      errors.py                     Tasks 2/5/12 (Day 9) + 2/3 (Day 10) — OntologyLoadError/
+                                     OntologyLookupError/LaneSelectionError/ControlPlaneConfigurationError/
+                                     PolicyLoadError/PolicyLookupError/GateBError
   data/
     documents/                      DOC-001 .. DOC-005 (synthetic, unchanged across all days)
     evals/
@@ -1470,6 +1617,19 @@ aico-ai-engineer-lab/
         gate_a_cases.json           6 cases: exact/synonym/structured/unsupported/unknown/blocked
         lane_selection_cases.json   5 cases, one per governed lane
         ambiguity_cases.json        3 cases (AMB-001..003), including the memory-resolved AMB-003
+    day10_pack/                     Day 10 — supplied resource pack (fixed synthetic inputs, never edited
+                                     to make the implementation pass)
+      README.md
+      gate_b_policy_requirements.md  Task 1's required validation bullets
+      disclosure_rules.md            Task 8/9's PII categories, disclosure actions, masking examples
+      fixtures/
+        gate_b_policy_v1.json        the governed v1 policy (copied verbatim to policy/gate_b_policy.v1.json)
+        permission_cases.json        6 cases (PERM-001..006): allowed/denied doc + structured lookups,
+                                      unknown role, unknown intent, lane mismatch
+        tenant_scope_cases.json      5 cases (TEN-001..005): same/cross-tenant, mixed requested scope,
+                                      request-body/memory override attempts
+        pii_disclosure_cases.json    6 cases (PII-001..006) + synthetic_record/field_metadata: allow/
+                                      redact/deny across profiles
     index/                         build output (gitignored) - python -m aico.retrieval.ingest
     vectors/                       build output (gitignored) - python -m aico.retrieval.embed
     sessions/                      Day 8 — local SqliteSessionStore data (gitignored; every test uses
@@ -1523,6 +1683,15 @@ aico-ai-engineer-lab/
                                      each with actual GateA.classify() output
       lane_selection_report.md      Gate-A result / selected lane / reason / retrieval-model-call counts
                                      per case, referencing the Task 10 counter evidence for clarify/block
+    day10/                          Day 10 Task 15 — generated by day10_generate_gate_b_artifacts.py
+      gate_b_decisions.md           allowed/denied/unknown-role/lane-mismatch/missing-rule/clarify cases,
+                                     each with actual GateB.authorize() output (rule_id, reason_code,
+                                     effective_scope_summary, policy_version)
+      tenant_isolation.md           same-tenant allowed / cross-tenant denied cases, zero-protected-call
+                                     proof on denial, effective scope for the allowed case
+      disclosure_report.md          public/internal-allowed, deterministically-redacted, and denied-
+                                     sensitive-field examples from a real apply_disclosure() call; no raw
+                                     protected PII value anywhere in the report itself
   tests/
     __init__.py
     fixtures/
@@ -1629,21 +1798,53 @@ aico-ai-engineer-lab/
     test_day09_observability.py     Day 9 Task 11 — gate_a/lane_selection spans, required fields, trace_id
                                      inherited from a parent span, no raw question/clarification text (10)
     test_day09_control_plane_config.py     Day 9 Task 12 — config/control-plane.yaml validated loading,
-                                     unknown lane id rejected, no secrets (17)
+                                     unknown lane id rejected, no secrets; plus Day 10 Task 13's
+                                     gate_b.enabled activation-toggle validation (19)
     test_day09_regression.py        Day 9 Task 14 — safe_fast_path-is-INT-HELP-only, plus the real Day 7
                                      evaluation CLI and Day 8 isolation matrix re-run in-process (4)
+    test_day10_policy_registry.py   Day 10 Task 1/2 — typed GateBPolicyDocument, every "Required
+                                     validation" rejection, PolicyRegistry load/lookup/find_rule,
+                                     is_data_classification_permitted/is_pii_category_permitted/
+                                     resolve_disclosure_action as units (89)
+    test_day10_gate_b.py            Day 10 Task 3/4/5/6/7/10/12 — all permission_cases.json outcomes,
+                                     every deny-by-default stage incl. permission_not_granted
+                                     defense-in-depth, tenant-scope intersection, data-classification
+                                     enforcement, the clarify boundary closed-set sweep, memory/model
+                                     privilege-escalation boundaries (61)
+    test_day10_tenant_scope.py      Day 10 Task 5 — all tenant_scope_cases.json outcomes, effective
+                                     scope as narrowed intersection, never union/widened (20)
+    test_day10_disclosure.py        Day 10 Task 8/9 — all pii_disclosure_cases.json outcomes,
+                                     deterministic redaction, safe disclosure view never mutates the
+                                     source object (34)
+    test_day10_no_fallthrough.py    Day 10 Task 11 — counting fakes: GateB deny/clarify = 0 protected
+                                     calls, allow reaches both exactly once, the documented too-late
+                                     failure mode reproduced and contrasted (11)
+    test_day10_observability.py     Day 10 Task 14 — gate_b/safe_disclosure spans, required
+                                     provenance fields, trace_id inherited, no raw PII/question/token (12)
+    test_day10_control_plane_integration.py  Day 10 Task 13 — full pipeline order through
+                                     ControlPlaneAnswerService with a real policy_registry, rag/mode_b
+                                     routing, no-fall-through at the service level (15)
+    test_day10_api_integration.py   Day 10 Task 13 — the same pipeline order over a real HTTP request
+                                     to POST /ask/governed with gate_b.enabled: true, plus the
+                                     side-by-side gate_b.enabled: false confirmation (3)
+    test_day10_regression.py        Day 10 Task 16 — the real Day 7 evaluation CLI and the Day 8/9
+                                     regression suites re-run in-process (6)
 ```
 
-1208 tests pass in total (`uv run pytest -q`, verified 2026-09-09, count
+1469 tests pass in total (`uv run pytest -q`, verified 2026-09-10, count
 includes parametrized cases as pytest reports them — the per-file counts
 in the tree above are the same pytest-collected counts, and do sum to
-this number): 544 for Day 1-6 (up from 520 on 2026-09-07 — Day 7-9
-work added a small number of Day 1-6-adjacent cases along the way), 212
-new for Day 7, 225 new for Day 8, 227 new for Day 9. `test_day05_answer_support.py`
+this number): 544 for Day 1-6, 212 for Day 7, 225 for Day 8, 227 for
+Day 9, 261 new for Day 10 (251 across `test_day10_*.py`, 2 gate_b
+activation-toggle cases folded into `test_day09_control_plane_config.py`
+above, and 8 in `test_day06_identity.py` proving `TrustedIdentity`'s new
+`roles` claim — Day 10 Task 3's extension to Day 6's own trust boundary —
+parses/rejects correctly and defaults to no roles rather than rejecting
+an otherwise-valid identity). `test_day05_answer_support.py`
 is new (post-review hardening — see `support_validator.py` above); every
 other Day 1-6 test still passes unchanged, satisfying the working-rule
 regression requirement, and `uv run python -m aico.evals.day07` remains
-green with `evals/baseline_v1.json` unchanged by any Day 8/9 commit.
+green with `evals/baseline_v1.json` unchanged by any Day 8/9/10 commit.
 
 Note: the task brief's "Required structure" names `requirements.txt`; this
 repo uses `pyproject.toml` + `uv.lock` (via `uv`) instead, which is the
