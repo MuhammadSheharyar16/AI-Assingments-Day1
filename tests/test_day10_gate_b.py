@@ -3,6 +3,8 @@ Day 10 Task 3 -- the Gate-B contract: `GateBDecision`/`GateBStatus`
 (`src/aico/control/models.py`) and the `GateB`/`GateBRequest` engine that
 produces/consumes them (`src/aico/control/gate_b.py`).
 Day 10 Task 4 -- every fail-closed stage that engine runs.
+Day 10 Task 6 -- permission-check coverage: role/intent/lane/operation/rule
+combinations, determinism, and the model-cannot-authorize boundary.
 
 Proves, against the real committed `policy/gate_b_policy.v1.json` (Task 2's
 `PolicyRegistry`), the real committed `ontology/registry.v1.json` (Day 9's
@@ -16,6 +18,17 @@ Proves, against the real committed `policy/gate_b_policy.v1.json` (Task 2's
     policy-document read, denied structured-data lookup, allowed structured
     lookup for a specifically authorized role, unknown role, unknown
     intent, lane mismatch;
+  - Task 6's full combination space, swept exhaustively rather than only
+    sampled by the six fixture cases: every governed role x every intent x
+    every lane the policy's own rules ever name, cross-checked directly
+    against `PolicyRegistry.find_rule()` so Gate-B's own matching can never
+    silently drift from what the registry actually governs; permission
+    decisions are deterministic across repeated/interleaved calls; the
+    module never imports anything that could reach a Model Gateway/LLM
+    (structural proof that a model cannot decide role authorization); and
+    `GateBRequest.operation` is proven to be recorded-but-inert against the
+    current policy (which declares no operation-scoped rules at all), not
+    a silent, unverified bypass;
   - deny-by-default (Task 4), every bullet `gate_b_policy_requirements.md`
     lists: trusted identity missing (`identity=None`, never an
     `AttributeError`), role missing/unknown, permission rule absent, intent
@@ -224,6 +237,125 @@ def test_perm_003_analyst_structured_lookup_allowed_with_bounded_scope(gate_b):
     assert decision.rule_id == "GB-R004"
     assert decision.disclosure_profile == "structured_reader"
     assert PiiCategory.PERSONAL_IDENTIFIER in decision.effective_pii_policy
+
+
+# ---------------------------------------------------------------------------
+# Permission checks (Task 6): exhaustive role x intent x lane combinations,
+# determinism, and the model/operation boundaries
+# ---------------------------------------------------------------------------
+
+
+def test_every_role_intent_lane_combination_matches_the_registrys_own_rule_index(gate_b, registry):
+    """Task 6's "validate combinations of trusted role / Gate-A intent /
+    selected lane / policy rule", swept exhaustively rather than sampled:
+    for every (role, intent, lane) triple this policy's own roles/rules
+    could ever name, `GateB.authorize()`'s allow/deny outcome and matched
+    `rule_id` must agree exactly with `PolicyRegistry.find_rule()` -- Gate-B
+    never authorizes a combination the registry itself does not govern,
+    and never fails to authorize one it does (given a data_class the
+    matched rule, if any, actually allows)."""
+    role_ids = [role.role_id for role in registry.roles]
+    intent_ids = sorted({rule.intent_id for rule in registry.rules})
+    lanes = sorted({rule.lane for rule in registry.rules}, key=lambda lane: lane.value)
+
+    checked_at_least_one_allow = False
+    for role_id in role_ids:
+        identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-SWEEP", roles=(role_id,))
+        for intent_id in intent_ids:
+            for lane in lanes:
+                expected_rule = registry.find_rule(role_id, intent_id, lane)
+                data_class = expected_rule.allowed_data_classes[0] if expected_rule and expected_rule.allowed_data_classes else None
+                decision = gate_b.authorize(
+                    identity, _matched(intent_id), _lane_decision(lane, intent_id), GateBRequest(data_class=data_class)
+                )
+
+                if expected_rule is None:
+                    assert decision.decision is GateBStatus.DENY
+                    assert decision.reason_code == "no_matching_rule"
+                    assert decision.rule_id is None
+                elif not expected_rule.allowed:
+                    assert decision.decision is GateBStatus.DENY
+                    assert decision.reason_code == "rule_denied"
+                    assert decision.rule_id == expected_rule.rule_id
+                else:
+                    assert decision.decision is GateBStatus.ALLOW
+                    assert decision.rule_id == expected_rule.rule_id
+                    checked_at_least_one_allow = True
+
+    assert checked_at_least_one_allow  # sanity: the sweep actually exercised a real allow path
+
+
+def test_permission_decision_is_deterministic_across_repeated_calls(gate_b):
+    """Task 6: "Permission decisions must be deterministic." The exact
+    same inputs, called repeatedly (including interleaved with other,
+    different requests in between), always produce a field-for-field
+    identical `GateBDecision` -- no hidden state, no randomness, no
+    call-order dependence."""
+    identity = _identity({"tenant_id": "TENANT-A", "user_id": "USER-2", "roles": ["sourcing_analyst"]})
+
+    def make_decision():
+        return gate_b.authorize(
+            identity,
+            _matched("INT-STRUCTURED-LOOKUP"),
+            _lane_decision(LaneId.MODE_B, "INT-STRUCTURED-LOOKUP"),
+            GateBRequest(data_class=DataClassification.INTERNAL),
+        )
+
+    first = make_decision()
+    # An unrelated call in between, proving no shared mutable state leaks
+    # from one decision into the next.
+    gate_b.authorize(
+        TrustedIdentity(tenant_id="TENANT-A", user_id="USER-1", roles=("supplier_reader",)),
+        _matched("INT-POLICY-QUESTION"),
+        _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION"),
+        GateBRequest(data_class=DataClassification.PUBLIC),
+    )
+    second = make_decision()
+    third = make_decision()
+
+    assert first == second == third
+    assert first.rule_id == second.rule_id == third.rule_id == "GB-R004"
+
+
+def test_gate_b_module_never_imports_a_model_gateway():
+    """Task 6: "A model may not decide whether a role is authorized."
+    Structural proof, not a mocked-call assertion: `gate_b.py` never even
+    imports anything that could reach the Model Gateway/an LLM provider --
+    there is no code path here through which a model's output could
+    influence an allow/deny/clarify decision."""
+    import aico.control.gate_b as gate_b_module
+
+    source = inspect.getsource(gate_b_module)
+    for forbidden in ("model_gateway", "foundry_adapter", "ModelGateway", "ChatRequest"):
+        assert forbidden not in source
+
+
+def test_requested_operation_is_recorded_but_does_not_gate_the_decision(gate_b):
+    """`GateBRequest.operation` is captured for provenance (Task 14) but
+    the committed policy declares no separate operation-scoped rule at
+    all (every `PermissionRule` matches on role/intent/lane only) -- so an
+    arbitrary, ungoverned operation value neither grants nor blocks
+    anything today; documented in `gate_b.py`'s `GateBRequest` docstring,
+    proven here so that non-enforcement is a verified, deliberate
+    property rather than an unverified gap. A future policy version that
+    adds operation-scoped rules would need this test updated alongside
+    it."""
+    identity = _identity({"tenant_id": "TENANT-A", "user_id": "USER-1", "roles": ["supplier_reader"]})
+    baseline = gate_b.authorize(
+        identity,
+        _matched("INT-POLICY-QUESTION"),
+        _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION"),
+        GateBRequest(operation="read", data_class=DataClassification.INTERNAL),
+    )
+    for other_operation in ("write", "delete", "anything_ungoverned"):
+        decision = gate_b.authorize(
+            identity,
+            _matched("INT-POLICY-QUESTION"),
+            _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION"),
+            GateBRequest(operation=other_operation, data_class=DataClassification.INTERNAL),
+        )
+        assert decision.decision == baseline.decision == GateBStatus.ALLOW
+        assert decision.rule_id == baseline.rule_id
 
 
 # ---------------------------------------------------------------------------
