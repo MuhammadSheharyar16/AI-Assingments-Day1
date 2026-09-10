@@ -42,6 +42,8 @@ from aico.rag.answer_service import (
 )
 from aico.rag.control_plane_answer_service import (
     ControlPlaneAnswerResult,
+    GateBAuthorizationClarify,
+    GateBDenied,
     GateBlocked,
     GateClarify,
     ModeBSelected,
@@ -56,7 +58,13 @@ class GovernedAskStatus(str, Enum):
     endpoints sees identical wording for identical outcomes. The two
     Day-9-only values (`mode_b_selected`, `safe_fast_path`) name the two
     lane outcomes `/ask` never produces, since `/ask` never runs Gate-A/
-    lane selection at all."""
+    lane selection at all. The two Day-10-only values (`gate_b_denied`,
+    `gate_b_clarify`) name Gate-B's own two non-allow outcomes (Day 10
+    Task 13) - reachable only from a `ControlPlaneAnswerService` built
+    with `policy_registry` set; `/ask/governed`'s own DI wiring does not
+    activate Gate-B yet (see that module's own docstring), so these two
+    values are not produced by the live route today, but this mapper
+    still handles them completely for whenever a caller does."""
 
     ANSWERED = "answered"
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -65,6 +73,8 @@ class GovernedAskStatus(str, Enum):
     FAILED = "failed"
     MODE_B_SELECTED = "mode_b_selected"
     SAFE_FAST_PATH = "safe_fast_path"
+    GATE_B_DENIED = "gate_b_denied"
+    GATE_B_CLARIFY = "gate_b_clarify"
 
 
 class GovernedCitationOut(BaseModel):
@@ -122,6 +132,19 @@ class GovernedAskResponse(BaseModel):
     candidate_intents: list[str] = Field(
         default_factory=list,
         description="Governed intent_ids this request plausibly matched, when status=clarify and there were specific candidates.",
+    )
+
+    # ── Day 10 Task 13 governed-authorization fields ────────────────────
+    policy_version: str | None = Field(
+        default=None,
+        description=(
+            "The governed Gate-B policy version this decision was made against, when Gate-B ran "
+            "(status=gate_b_denied or gate_b_clarify) - Task 9's own 'response metadata identifies "
+            "the disclosure profile/rule version' sanitized provenance, never raw policy internals."
+        ),
+    )
+    rule_id: str | None = Field(
+        default=None, description="Matched PermissionRule.rule_id, when Gate-B matched one at all."
     )
 
 
@@ -246,6 +269,25 @@ def governed_ask_response_from_result(
             reason_code=result.reason_code,
             ontology_version=result.ontology_version,
             lane="safe_fast_path",
+        )
+
+    # ── Day 10 Task 13: Gate-B's own two non-allow outcomes ─────────────
+    if isinstance(result, GateBDenied):
+        return GovernedAskResponse(
+            **common,
+            status=GovernedAskStatus.GATE_B_DENIED,
+            reason_code=result.reason_code,
+            policy_version=result.policy_version,
+            rule_id=result.rule_id,
+        )
+
+    if isinstance(result, GateBAuthorizationClarify):
+        return GovernedAskResponse(
+            **common,
+            status=GovernedAskStatus.GATE_B_CLARIFY,
+            reason_code=result.reason_code,
+            policy_version=result.policy_version,
+            rule_id=result.rule_id,
         )
 
     raise TypeError(f"unhandled ControlPlaneAnswerResult variant: {type(result).__name__}")  # pragma: no cover - exhaustive

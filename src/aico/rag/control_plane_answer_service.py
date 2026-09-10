@@ -3,18 +3,21 @@ Day 9 Task 9/11 -- integrate Gate-A (Task 3) and the lane selector
 (Task 5) in front of the Day 5 answer pipeline
 (`answer_service.GroundedAnswerService`), with decision provenance /
 observability (Task 11) on both stages.
+Day 10 Task 13 -- integrate Gate-B (Day 10 Task 3-12) immediately after
+the lane selector, before any protected lane behavior.
 
-Required order (Day 9 assignment):
+Required order (Day 9 assignment, extended by Day 10 Task 13):
 
     trusted identity -> session resolution -> Day 5 input policy
-    -> Gate-A -> lane selector -> selected lane behavior
+    -> Gate-A -> lane selector -> Gate-B -> selected/authorized lane behavior
 
 `ControlPlaneAnswerService.answer()` implements everything from "Day 5
-input policy" onward -- "trusted identity" and "session resolution" are,
-exactly as for `GroundedAnswerService` today, `api/app.py`'s job
-(`TrustedIdentity`, `MemorySessionService`), not this module's; this class
-is a drop-in peer of `GroundedAnswerService`, not a replacement for the
-API layer that calls it.
+input policy" onward -- "session resolution" is, exactly as for
+`GroundedAnswerService` today, `api/app.py`'s job (`MemorySessionService`),
+not this module's. "Trusted identity" is different from Day 9: Gate-B
+needs it directly (`identity: TrustedIdentity | None = None`, Task 13's
+one new parameter on `answer()`) -- see "Gate-B integration is opt-in"
+below for why it is optional here rather than required.
 
     1. Day 5 input policy (`evaluate_policy`, unchanged) -- a `block` or
        `clarify` outcome here returns the exact same `Blocked`/`Clarify`
@@ -29,17 +32,34 @@ API layer that calls it.
        question into a typed `GateADecision`.
     4. The lane selector (Task 5) routes that decision to a typed
        `LaneDecision`.
-    5. Selected lane behavior:
+    5. Gate-B (Day 10 Task 3-12), run only when this service was built
+       with a `policy_registry` AND only for the two lanes that could
+       ever reach protected evidence, `rag`/`mode_b` -- `clarify`/`block`
+       already terminated at step 4 (nothing governed to authorize yet),
+       and `safe_fast_path` never touches protected data at all (its own
+       branch below, deterministic and model-free), so Gate-B is not
+       invoked for either. `GateB.authorize()` runs against `identity`
+       (this method's own new parameter), `gate_decision`, `lane_decision`
+       and an optional `requested` (`GateBRequest`, Task 5's caller-
+       declared scope-narrowing input). `deny` -> `GateBDenied`; `clarify`
+       -> `GateBAuthorizationClarify` (Task 10 -- never a role/tenant/permission/
+       clearance question, only a safe, policy-scoped one); `allow` ->
+       step 6 proceeds, carrying `gate_b_decision`'s sanitized provenance
+       forward.
+    6. Selected/authorized lane behavior:
          rag            -> delegates to the wrapped `GroundedAnswerService`
                             for retrieval -> Model Gateway -> typed
                             contract/semantic validation -> citation
-                            validation -- Day 5's pipeline, unmodified.
-         mode_b         -> `ModeBSelected`: the governed selection is
-                            returned; nothing executes it (Day 9 working
-                            rule: "Day 9 selects Mode B but does not
-                            implement uncontrolled Mode-B execution" --
-                            there is no database import anywhere in this
-                            module).
+                            validation -- Day 5's pipeline, unmodified;
+                            reached only after Gate-B `allow` (or when
+                            Gate-B is not active for this service at all --
+                            see "Gate-B integration is opt-in" below).
+         mode_b         -> `ModeBSelected`: the governed, now Gate-B-
+                            authorized selection is returned; nothing
+                            executes it (Day 9/10 working rule: "Do not
+                            implement an uncontrolled Mode-B query
+                            executor" -- there is no database import
+                            anywhere in this module, Day 10 unchanged).
          clarify        -> `GateClarify`, carrying Gate-A's own
                             deterministically generated
                             `clarification_question` (Task 6).
@@ -49,36 +69,81 @@ API layer that calls it.
          safe_fast_path -> `SafeFastPathAnswer`: a deterministic, governed
                             response built only from the matched intent's
                             own `Intent.description` plus every active
-                            intent's description (never model-generated).
+                            intent's description (never model-generated;
+                            never Gate-B-gated -- see step 5).
        Only the `rag` branch ever calls the wrapped `GroundedAnswerService`
        (i.e. only it can ever reach retrieval or the Model Gateway) -- the
-       other four branches return a typed value directly. `test_day09_gate_a.py`'s
+       other branches return a typed value directly. `test_day09_gate_a.py`'s
        Task 7 static-import check already proves `aico.control` itself
        cannot reach retrieval/Mode-B; this module is the one place that
        *could* (it legitimately holds a `GroundedAnswerService`), and it
-       only ever does so from the single `rag` branch.
+       only ever does so from the single `rag` branch, now additionally
+       gated behind Gate-B `allow` (or an inactive Gate-B) for that branch.
 
-Task 11 -- decision provenance / observability: steps 3 and 4 above each
-run inside their own OTel span (`"gate_a"`, `"lane_selection"`), carrying
-exactly the sanitized fields the assignment names -- `ontology_version`,
-`domain`, `intent_id`, `gate_a.status`/`lane`, `reason_code`, and a
-directly measured `latency_ms` -- and nothing else. Neither span, nor
-anything else in this module, ever receives `question` (the user's raw
-text), `resolved_question`, or `clarification_question` as an attribute --
-there is no call site here that could leak them (Task 11 rule: "Do not log
-full prompt/session/evidence content, authorization claims or secrets").
+## Gate-B integration is opt-in on this class (Task 13)
+
+`policy_registry: PolicyRegistry | None = None` (a new, optional
+constructor field) is what activates Gate-B on a given
+`ControlPlaneAnswerService` instance -- `None` (the default) preserves Day
+9's exact behavior: no Gate-B span, no `GateBDenied`/`GateBAuthorizationClarify`
+outcome ever produced, `identity`/`requested` accepted by `.answer()` but
+unread. This is deliberate, not a shortcut: `ontology/registry.v1.json`'s
+three synthetic intents each map to exactly one/two-or-more governed data
+classifications in `policy/gate_b_policy.v1.json`'s own committed rules,
+and this module's `.answer()` takes a bare free-text `question` with no
+per-request classification hint -- meaning a caller that does not supply
+`requested.data_class` will genuinely hit Task 10's `clarify` path for
+every `rag`/`mode_b` request against a rule that allows more than one
+classification (`GB-R001`/`GB-R003`/`GB-R004`, all real, all in the
+committed policy). That is correct Gate-B behavior (Task 10: "policy needs
+one selected" is a real, safe ambiguity here), not a bug -- but it is also
+a materially different outcome shape than Day 9's own already-passing
+regression suite (`test_day09_api_integration.py` and friends) exercises
+against an identity with no governed role at all. Exactly the same
+reasoning `ControlPlaneAnswerService` itself already documents for why it
+is "not wired into `api/app.py`'s `/ask` today" (see below) applies one
+layer up here: this class is Task 13's complete, independently testable,
+correct integration -- `test_day10_control_plane_integration.py` proves
+the full required order end to end, constructing the service *with* a
+real `policy_registry` -- ready for a caller to activate once it can
+supply a real trusted identity with a governed role (and, ideally, a
+`requested.data_class`) for every request, exactly as `/ask/governed`'s
+real `get_trusted_identity` dependency already can. Activating it on the
+live `/ask/governed` route is a deliberate follow-up, not done in this
+pass, precisely to avoid silently changing Day 9's own already-accepted
+regression file out from under itself.
+
+Task 11 -- decision provenance / observability: steps 3, 4 and (when
+active) 5 above each run inside their own OTel span (`"gate_a"`,
+`"lane_selection"`, `"gate_b"`), carrying exactly the sanitized fields the
+assignment names -- `ontology_version`/`policy_version`, `domain`,
+`intent_id`, `gate_a.status`/`lane`/`gate_b.decision`, `reason_code`, and a
+directly measured `latency_ms` -- and nothing else. No span, nor anything
+else in this module, ever receives `question` (the user's raw text),
+`resolved_question`, or `clarification_question` as an attribute -- there
+is no call site here that could leak them (Task 11 rule: "Do not log full
+prompt/session/evidence content, authorization claims or secrets"); the
+`gate_b` span in particular never receives `identity` itself (no
+tenant_id/user_id/roles attribute) -- only `gate_b_decision`'s own already-
+sanitized fields.
 
 `request_id`/`correlation_id` are deliberately NOT explicit parameters or
 span attributes here. `answer_service.py`'s own module docstring documents
-why: this module intentionally never imports `aico.api`/`aico.observability`
-(same layering `answer_service.py` already keeps -- see its docstring),
-so it has no way to read them directly. Day 6 Task 9 already solved
+why: that module intentionally never imports `aico.api`/`aico.observability`,
+and this module inherited the same discipline for Day 9's own additions
+(Gate-A/the lane selector needed neither). Day 10 Task 13 imports exactly
+one thing from `aico.api` -- `TrustedIdentity` (`aico.api.identity`), a
+plain, dependency-free type (it imports only `jwt`/`fastapi`/its own
+`errors.py`, nothing back into `aico.rag`, so this is not a circular
+import) -- because Gate-B (Task 3) genuinely needs identity earlier in the
+pipeline than anything Day 9 ever did; `request_id`/`correlation_id`
+themselves are still never read or set here. Day 6 Task 9 already solved
 "preserve correlation context" for exactly this shape of problem: a
 caller (`api/app.py`'s `api.ask` root span, were this wired in) sets those
 two IDs as attributes once, on the span it opens *around* this call, and
 every span created here becomes a *child* of that span automatically
 (Python's `start_as_current_span` uses the ambient current span as
-parent) -- so `gate_a`/`lane_selection` share that request's one
+parent) -- so `gate_a`/`lane_selection`/`gate_b` share that request's one
 `trace_id` without this module needing to know either ID exists. This is
 the identical mechanism `answer_service.py`'s "policy"/"retrieval"/
 "model_gateway" spans already rely on (see its own module docstring and
@@ -112,12 +177,15 @@ from dataclasses import dataclass, field
 
 from opentelemetry import trace
 
+from aico.api.identity import TrustedIdentity
 from aico.control.config import ControlPlaneConfig
 from aico.control.gate_a import GateA
+from aico.control.gate_b import GateB, GateBRequest
 from aico.control.lane_selector import LaneSelector
-from aico.control.models import GateADecision, LaneDecision
+from aico.control.models import GateADecision, GateBStatus, LaneDecision
 from aico.control.ontology import LaneId, LifecycleStatus
 from aico.control.ontology_registry import OntologyRegistry
+from aico.control.policy_registry import PolicyRegistry
 from aico.memory.context_builder import MemoryContext, SessionReferenceContext, resolve_reference
 from aico.platform.model_gateway import CancellationToken
 from aico.rag.answer_service import AnswerResult, Blocked, Clarify, GroundedAnswerService
@@ -197,11 +265,50 @@ class SafeFastPathAnswer:
     ontology_version: str
 
 
+@dataclass(frozen=True)
+class GateBDenied:
+    """Day 10 Task 13 -- lane selection resolved a governed `rag`/`mode_b`
+    intent+lane, but Gate-B (Task 3-12) denied authorization for this
+    trusted caller. Distinct from `GateBlocked` (Gate-A's own block: no
+    governed intent matched at all, a different stage/cause entirely) --
+    this fires only once a specific governed intent+lane is already known,
+    for a caller this policy does not authorize for it. Carries only
+    Gate-B's own sanitized provenance (Day 10 working rule: "Policy
+    decisions produce sanitized provenance") -- never raw policy
+    internals, and never any retrieved/generated content: Gate-B runs
+    strictly before retrieval (Task 11's no-fall-through guarantee), so
+    there is nothing here that could leak protected data."""
+
+    question: str
+    reason_code: str
+    policy_version: str
+    rule_id: str | None = None
+
+
+@dataclass(frozen=True)
+class GateBAuthorizationClarify:
+    """Day 10 Task 13 -- a governed `rag`/`mode_b` rule matched and would
+    have allowed the request, but Gate-B needs one safe, policy-scoped
+    piece of information selected before it can authorize (Task 10) -- in
+    the committed policy, which governed data classification the caller
+    is asking about. Distinct from Gate-A's own `GateClarify` (ambiguous
+    *intent*, an earlier stage) -- this never asks for a role/tenant/
+    permission/clearance (`gate_b.py`'s own documented boundary, Task 10)."""
+
+    question: str
+    reason_code: str
+    policy_version: str
+    rule_id: str | None = None
+
+
 # The full set of results `ControlPlaneAnswerService.answer()` can return:
 # Day 5's own five (via the early policy short-circuit, or via delegating
-# to `GroundedAnswerService` for the `rag` lane) plus the four lane
-# outcomes above that have no Day 5 equivalent.
-ControlPlaneAnswerResult = AnswerResult | GateBlocked | GateClarify | ModeBSelected | SafeFastPathAnswer
+# to `GroundedAnswerService` for the `rag` lane) plus the four Day 9 lane
+# outcomes and the two Day 10 Gate-B outcomes above, neither of which has
+# a Day 5/9 equivalent.
+ControlPlaneAnswerResult = (
+    AnswerResult | GateBlocked | GateClarify | ModeBSelected | SafeFastPathAnswer | GateBDenied | GateBAuthorizationClarify
+)
 
 
 @dataclass
@@ -221,18 +328,30 @@ class ControlPlaneAnswerService:
     `enabled_lanes` can and cannot do). `None` (the default) applies no
     deployment-level restriction beyond what the registry already governs --
     every existing caller of `ControlPlaneAnswerService(registry, rag_service)`
-    is unaffected."""
+    is unaffected.
+
+    `policy_registry` (Day 10 Task 13, optional) is `policy/gate_b_policy.v1.json`,
+    already loaded (`aico.control.policy_registry.PolicyRegistry.load()`) --
+    when given, `gate_b` (`GateB`, built from it plus `registry`) is
+    activated for every `.answer()` call. `None` (the default) leaves
+    `gate_b` unset and Gate-B entirely out of the pipeline -- see the
+    module docstring's "Gate-B integration is opt-in" section for why."""
 
     registry: OntologyRegistry
     rag_service: GroundedAnswerService
     control_plane_config: ControlPlaneConfig | None = None
+    policy_registry: PolicyRegistry | None = None
     gate_a: GateA = field(init=False)
     lane_selector: LaneSelector = field(init=False)
+    gate_b: GateB | None = field(init=False)
 
     def __post_init__(self) -> None:
         self.gate_a = GateA(self.registry)
         enabled_lanes = self.control_plane_config.enabled_lanes if self.control_plane_config is not None else None
         self.lane_selector = LaneSelector(self.registry, enabled_lanes=enabled_lanes)
+        self.gate_b = (
+            GateB(self.policy_registry, ontology_registry=self.registry) if self.policy_registry is not None else None
+        )
 
     def answer(
         self,
@@ -241,6 +360,8 @@ class ControlPlaneAnswerService:
         *,
         memory_context: MemoryContext | None = None,
         reference_context: SessionReferenceContext | None = None,
+        identity: TrustedIdentity | None = None,
+        requested: GateBRequest | None = None,
     ) -> ControlPlaneAnswerResult:
         """See the module docstring for the full required pipeline order.
         `memory_context` is forwarded, unread by anything before it,
@@ -248,7 +369,13 @@ class ControlPlaneAnswerService:
         only (Day 8's existing rule: memory never affects policy,
         retrieval, or citation validation -- see `answer_service.py`).
         `reference_context` (Task 8), when given, may resolve a dangling
-        reference in `question` before Gate-A ever classifies it."""
+        reference in `question` before Gate-A ever classifies it.
+        `identity`/`requested` (Day 10 Task 13) are read only when this
+        service was built with `policy_registry` -- see `gate_b`'s own
+        field docstring above -- and only ever reach `GateB.authorize()`,
+        never anything upstream of it (Gate-A/the lane selector remain
+        exactly the Day 9 identity-blind classification/routing they
+        always were)."""
 
         # 1. Day 5 input policy -- explicit, first, exactly as
         # `GroundedAnswerService.answer()` runs it (required pipeline
@@ -303,7 +430,43 @@ class ControlPlaneAnswerService:
             span.set_attribute("lane_selection.reason_code", lane_decision.reason_code)
             span.set_attribute("lane_selection.latency_ms", latency_ms)
 
-        # 5. Selected lane behavior.
+        # 5. Gate-B (Day 10 Task 3-12), active only when this service was
+        # built with `policy_registry`, and only for the two lanes that
+        # could ever reach protected evidence -- `clarify`/`block` are
+        # already terminal by this point (nothing governed to authorize),
+        # and `safe_fast_path` never touches protected data at all (see
+        # its own branch below), so Gate-B is not invoked for either.
+        # `identity` is never logged here -- only `gate_b_decision`'s own
+        # already-sanitized fields become span attributes.
+        gate_b_decision = None
+        if self.gate_b is not None and lane_decision.lane in (LaneId.RAG, LaneId.MODE_B):
+            with _tracer.start_as_current_span("gate_b") as span:
+                start = time.monotonic()
+                gate_b_decision = self.gate_b.authorize(identity, gate_decision, lane_decision, requested)
+                latency_ms = (time.monotonic() - start) * 1000
+                span.set_attribute("gate_b.policy_version", gate_b_decision.policy_version)
+                span.set_attribute("gate_b.decision", gate_b_decision.decision.value)
+                span.set_attribute("gate_b.rule_id", gate_b_decision.rule_id or "")
+                span.set_attribute("gate_b.reason_code", gate_b_decision.reason_code)
+                span.set_attribute("gate_b.latency_ms", latency_ms)
+
+            if gate_b_decision.decision is GateBStatus.DENY:
+                return GateBDenied(
+                    question=question,
+                    reason_code=gate_b_decision.reason_code,
+                    policy_version=gate_b_decision.policy_version,
+                    rule_id=gate_b_decision.rule_id,
+                )
+            if gate_b_decision.decision is GateBStatus.CLARIFY:
+                return GateBAuthorizationClarify(
+                    question=question,
+                    reason_code=gate_b_decision.reason_code,
+                    policy_version=gate_b_decision.policy_version,
+                    rule_id=gate_b_decision.rule_id,
+                )
+            # GateBStatus.ALLOW falls through to step 6 below.
+
+        # 6. Selected/authorized lane behavior.
         if lane_decision.lane is LaneId.RAG:
             return self.rag_service.answer(resolved_question, cancellation, memory_context=memory_context)
 
