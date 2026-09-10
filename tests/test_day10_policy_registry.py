@@ -2,6 +2,9 @@
 Day 10 Task 1/2 -- the typed Gate-B policy model
 (`src/aico/control/policy_models.py`) and the policy registry that loads it
 (`src/aico/control/policy_registry.py`).
+Day 10 Task 7/8 -- the shared, pure policy-decision primitives built
+directly on that typed model: `is_data_classification_permitted()`,
+`is_pii_category_permitted()`, `resolve_disclosure_action()`.
 
 Task 1 section proves the acceptance-relevant behaviors of
 `GateBPolicyDocument` / `Role` / `PermissionRule` / `DisclosureProfile`
@@ -39,6 +42,16 @@ Task 7 section proves `is_data_classification_permitted()` as a unit
 membership check -- see `test_day10_gate_b.py` for the integration-level
 allow/deny behavior this function drives through `GateB.authorize()`.
 
+Task 8 section proves `resolve_disclosure_action()` against every real
+`pii_disclosure_cases.json` case (PII-001..006) plus every "Required
+behavior" bullet `gate_b_policy_requirements.md`'s Task 8 section names --
+allowed non-PII passes, allowed PII follows policy, deterministic
+redaction, deny-by-default for an undeclared/"model-requested" field -- and
+`is_pii_category_permitted()` as a unit, the PII analog of Task 7's data-
+classification helper. The actual masked-*value* transformation and the
+full disclosed-view builder are Task 9's `disclosure.py`/`redaction.py`,
+not implemented here.
+
 Gate-B itself (Task 3+) is not implemented yet and is out of scope here --
 this file only proves the typed policy model and registry boundary.
 """
@@ -64,6 +77,8 @@ from aico.control.policy_models import (
     Role,
     TenantScopeKind,
     is_data_classification_permitted,
+    is_pii_category_permitted,
+    resolve_disclosure_action,
 )
 from aico.control.policy_registry import DEFAULT_POLICY_PATH, PolicyRegistry
 
@@ -71,6 +86,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 COMMITTED_POLICY_PATH = REPO_ROOT / "policy" / "gate_b_policy.v1.json"
 COMMITTED_ONTOLOGY_PATH = REPO_ROOT / "ontology" / "registry.v1.json"
 PACK_FIXTURE_PATH = REPO_ROOT / "data" / "day10_pack" / "fixtures" / "gate_b_policy_v1.json"
+PII_DISCLOSURE_CASES_PATH = REPO_ROOT / "data" / "day10_pack" / "fixtures" / "pii_disclosure_cases.json"
+
+PII_DISCLOSURE_CASES = json.loads(PII_DISCLOSURE_CASES_PATH.read_text(encoding="utf-8"))["cases"]
 
 # The real Mode-A ontology intents this fixture's rules reference
 # (`ontology/registry.v1.json`) -- passed as validation context exactly the
@@ -784,3 +802,129 @@ def test_is_data_classification_permitted_is_the_only_classification_check_gate_
     source = inspect.getsource(gate_b_module.GateB.authorize)
     assert "is_data_classification_permitted(" in source
     assert "requested.data_class not in rule.allowed_data_classes" not in source
+
+
+# ===========================================================================
+# Task 8 -- is_pii_category_permitted() / resolve_disclosure_action()
+# ===========================================================================
+
+
+@pytest.fixture
+def registry_for_disclosure() -> PolicyRegistry:
+    return PolicyRegistry.load()
+
+
+# ---------------------------------------------------------------------------
+# resolve_disclosure_action() -- pii_disclosure_cases.json, fixture-driven
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("case", PII_DISCLOSURE_CASES, ids=[c["id"] for c in PII_DISCLOSURE_CASES])
+def test_pii_disclosure_case_matches_fixture_expectation(registry_for_disclosure, case):
+    profile = registry_for_disclosure.get_disclosure_profile(case["profile"])
+    action = resolve_disclosure_action(profile, case["field"])
+    assert action.value == case["expected_action"]
+
+
+def test_allowed_non_pii_field_may_pass(registry_for_disclosure):
+    """Task 8: "allowed non-PII field may pass" -- `supplier_name` carries
+    `pii_category: none` in the fixture's own `field_metadata` and every
+    profile's `field_actions` allows it."""
+    profile = registry_for_disclosure.get_disclosure_profile("policy_reader")
+    assert resolve_disclosure_action(profile, "supplier_name") is DisclosureAction.ALLOW
+
+
+def test_allowed_pii_category_follows_policy(registry_for_disclosure):
+    """Task 8: "allowed PII category follows policy" -- `contact_email`
+    (PII category `contact`) resolves differently across profiles purely
+    from the committed policy's own declared `field_actions`, never a
+    hardcoded per-category rule: `redact` under `policy_reader`, `allow`
+    under `compliance_view`."""
+    policy_reader = registry_for_disclosure.get_disclosure_profile("policy_reader")
+    compliance_view = registry_for_disclosure.get_disclosure_profile("compliance_view")
+    assert resolve_disclosure_action(policy_reader, "contact_email") is DisclosureAction.REDACT
+    assert resolve_disclosure_action(compliance_view, "contact_email") is DisclosureAction.ALLOW
+
+
+def test_redactable_pii_action_is_deterministic_across_repeated_calls(registry_for_disclosure):
+    """Task 8: "Redaction must be deterministic." Repeated resolution of
+    the identical (profile, field) always returns the identical action --
+    the actual masked-*value* transformation is Task 9's `redaction.py`;
+    this proves the *action* `resolve_disclosure_action` commits to is
+    itself stable, which that later masking step depends on."""
+    profile = registry_for_disclosure.get_disclosure_profile("structured_reader")
+    results = [resolve_disclosure_action(profile, "tax_identifier") for _ in range(5)]
+    assert all(action is DisclosureAction.REDACT for action in results)
+
+
+def test_disallowed_pii_denies_by_default_for_an_undeclared_field(registry_for_disclosure):
+    """Task 8: "disallowed PII causes the configured deny/redact
+    behavior." A field the profile never declares at all is not silently
+    allowed -- fail closed to `DENY`, the same "unknown -> deny" rule
+    every other Gate-B boundary already applies."""
+    profile = registry_for_disclosure.get_disclosure_profile("policy_reader")
+    assert resolve_disclosure_action(profile, "totally_undeclared_field") is DisclosureAction.DENY
+
+
+def test_restricted_sensitive_field_cannot_be_exposed_by_asking_for_it(registry_for_disclosure):
+    """Task 8: "restricted sensitive field cannot be exposed because the
+    model asked for it." `resolve_disclosure_action`'s signature has no
+    parameter for a model's request/suggestion at all -- passing any
+    arbitrary, "model-invented" field name still resolves through the
+    identical fail-closed default, never an override."""
+    profile = registry_for_disclosure.get_disclosure_profile("compliance_view")
+    for model_requested_field in ("bank_account", "ssn", "secret_notes", "anything_a_model_might_ask_for"):
+        action = resolve_disclosure_action(profile, model_requested_field)
+        assert action in (DisclosureAction.DENY, DisclosureAction.REDACT)
+        assert action is not DisclosureAction.ALLOW
+
+
+def test_resolve_disclosure_action_signature_has_no_model_or_override_parameter():
+    """Structural proof of "the policy, not the model, decides the
+    action": the function accepts exactly a `DisclosureProfile` and a
+    `field_name` string -- nowhere for a model's suggested action, a
+    caller's requested override, or session memory to be threaded
+    through."""
+    import inspect
+
+    params = list(inspect.signature(resolve_disclosure_action).parameters)
+    assert params == ["profile", "field_name"]
+
+
+def test_committed_disclosure_profiles_never_default_to_allow_for_declared_sensitive_fields(registry_for_disclosure):
+    """Sanity check on the real committed policy data itself (not just the
+    function): every disclosure profile that mentions a known-sensitive
+    field (`tax_identifier` / `bank_account` / `personal_notes`) declares
+    `redact` or `deny` for it, never `allow` -- proving the fixture data
+    agrees with the deny-by-default philosophy, not just the code."""
+    sensitive_fields = {"tax_identifier", "bank_account", "personal_notes"}
+    for profile in registry_for_disclosure.disclosure_profiles:
+        for field_name in sensitive_fields & profile.field_actions.keys():
+            assert profile.field_actions[field_name] is not DisclosureAction.ALLOW
+
+
+# ---------------------------------------------------------------------------
+# is_pii_category_permitted()
+# ---------------------------------------------------------------------------
+
+
+def test_is_pii_category_permitted_true_for_a_member():
+    allowed = [PiiCategory.NONE, PiiCategory.CONTACT]
+    assert is_pii_category_permitted(PiiCategory.CONTACT, allowed) is True
+
+
+def test_is_pii_category_permitted_false_for_a_non_member():
+    """A caller authorized for `contact` is not automatically authorized
+    for `sensitive_personal` -- no implied ordering between PII
+    categories, same as `DataClassification` (Task 7)."""
+    allowed = [PiiCategory.NONE, PiiCategory.CONTACT]
+    assert is_pii_category_permitted(PiiCategory.SENSITIVE_PERSONAL, allowed) is False
+
+
+def test_is_pii_category_permitted_false_for_an_empty_allowed_set():
+    assert is_pii_category_permitted(PiiCategory.NONE, []) is False
+
+
+@pytest.mark.parametrize("pii_category", list(PiiCategory))
+def test_is_pii_category_permitted_true_when_allowed_set_is_every_category(pii_category):
+    assert is_pii_category_permitted(pii_category, list(PiiCategory)) is True

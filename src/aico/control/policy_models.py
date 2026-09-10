@@ -94,14 +94,38 @@ lane cross-check only *has* to hold for the committed registry file, even
 though the type itself doesn't force every hand-built test document to
 supply a `lanes` list that agrees with every intent's `allowed_lanes`.
 
+## Task 7/8 -- shared policy-decision primitives
+
+Two small, pure functions live here rather than in `gate_b.py` or a future
+`disclosure.py`, precisely so neither ever gets re-implemented in the other
+(Task 7: "Do not hardcode behavior in multiple unrelated files"):
+
+    - `is_data_classification_permitted()` (Task 7) -- is a
+      `DataClassification` a member of an authorized set.
+    - `is_pii_category_permitted()` (Task 8) -- the identical membership
+      check for `PiiCategory`.
+    - `resolve_disclosure_action()` (Task 8) -- the one deterministic
+      `(DisclosureProfile, field_name) -> DisclosureAction` lookup, fail
+      closed (`DENY`) for any field the matched profile does not declare.
+
+`GateB.authorize()` (Task 3) calls the first for the *requested*
+classification, before a `GateBDecision` exists at all. Task 9's
+`disclosure.py` is expected to call all three again, this time for each
+protected field's own already-classified *result* data against an
+already-decided `GateBDecision` -- reusing these functions, never
+duplicating their logic.
+
 ## Not covered here
 
 This module does not decide whether a given caller/role/intent/lane
 combination is actually authorized for one request (that is Gate-B itself,
-Task 3), and it does not perform redaction or build a disclosed view of a
-protected record (Task 9's `disclosure.py`/`redaction.py`). It only
-defines -- and self-validates -- what a governed Gate-B policy document is
-allowed to look like.
+Task 3), and it does not perform redaction (the actual masked-value
+transformation) or build a disclosed view of a protected record (Task 9's
+`disclosure.py`/`redaction.py`) -- `resolve_disclosure_action()` decides
+*which* action applies to a field, it does not apply that action to a
+value. This module only defines -- and self-validates -- what a governed
+Gate-B policy document is allowed to look like, plus the small set of
+pure decision primitives built directly on that governed shape.
 """
 from __future__ import annotations
 
@@ -163,6 +187,25 @@ class PiiCategory(str, Enum):
     SENSITIVE_PERSONAL = "sensitive_personal"
 
 
+def is_pii_category_permitted(pii_category: PiiCategory, allowed_pii_categories: Sequence[PiiCategory]) -> bool:
+    """Day 10 Task 8's PII-category analog of Task 7's
+    `is_data_classification_permitted()` -- the one place a PII category is
+    ever checked against an authorized set. Deliberately just membership,
+    for the identical reason: `PiiCategory` values carry no implied
+    ordering (`sensitive_personal` being disallowed says nothing about
+    `contact`, and vice versa).
+
+    Shared the same way across the pipeline: `GateB`/policy validation
+    reason about a matched rule's own `allowed_pii_categories`
+    (`PermissionRule`, Task 1) before a decision exists; Task 9's
+    `disclosure.py` is expected to call this again for each protected
+    field's own governed PII category against an already-decided
+    `GateBDecision.effective_pii_policy` -- one function, not two
+    independently-maintained membership checks that could silently drift
+    apart."""
+    return pii_category in allowed_pii_categories
+
+
 class DisclosureAction(str, Enum):
     """The closed set of disclosure actions a `DisclosureProfile` may
     assign to a field (`disclosure_rules.md`). The policy -- never a model
@@ -220,7 +263,8 @@ class DisclosureProfile(BaseModel):
     record's own field name to the `DisclosureAction` a caller matched to
     this profile receives for that field -- the mechanism Task 9's safe
     disclosure/redaction layer is built against; this module only defines
-    its governed shape."""
+    its governed shape and, via `resolve_disclosure_action()` below, its
+    one deterministic lookup rule."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -229,6 +273,38 @@ class DisclosureProfile(BaseModel):
         default_factory=dict,
         description="Protected field name -> disclosure action for callers matched to this profile.",
     )
+
+
+def resolve_disclosure_action(profile: DisclosureProfile, field_name: str) -> DisclosureAction:
+    """Day 10 Task 8 -- the one place a protected field name is ever
+    resolved to a `DisclosureAction`. "The policy, not the model, decides
+    the action": this is a pure, deterministic lookup into the matched
+    decision's own governed `disclosure_profile.field_actions` -- nothing
+    here reads a model's output, a caller's request, or session memory,
+    and there is no parameter through which any of those three could ever
+    reach it (`gate_b_policy_requirements.md` / Day 10 working rule:
+    "Redaction performed by LLM" is a listed failure mode this function
+    structurally cannot exhibit).
+
+    Fail closed for a field the profile never declares an action for at
+    all -- `DENY`, never `ALLOW`. `field_actions` is an exhaustive-by-
+    declaration map: this lab's committed profiles do declare `deny` for
+    every protected field they know is sensitive (`tax_identifier`,
+    `bank_account`, `personal_notes`), but an *undeclared* field (a typo,
+    a new column a future data source adds, or a field name a model
+    "asks" this function to disclose that was never a real governed field
+    at all) is exactly `gate_b_policy_requirements.md`'s "restricted
+    sensitive field cannot be exposed because the model asked for it" --
+    the default here can only ever narrow exposure, never grant it.
+
+    Deterministic by construction: the same `(profile, field_name)` input
+    always resolves to the same `DisclosureAction`, and produces no side
+    effect and performs no I/O -- `resolve_disclosure_action` cannot ever
+    disagree with itself between two calls (Task 8's "Redaction must be
+    deterministic" / "allowed PII category follows policy" reduce
+    directly to this function returning the one value `field_actions`
+    (or its `DENY` default) already fixes)."""
+    return profile.field_actions.get(field_name, DisclosureAction.DENY)
 
 
 class PermissionRule(BaseModel):

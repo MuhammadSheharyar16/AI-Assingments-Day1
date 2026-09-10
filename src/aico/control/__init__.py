@@ -39,7 +39,12 @@ Task 7 adds `is_data_classification_permitted()` (`policy_models.py`) --
 the single membership check a data classification is ever tested against
 an authorized set with, shared by `GateB` (the *requested* classification)
 and Task 9's future `disclosure.py` (each protected field's own *result*
-classification).
+classification). Task 8 adds its PII analogs, `is_pii_category_permitted()`
+and `resolve_disclosure_action()` (`policy_models.py`) -- the one place a
+PII category is checked against an authorized set, and the one place a
+protected field name is resolved to a governed `DisclosureAction`
+(fail-closed `DENY` for an undeclared field), both pure/deterministic and
+built directly on the committed policy's own `disclosure_profiles` data.
 """
 from aico.control.config import (
     DEFAULT_CONTROL_PLANE_CONFIG_PATH,
@@ -82,6 +87,8 @@ from aico.control.policy_models import (
     Role,
     TenantScopeKind,
     is_data_classification_permitted,
+    is_pii_category_permitted,
+    resolve_disclosure_action,
 )
 from aico.control.policy_registry import DEFAULT_POLICY_PATH, PolicyRegistry
 
@@ -128,4 +135,6 @@ __all__ = [
     "GateBStatus",
     "GateBError",
     "is_data_classification_permitted",
+    "is_pii_category_permitted",
+    "resolve_disclosure_action",
 ]
