@@ -105,6 +105,7 @@ allowed to look like.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
@@ -123,6 +124,30 @@ class DataClassification(str, Enum):
     INTERNAL = "internal"
     CONFIDENTIAL = "confidential"
     RESTRICTED = "restricted"
+
+
+def is_data_classification_permitted(
+    data_class: DataClassification, allowed_data_classes: Sequence[DataClassification]
+) -> bool:
+    """The one place a data classification is ever checked against an
+    authorized set (Day 10 Task 7: "Do not hardcode behavior in multiple
+    unrelated files"). Deliberately just membership -- `DataClassification`
+    values carry no implied ordering/hierarchy (see the enum's own
+    docstring), so `internal` being permitted never implies `restricted`
+    is too, and this function does not invent one.
+
+    Two callers share this function rather than each re-implementing the
+    same one-line check: `gate_b.py`'s `GateB.authorize()` (the
+    *requested* classification, checked against one matched
+    `PermissionRule.allowed_data_classes`, before a decision exists at
+    all) and Task 9's `disclosure.py` (each protected field's own,
+    already-classified *result* data, checked against an already-decided
+    `GateBDecision.effective_data_classes`). Both are "is this
+    classification in that governed set" -- the same rule, two different
+    stages of the pipeline; a future policy version that changes what
+    "permitted" means (e.g. an explicit hierarchy) only has to change it
+    here."""
+    return data_class in allowed_data_classes
 
 
 class PiiCategory(str, Enum):

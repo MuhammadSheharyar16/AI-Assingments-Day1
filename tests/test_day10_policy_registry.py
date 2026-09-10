@@ -33,6 +33,12 @@ version accessors are read-only, that `get_role` / `get_disclosure_profile`
 that `find_rule` deterministically matches (or fails to match) one
 role/intent/lane combination.
 
+Task 7 section proves `is_data_classification_permitted()` as a unit
+(membership, no implied hierarchy, empty-set behavior) and that
+`gate_b.py` actually calls it rather than re-implementing an inline
+membership check -- see `test_day10_gate_b.py` for the integration-level
+allow/deny behavior this function drives through `GateB.authorize()`.
+
 Gate-B itself (Task 3+) is not implemented yet and is out of scope here --
 this file only proves the typed policy model and registry boundary.
 """
@@ -57,6 +63,7 @@ from aico.control.policy_models import (
     PiiCategory,
     Role,
     TenantScopeKind,
+    is_data_classification_permitted,
 )
 from aico.control.policy_registry import DEFAULT_POLICY_PATH, PolicyRegistry
 
@@ -735,3 +742,45 @@ def test_find_rule_result_for_denied_rule_still_surfaces_allowed_false(registry)
     assert found is not None
     assert found.rule_id == "GB-R002"
     assert found.allowed is False
+
+
+# ===========================================================================
+# Task 7 -- is_data_classification_permitted()
+# ===========================================================================
+
+
+def test_is_data_classification_permitted_true_for_a_member():
+    allowed = [DataClassification.PUBLIC, DataClassification.INTERNAL]
+    assert is_data_classification_permitted(DataClassification.INTERNAL, allowed) is True
+
+
+def test_is_data_classification_permitted_false_for_a_non_member():
+    """`internal` being permitted never implies `restricted` is too --
+    `DataClassification` carries no implied hierarchy (see the enum's own
+    docstring)."""
+    allowed = [DataClassification.PUBLIC, DataClassification.INTERNAL]
+    assert is_data_classification_permitted(DataClassification.RESTRICTED, allowed) is False
+
+
+def test_is_data_classification_permitted_false_for_an_empty_allowed_set():
+    assert is_data_classification_permitted(DataClassification.PUBLIC, []) is False
+
+
+@pytest.mark.parametrize("data_class", list(DataClassification))
+def test_is_data_classification_permitted_true_when_allowed_set_is_every_classification(data_class):
+    assert is_data_classification_permitted(data_class, list(DataClassification)) is True
+
+
+def test_is_data_classification_permitted_is_the_only_classification_check_gate_b_uses():
+    """Task 7: "Do not hardcode behavior in multiple unrelated files."
+    `gate_b.py`'s own requested-classification check calls this function
+    rather than re-implementing an inline membership test -- proven by
+    inspecting its source, not by re-deriving the same behavior twice and
+    hoping they stay in sync."""
+    import inspect
+
+    from aico.control import gate_b as gate_b_module
+
+    source = inspect.getsource(gate_b_module.GateB.authorize)
+    assert "is_data_classification_permitted(" in source
+    assert "requested.data_class not in rule.allowed_data_classes" not in source

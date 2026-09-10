@@ -5,6 +5,9 @@ produces/consumes them (`src/aico/control/gate_b.py`).
 Day 10 Task 4 -- every fail-closed stage that engine runs.
 Day 10 Task 6 -- permission-check coverage: role/intent/lane/operation/rule
 combinations, determinism, and the model-cannot-authorize boundary.
+Day 10 Task 7 -- governed data-classification enforcement through the
+authorization path (unit coverage for `is_data_classification_permitted()`
+itself lives in `test_day10_policy_registry.py`).
 
 Proves, against the real committed `policy/gate_b_policy.v1.json` (Task 2's
 `PolicyRegistry`), the real committed `ontology/registry.v1.json` (Day 9's
@@ -43,9 +46,17 @@ Proves, against the real committed `policy/gate_b_policy.v1.json` (Task 2's
   - the one documented `clarify` case (Task 10): a matched, allowed rule
     whose own `allowed_data_classes` names more than one classification and
     the caller asked for none in particular;
-  - effective data-classification scope only narrows, never widens: every
-    `ALLOW` decision's `effective_data_classes` is a subset of what the
-    matched rule permits;
+  - Task 7's governed classifications enforced end to end: `public`/
+    `internal` both individually granted for a policy-document read,
+    `confidential` allowed only for the one specifically authorized role
+    (`compliance_reviewer`, `GB-R005`) and denied for another role on the
+    same intent/lane, `restricted` denied for every governed role, and the
+    exact "internal permitted does not imply restricted permitted"
+    example; effective data-classification scope only narrows, never
+    widens (every `ALLOW` decision's `effective_data_classes` is a subset
+    of what the matched rule permits); and the four governed
+    classification strings appear nowhere in `src/` outside
+    `policy_models.py`'s own enum definition;
   - `GateBRequest` structurally carries no role/tenant-ownership/permission/
     clearance field at all (Task 10's "do not ask the user to self-assert
     a higher role/tenant/permission/clearance" -- enforced by the type
@@ -568,7 +579,8 @@ def test_clarify_never_needed_when_matched_rule_allows_exactly_one_class(gate_b)
 
 
 # ---------------------------------------------------------------------------
-# Effective data-classification scope only narrows, never widens
+# Data classification (Task 7): public/internal/confidential/restricted,
+# and effective scope only narrows, never widens
 # ---------------------------------------------------------------------------
 
 
@@ -602,6 +614,114 @@ def test_data_classification_not_allowed_by_matched_rule_denies(gate_b):
     assert decision.decision is GateBStatus.DENY
     assert decision.reason_code == "data_classification_not_allowed"
     assert decision.rule_id == "GB-R001"
+
+
+@pytest.mark.parametrize("data_class", [DataClassification.PUBLIC, DataClassification.INTERNAL])
+def test_public_and_internal_are_allowed_for_a_policy_document_read(gate_b, data_class):
+    """`GB-R001` (`supplier_reader` / policy-document read) allows exactly
+    `[public, internal]` -- both individually granted, each request
+    bounded to exactly the one classification it asked for."""
+    identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-1", roles=("supplier_reader",))
+    decision = gate_b.authorize(
+        identity,
+        _matched("INT-POLICY-QUESTION"),
+        _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION"),
+        GateBRequest(data_class=data_class),
+    )
+    assert decision.decision is GateBStatus.ALLOW
+    assert decision.effective_data_classes == (data_class,)
+
+
+def test_confidential_is_allowed_only_for_the_specifically_authorized_role(gate_b):
+    """`GB-R005` (`compliance_reviewer` / structured lookup) is the only
+    rule in the committed policy that authorizes `confidential` at all --
+    a positive proof, not just "restricted is always denied"."""
+    identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-3", roles=("compliance_reviewer",))
+    decision = gate_b.authorize(
+        identity,
+        _matched("INT-STRUCTURED-LOOKUP"),
+        _lane_decision(LaneId.MODE_B, "INT-STRUCTURED-LOOKUP"),
+        GateBRequest(data_class=DataClassification.CONFIDENTIAL),
+    )
+    assert decision.decision is GateBStatus.ALLOW
+    assert decision.rule_id == "GB-R005"
+    assert decision.effective_data_classes == (DataClassification.CONFIDENTIAL,)
+
+
+def test_confidential_is_denied_for_a_role_not_specifically_authorized_for_it(gate_b):
+    """`sourcing_analyst` on the same `INT-STRUCTURED-LOOKUP`/`mode_b`
+    combination (`GB-R004`) is only allowed `[public, internal]` -- being
+    authorized for a *classification* on one role is never inherited by a
+    different role authorized for the same intent/lane."""
+    identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-2", roles=("sourcing_analyst",))
+    decision = gate_b.authorize(
+        identity,
+        _matched("INT-STRUCTURED-LOOKUP"),
+        _lane_decision(LaneId.MODE_B, "INT-STRUCTURED-LOOKUP"),
+        GateBRequest(data_class=DataClassification.CONFIDENTIAL),
+    )
+    assert decision.decision is GateBStatus.DENY
+    assert decision.reason_code == "data_classification_not_allowed"
+    assert decision.rule_id == "GB-R004"
+
+
+def test_restricted_is_denied_for_every_governed_role(gate_b, registry):
+    """No rule in the committed policy ever authorizes `restricted` --
+    swept across every governed role, not just `supplier_reader`
+    (`test_data_classification_not_allowed_by_matched_rule_denies`
+    already covers that one specifically)."""
+    for rule in registry.rules:
+        if not rule.allowed:
+            continue
+        identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-X", roles=(rule.role,))
+        decision = gate_b.authorize(
+            identity,
+            _matched(rule.intent_id),
+            _lane_decision(rule.lane, rule.intent_id),
+            GateBRequest(data_class=DataClassification.RESTRICTED),
+        )
+        assert decision.decision is GateBStatus.DENY
+        assert decision.reason_code == "data_classification_not_allowed"
+        assert DataClassification.RESTRICTED not in decision.effective_data_classes
+
+
+def test_internal_permitted_does_not_imply_restricted_permitted(gate_b):
+    """The exact wording of Task 7's own example: a caller allowed to read
+    `internal` data is not automatically allowed to read `restricted`
+    data -- both checked against the *same* matched rule, back to back."""
+    identity = TrustedIdentity(tenant_id="TENANT-A", user_id="USER-1", roles=("supplier_reader",))
+    internal_decision = gate_b.authorize(
+        identity,
+        _matched("INT-POLICY-QUESTION"),
+        _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION"),
+        GateBRequest(data_class=DataClassification.INTERNAL),
+    )
+    restricted_decision = gate_b.authorize(
+        identity,
+        _matched("INT-POLICY-QUESTION"),
+        _lane_decision(LaneId.RAG, "INT-POLICY-QUESTION"),
+        GateBRequest(data_class=DataClassification.RESTRICTED),
+    )
+    assert internal_decision.decision is GateBStatus.ALLOW
+    assert restricted_decision.decision is GateBStatus.DENY
+
+
+def test_no_data_classification_string_is_hardcoded_outside_policy_models(gate_b):
+    """Task 7: "Do not hardcode behavior in multiple unrelated files."
+    The four governed classification strings appear nowhere in `src/`
+    except `policy_models.py`'s own enum definition -- no ad hoc
+    `if data_class == "restricted"` anywhere in `gate_b.py` or elsewhere."""
+    import re
+
+    src_root = REPO_ROOT / "src"
+    offending: list[str] = []
+    for path in src_root.rglob("*.py"):
+        if path.name == "policy_models.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        if re.search(r'["\'](public|internal|confidential|restricted)["\']', text):
+            offending.append(str(path.relative_to(src_root)))
+    assert offending == []
 
 
 # ---------------------------------------------------------------------------

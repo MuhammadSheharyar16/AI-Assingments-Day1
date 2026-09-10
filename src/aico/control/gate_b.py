@@ -89,16 +89,23 @@ own tiered classification (cheapest/most-certain checks first) and equally
      after the fact.
 
   6. Data classification (Task 7).  When the caller declared a specific
-     `GateBRequest.data_class`, it must be one the matched rule's own
-     `allowed_data_classes` actually authorizes - `deny`
+     `GateBRequest.data_class`, `policy_models.is_data_classification_permitted()`
+     must find it in the matched rule's own `allowed_data_classes` - `deny`
      ("data_classification_not_allowed", Task 4's "requested classification
      is not allowed") otherwise; a caller authorized for `internal` is
      never automatically authorized for `restricted` just because they
-     asked. When the caller declared none at all and the rule authorizes
-     more than one classification, Gate-B does not guess which one to
-     grant - Task 10's `clarify` ("request references two allowed resource
-     types and policy needs one selected") applies: this is exactly the
-     kind of missing-but-*safe*-to-ask information Task 10 permits, never a
+     asked (`DataClassification` values carry no implied hierarchy - see
+     that enum's own docstring). `is_data_classification_permitted()` is
+     the one place this membership check is made at all (Task 7: "Do not
+     hardcode behavior in multiple unrelated files") - Task 9's
+     `disclosure.py` is expected to call the same function for each
+     protected field's own *result* classification against this
+     decision's `effective_data_classes`, never re-implement the check.
+     When the caller declared none at all and the rule authorizes more
+     than one classification, Gate-B does not guess which one to grant -
+     Task 10's `clarify` ("request references two allowed resource types
+     and policy needs one selected") applies: this is exactly the kind of
+     missing-but-*safe*-to-ask information Task 10 permits, never a
      role/tenant/permission the caller would have to self-assert to get
      past it.
 
@@ -147,7 +154,7 @@ from aico.control.errors import GateBError
 from aico.control.models import GateADecision, GateAStatus, GateBDecision, GateBStatus, LaneDecision
 from aico.control.ontology import LaneId
 from aico.control.ontology_registry import OntologyRegistry
-from aico.control.policy_models import DataClassification, TenantScopeKind
+from aico.control.policy_models import DataClassification, TenantScopeKind, is_data_classification_permitted
 from aico.control.policy_registry import PolicyRegistry
 
 
@@ -307,7 +314,7 @@ class GateB:
 
         # Stage 6 -- data classification (Task 7).
         if requested.data_class is not None:
-            if requested.data_class not in rule.allowed_data_classes:
+            if not is_data_classification_permitted(requested.data_class, rule.allowed_data_classes):
                 return _deny(
                     reason_code="data_classification_not_allowed",
                     policy_version=version,

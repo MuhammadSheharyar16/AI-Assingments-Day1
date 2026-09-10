@@ -35,6 +35,11 @@ against -- loading the committed `policy/gate_b_policy.v1.json` through
 `GateBDecision`/`GateBStatus` (`models.py`) -- the deterministic
 authorization/disclosure boundary, run from a trusted identity plus a
 `GateADecision`/`LaneDecision`, before any protected evidence access.
+Task 7 adds `is_data_classification_permitted()` (`policy_models.py`) --
+the single membership check a data classification is ever tested against
+an authorized set with, shared by `GateB` (the *requested* classification)
+and Task 9's future `disclosure.py` (each protected field's own *result*
+classification).
 """
 from aico.control.config import (
     DEFAULT_CONTROL_PLANE_CONFIG_PATH,
@@ -76,6 +81,7 @@ from aico.control.policy_models import (
     PiiCategory,
     Role,
     TenantScopeKind,
+    is_data_classification_permitted,
 )
 from aico.control.policy_registry import DEFAULT_POLICY_PATH, PolicyRegistry
 
@@ -121,4 +127,5 @@ __all__ = [
     "GateBDecision",
     "GateBStatus",
     "GateBError",
+    "is_data_classification_permitted",
 ]
