@@ -21,19 +21,36 @@ committed `evidence/source_registry.v1.json` through `SourceRecord`/
 `OntologyRegistry`'s governed intent ids -- plus its typed failures
 (`SourceRegistryLoadError`/`SourceRegistryLookupError`, `errors.py`).
 
-Later Day 11 tasks add Gate-C policy (Task 3), provenance (Task 4),
-integrity (Task 5), freshness (Task 6), completeness (Task 7) and conflict
-detection (Task 8), all built on the envelope and source registry defined
-so far.
+Task 3 adds `GateCPolicyRegistry` (`policy.py`), the read-only, typed
+loader/lookup service for the governed evidence-quality policy -- loading
+the committed `policy/gate_c_policy.v1.json` through
+`GateCPolicyDocument`/`IntentEvidenceRequirement`/`FreshnessPolicy`/
+`ConflictPolicy`, cross-checked against both the real committed
+`OntologyRegistry` and Task 2's `SourceRegistry` -- plus its typed
+failures (`GateCPolicyLoadError`/`GateCPolicyLookupError`, `errors.py`).
+
+Later Day 11 tasks add provenance (Task 4), integrity (Task 5), freshness
+(Task 6), completeness (Task 7) and conflict detection (Task 8), all built
+on the envelope, source registry and policy defined so far.
 """
 
 from aico.evidence.errors import (
     EvidenceEnvelopeError,
     EvidenceError,
+    GateCPolicyLoadError,
+    GateCPolicyLookupError,
     SourceRegistryLoadError,
     SourceRegistryLookupError,
 )
 from aico.evidence.models import EvidenceItem, EvidencePackage, parse_evidence_item, parse_evidence_package
+from aico.evidence.policy import (
+    DEFAULT_GATE_C_POLICY_PATH,
+    ConflictPolicy,
+    FreshnessPolicy,
+    GateCPolicyDocument,
+    GateCPolicyRegistry,
+    IntentEvidenceRequirement,
+)
 from aico.evidence.source_registry import (
     DEFAULT_SOURCE_REGISTRY_PATH,
     SourceRecord,
@@ -56,4 +73,12 @@ __all__ = [
     "DEFAULT_SOURCE_REGISTRY_PATH",
     "SourceRegistryLoadError",
     "SourceRegistryLookupError",
+    "ConflictPolicy",
+    "FreshnessPolicy",
+    "IntentEvidenceRequirement",
+    "GateCPolicyDocument",
+    "GateCPolicyRegistry",
+    "DEFAULT_GATE_C_POLICY_PATH",
+    "GateCPolicyLoadError",
+    "GateCPolicyLookupError",
 ]

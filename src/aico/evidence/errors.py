@@ -1,15 +1,17 @@
 """
 Day 11 Task 1 -- typed evidence-boundary failures.
 Day 11 Task 2 -- typed governed-source-registry failures.
+Day 11 Task 3 -- typed Gate-C policy failures.
 
 `EvidenceError` is the base class every typed failure `aico.evidence`
 raises inherits from -- the same shape `OntologyRegistryError`
 (`control/errors.py`) and `PolicyRegistryError` give the ontology/Gate-B
 policy boundaries: one common ancestor a caller can catch broadly, plus
 narrow, documented subclasses for the specific failure. Later Day 11 tasks
-(Gate-C policy Task 3, provenance Task 4) add their own subclasses here as
-those boundaries are built; this file so far carries Task 1's envelope
-error plus Task 2's source-registry pair.
+(provenance Task 4, freshness Task 6, completeness Task 7, conflicts
+Task 8) add their own subclasses here as those boundaries are built; this
+file so far carries Task 1's envelope error, Task 2's source-registry
+pair, and Task 3's Gate-C-policy pair.
 
 `EvidenceEnvelopeError` (Task 1) is raised when a raw candidate-evidence
 payload -- the actual evidence returned by retrieval / the protected data
@@ -77,6 +79,35 @@ class SourceRegistryLookupError(EvidenceError):
     closed, never invent a fallback source record for an id the registry
     does not govern (working rule: "unknown ... source cannot pass
     Gate-C")."""
+
+    def __init__(self, kind: str, identifier: str):
+        self.kind = kind
+        self.identifier = identifier
+        super().__init__(f"unknown {kind}: {identifier!r}")
+
+
+class GateCPolicyLoadError(EvidenceError):
+    """Raised by `GateCPolicyRegistry.load()` (`policy.py`, Task 3) when
+    the committed `policy/gate_c_policy.v1.json` cannot be read, is not
+    valid JSON, fails `GateCPolicyDocument`'s typed validation (duplicate
+    freshness `policy_id`, duplicate `rule_id`, a rule referencing an
+    intent the loaded `OntologyRegistry` does not govern, a rule
+    referencing a source type the loaded `SourceRegistry` does not govern,
+    invalid `status`, missing `policy_version`, ...), fails this
+    registry's own ambiguous-rule-combination check, or -- the
+    reverse-direction half of the Task 2/Task 3 cross-reference -- a
+    governed source's `freshness_policy_id` (Task 2) names a freshness
+    policy this document does not itself declare. Mirrors
+    `PolicyLoadError`'s fail-loud contract -- there is never a silent
+    fallback to an empty/default/permissive policy."""
+
+
+class GateCPolicyLookupError(EvidenceError):
+    """Raised by `GateCPolicyRegistry.get_freshness_policy()` /
+    `get_rule()` when a given id does not exist in the loaded, governed
+    Gate-C policy. Callers are expected to treat this the same way every
+    other typed lookup error in this codebase is treated -- fail closed,
+    never invent a fallback record for an id the policy does not govern."""
 
     def __init__(self, kind: str, identifier: str):
         self.kind = kind

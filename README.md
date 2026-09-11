@@ -1324,7 +1324,7 @@ before the Model Gateway: Gate-A/lane selection decide what a request
 *means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
 decides whether the *evidence retrieval actually returned* may be trusted
 enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
-"Retrieval success is not evidence validity"). Only Tasks 1–2 are
+"Retrieval success is not evidence validity"). Only Tasks 1–3 are
 implemented so far — the sections below will grow as later tasks land.
 
 - `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
@@ -1410,16 +1410,55 @@ implemented so far — the sections below will grow as later tasks land.
   disabled, `SRC-POLICY-A` does not support `INT-STRUCTURED-LOOKUP`,
   `SRC-REFERENCE-A` does not support `payment_terms`).
 
+- `policy/gate_c_policy.v1.json` (Task 3) — the committed, governed
+  evidence-quality policy (byte-identical to the Day 11 resource pack's
+  fixture, `evidence_policy_v1.json`, just renamed to this directory's
+  `<name>.vN.json` convention; see `policy/README.md`'s new "Gate-C
+  policy" section). `src/aico/evidence/policy.py` defines its typed shape
+  (`GateCPolicyDocument` / `IntentEvidenceRequirement` / `FreshnessPolicy`
+  / `ConflictPolicy`, Task 3's five governed concepts — trusted source
+  types, freshness thresholds, required facets by intent, conflict
+  policy, minimum evidence requirements) — deliberately in
+  `src/aico/evidence/`, not `src/aico/control/policy_models.py`, since
+  Gate-C policy governs evidence *quality* (`src/aico/evidence/`'s
+  concern), not request authorization (`src/aico/control/`'s concern,
+  Gate-B's policy). `GateCPolicyRegistry` is the read-only, typed
+  loader/lookup service Gate-C (Task 9) will be built against —
+  cross-checking every rule's `intent_id` against the real committed
+  `OntologyRegistry` and every rule's `allowed_source_types` against the
+  real committed `SourceRegistry`'s governed source types (Task 2's own
+  `known_intent_ids` context mechanism, reused), plus the *reverse*
+  cross-check that every governed source's own `freshness_policy_id`
+  (Task 2) names a freshness policy this document actually declares.
+  Duplicate freshness `policy_id`/`rule_id` and an invalid `status` are
+  rejected at parse time; two rules governing the same `(intent_id,
+  request_kind)` pair are rejected as ambiguous at registry-build time
+  (the identical check `policy_registry.py`'s `PolicyRegistry` already
+  makes for Gate-B's role/intent/lane combinations).
+- `tests/test_day11_gate_c_policy.py` — not one of Task 16's named test
+  files either (Task 3's own governed policy has no other home); proves
+  `GateCPolicyDocument`/`IntentEvidenceRequirement`/`FreshnessPolicy`
+  directly against Pydantic (fixture loads into typed objects, every
+  required-validation reject case, both cross-reference directions
+  with/without context) and `GateCPolicyRegistry` end to end (loading the
+  real committed file and every documented failure mode — including a
+  source referencing an undeclared freshness policy and two rules sharing
+  one `(intent_id, request_kind)` pair — read-only collection accessors,
+  `get_freshness_policy`/`get_rule` resolving or raising
+  `GateCPolicyLookupError`, and `find_rule` exercised against the real
+  committed policy's actual data).
+
 ```
 uv run pytest -q
 uv run ruff check .
 uv run python -m aico.evals.day07
 ```
 
-75 new tests (`tests/test_day11_evidence_envelope.py`,
-`tests/test_day11_source_registry.py`), 1560 passing overall (up from
-1485 after Day 10) — the Day 7 regression gate is unmodified and still
-passes (`GATE: PASS`, `evals/baseline_v1.json` untouched).
+128 new tests (`tests/test_day11_evidence_envelope.py`,
+`tests/test_day11_source_registry.py`, `tests/test_day11_gate_c_policy.py`),
+1613 passing overall (up from 1485 after Day 10) — the Day 7 regression
+gate is unmodified and still passes (`GATE: PASS`,
+`evals/baseline_v1.json` untouched).
 
 **Environment note:** this repository's `.venv` was originally copied
 forward from the Day 10 project directory rather than created fresh here.

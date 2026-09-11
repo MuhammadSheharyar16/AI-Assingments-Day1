@@ -1,0 +1,62 @@
+{
+  "policy_version": "1.0",
+  "status": "active",
+  "freshness_policies": [
+    {
+      "policy_id": "FRESH-POLICY-30D",
+      "max_age_hours": 720
+    },
+    {
+      "policy_id": "FRESH-CONTRACT-7D",
+      "max_age_hours": 168
+    }
+  ],
+  "intent_requirements": [
+    {
+      "rule_id": "GC-R001",
+      "intent_id": "INT-POLICY-QUESTION",
+      "request_kind": "payment_terms_only",
+      "required_facets": [
+        "supplier_identity",
+        "payment_terms"
+      ],
+      "minimum_valid_items": 1,
+      "allowed_source_types": [
+        "policy_document",
+        "contract_record"
+      ],
+      "conflict_policy": "authority_then_reject_tie"
+    },
+    {
+      "rule_id": "GC-R002",
+      "intent_id": "INT-POLICY-QUESTION",
+      "request_kind": "payment_and_invoice",
+      "required_facets": [
+        "supplier_identity",
+        "payment_terms",
+        "invoice_window"
+      ],
+      "minimum_valid_items": 1,
+      "allowed_source_types": [
+        "policy_document",
+        "contract_record",
+        "reference_record"
+      ],
+      "conflict_policy": "authority_then_reject_tie"
+    },
+    {
+      "rule_id": "GC-R003",
+      "intent_id": "INT-STRUCTURED-LOOKUP",
+      "request_kind": "contract_status",
+      "required_facets": [
+        "supplier_identity",
+        "contract_status"
+      ],
+      "minimum_valid_items": 1,
+      "allowed_source_types": [
+        "contract_record"
+      ],
+      "conflict_policy": "authority_then_reject_tie"
+    }
+  ]
+}
