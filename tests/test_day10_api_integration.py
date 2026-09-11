@@ -120,9 +120,23 @@ def _config_with_gate_b(enabled: bool):
     else. Used for both directions (`True`/`False`) so every test below
     is explicit about which one it needs, rather than a `True` case
     leaning on an override and a `False` case leaning on whatever the
-    committed file's own default happens to be."""
+    committed file's own default happens to be.
+
+    `gate_c` is always forced `disabled` here, regardless of `enabled` --
+    this file's own scope is Gate-B's live wiring, proven with
+    `CountingRetriever`'s fake, ungoverned `EvidenceChunk` (`source_file=
+    "DOC-001.md"`, not one of the real corpus's own governed documents);
+    Gate-C's live wiring gets its own dedicated proof
+    (`test_day11_real_corpus_integration.py`) against the real corpus.
+    Leaving Gate-C at the committed default here would make every
+    `rag`-lane request in this file fail Gate-C's `unknown_source` check
+    for a reason this file was never testing."""
     real = load_control_plane_config()
-    return dataclasses.replace(real, gate_b=dataclasses.replace(real.gate_b, enabled=enabled))
+    return dataclasses.replace(
+        real,
+        gate_b=dataclasses.replace(real.gate_b, enabled=enabled),
+        gate_c=dataclasses.replace(real.gate_c, enabled=False),
+    )
 
 
 def _client(identity: TrustedIdentity, gateway: CountingGateway, retriever: CountingRetriever, *, gate_b_enabled: bool = True) -> TestClient:

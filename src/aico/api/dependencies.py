@@ -92,12 +92,16 @@ from aico.api.instrumentation import MetricsGateway, MetricsRetriever, MetricsSe
 from aico.control.config import ControlPlaneConfig, load_control_plane_config
 from aico.control.ontology_registry import OntologyRegistry
 from aico.control.policy_registry import PolicyRegistry
+from aico.evidence.policy import GateCPolicyRegistry
+from aico.evidence.provenance import GovernedProvenanceIndex
+from aico.evidence.source_registry import SourceRegistry
 from aico.memory.service import MemorySessionService
 from aico.memory.store import DEFAULT_SESSION_DB_PATH, SessionStore, SqliteSessionStore
 from aico.memory.summarizer import FakeSummarizer, Summarizer
 from aico.platform.model_gateway import ModelGateway
 from aico.rag.answer_service import BM25Retriever, GroundedAnswerService, PolicyEvaluator, Retriever
-from aico.rag.control_plane_answer_service import ControlPlaneAnswerService
+from aico.rag.control_plane_answer_service import ControlPlaneAnswerService, EvidenceAdapter
+from aico.rag.real_corpus_evidence_adapter import RealCorpusEvidenceAdapter
 from aico.security.input_policy import evaluate_policy
 
 if TYPE_CHECKING:
@@ -253,11 +257,92 @@ def get_policy_registry() -> PolicyRegistry:
     return _default_policy_registry()
 
 
+@lru_cache(maxsize=1)
+def _default_real_corpus_evidence_adapter() -> RealCorpusEvidenceAdapter:
+    return RealCorpusEvidenceAdapter()
+
+
+def get_evidence_adapter() -> EvidenceAdapter:
+    """Default provider: `RealCorpusEvidenceAdapter` (Day 11 Task 13,
+    real-corpus extension) -- built and cached exactly once via
+    `_default_real_corpus_evidence_adapter`'s cache, the identical pattern
+    every other `lru_cache`d singleton in this module already uses. Tests
+    override this to build against a fake adapter without touching the
+    committed manifest/index files."""
+
+    return _default_real_corpus_evidence_adapter()
+
+
+@lru_cache(maxsize=1)
+def _default_source_registry() -> SourceRegistry:
+    control_plane_config = get_control_plane_config()
+    return SourceRegistry.load(control_plane_config.gate_c.source_registry_path, ontology_registry=get_ontology_registry())
+
+
+def get_source_registry() -> SourceRegistry:
+    """Default provider: the real committed real-corpus source registry
+    (Day 11 Task 13, real-corpus extension,
+    `evidence/real_corpus_source_registry.v1.json`, path taken from
+    `control_plane_config.gate_c.source_registry_path`), loaded and
+    validated exactly once via `_default_source_registry`'s cache. Always
+    resolvable regardless of `gate_c.enabled` (loading the committed
+    registry is cheap and always valid); `get_control_plane_answer_service`
+    below is what actually decides whether the loaded registry is *wired
+    in* or left unused. Tests override this to build against a throwaway
+    registry without touching the committed file."""
+
+    return _default_source_registry()
+
+
+@lru_cache(maxsize=1)
+def _default_gate_c_policy_registry() -> GateCPolicyRegistry:
+    control_plane_config = get_control_plane_config()
+    return GateCPolicyRegistry.load(
+        control_plane_config.gate_c.gate_c_policy_path,
+        ontology_registry=get_ontology_registry(),
+        source_registry=get_source_registry(),
+    )
+
+
+def get_gate_c_policy_registry() -> GateCPolicyRegistry:
+    """Default provider: the real committed real-corpus Gate-C policy (Day
+    11 Task 13, real-corpus extension, `policy/real_corpus_gate_c_
+    policy.v1.json`), loaded and validated exactly once via
+    `_default_gate_c_policy_registry`'s cache -- the identical pattern
+    `get_source_registry`/`get_policy_registry` already use. Tests
+    override this to build against a throwaway policy without touching
+    the committed file."""
+
+    return _default_gate_c_policy_registry()
+
+
+@lru_cache(maxsize=1)
+def _default_provenance_index() -> GovernedProvenanceIndex:
+    return _default_real_corpus_evidence_adapter().provenance_index()
+
+
+def get_provenance_index() -> GovernedProvenanceIndex:
+    """Default provider: Task 5's independent expected-provenance index,
+    built once from the same real, already-committed `data/index/
+    index.json` + real-corpus manifest `RealCorpusEvidenceAdapter` itself
+    reads (`RealCorpusEvidenceAdapter.provenance_index()`) -- so Gate-C's
+    stronger integrity check (not just Task 4's self-consistency check)
+    runs against real requests too, not only in tests. Tests override this
+    to build against a throwaway index without touching the committed
+    files."""
+
+    return _default_provenance_index()
+
+
 def get_control_plane_answer_service(
     registry: OntologyRegistry = Depends(get_ontology_registry),
     control_plane_config: ControlPlaneConfig = Depends(get_control_plane_config),
     rag_service: GroundedAnswerService = Depends(get_answer_service),
     policy_registry: PolicyRegistry = Depends(get_policy_registry),
+    source_registry: SourceRegistry = Depends(get_source_registry),
+    gate_c_policy_registry: GateCPolicyRegistry = Depends(get_gate_c_policy_registry),
+    evidence_adapter: EvidenceAdapter = Depends(get_evidence_adapter),
+    provenance_index: GovernedProvenanceIndex = Depends(get_provenance_index),
 ) -> ControlPlaneAnswerService:
     """Default provider: `ControlPlaneAnswerService` (Day 9 Task 9; Day 10
     Task 13), assembled from the real ontology registry and control-plane
@@ -281,11 +366,31 @@ def get_control_plane_answer_service(
     integration.py`), which carries no governed role at all and
     explicitly overrides this to `false` for its own requests rather than
     depending on the shipped default to stay ungoverned on its behalf -
-    no other deployment needs to set anything to get Gate-B active."""
+    no other deployment needs to set anything to get Gate-B active.
+
+    Gate-C (`source_registry`/`gate_c_policy_registry`/`evidence_adapter`/
+    `provenance_index=` -- all four together, or none) is activated only
+    when `control_plane_config.gate_c.enabled` AND `control_plane_config.
+    gate_b.enabled` are both true - `true`/`true` is the committed
+    default (see `config/control-plane.yaml`'s own `gate_c` section and
+    `GateCActivationConfig`'s docstring). Gate-C is never wired in without
+    Gate-B also active (`ControlPlaneAnswerService.__post_init__` would
+    raise `GateCIntegrationError` for that combination - Gate-C's first
+    required input is a real `GateBDecision`), so the `gate_b.enabled`
+    half of this condition is not merely defensive, it is required for a
+    valid construction. The one committed opt-out is the identical Day 9
+    synthetic identity space named above - it already leaves `gate_b`
+    inactive, which structurally leaves Gate-C inactive with it."""
+
+    gate_c_active = control_plane_config.gate_c.enabled and control_plane_config.gate_b.enabled
 
     return ControlPlaneAnswerService(
         registry=registry,
         rag_service=rag_service,
         control_plane_config=control_plane_config,
         policy_registry=policy_registry if control_plane_config.gate_b.enabled else None,
+        source_registry=source_registry if gate_c_active else None,
+        gate_c_policy_registry=gate_c_policy_registry if gate_c_active else None,
+        evidence_adapter=evidence_adapter if gate_c_active else None,
+        provenance_index=provenance_index if gate_c_active else None,
     )

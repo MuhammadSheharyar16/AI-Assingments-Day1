@@ -1,0 +1,80 @@
+{
+  "registry_version": "1.0",
+  "sources": [
+    {
+      "source_id": "SRC-DOC-001",
+      "source_type": "internal_policy_document",
+      "authority_level": 100,
+      "owner": "Procurement Governance, Meridian Procurement Ltd",
+      "status": "active",
+      "allowed_intents": [
+        "INT-POLICY-QUESTION"
+      ],
+      "supported_facets": [
+        "supplier_governance_policy",
+        "doc_001_sourcing_policy"
+      ],
+      "freshness_policy_id": "FRESH-POLICY-DOCS-365D"
+    },
+    {
+      "source_id": "SRC-DOC-002",
+      "source_type": "internal_policy_document",
+      "authority_level": 100,
+      "owner": "Commercial and Legal, Meridian Procurement Ltd",
+      "status": "active",
+      "allowed_intents": [
+        "INT-POLICY-QUESTION"
+      ],
+      "supported_facets": [
+        "supplier_governance_policy",
+        "doc_002_contract_terms"
+      ],
+      "freshness_policy_id": "FRESH-POLICY-DOCS-365D"
+    },
+    {
+      "source_id": "SRC-DOC-003",
+      "source_type": "internal_policy_document",
+      "authority_level": 100,
+      "owner": "Finance Operations, Meridian Procurement Ltd",
+      "status": "active",
+      "allowed_intents": [
+        "INT-POLICY-QUESTION"
+      ],
+      "supported_facets": [
+        "supplier_governance_policy",
+        "doc_003_pricing_payment"
+      ],
+      "freshness_policy_id": "FRESH-POLICY-DOCS-365D"
+    },
+    {
+      "source_id": "SRC-DOC-004",
+      "source_type": "internal_policy_document",
+      "authority_level": 100,
+      "owner": "Supplier Assurance, Meridian Procurement Ltd",
+      "status": "active",
+      "allowed_intents": [
+        "INT-POLICY-QUESTION"
+      ],
+      "supported_facets": [
+        "supplier_governance_policy",
+        "doc_004_onboarding_screening"
+      ],
+      "freshness_policy_id": "FRESH-POLICY-DOCS-365D"
+    },
+    {
+      "source_id": "SRC-DOC-005",
+      "source_type": "internal_policy_document",
+      "authority_level": 100,
+      "owner": "Logistics and Goods Receipt, Meridian Procurement Ltd",
+      "status": "active",
+      "allowed_intents": [
+        "INT-POLICY-QUESTION"
+      ],
+      "supported_facets": [
+        "supplier_governance_policy",
+        "doc_005_delivery_inspection"
+      ],
+      "freshness_policy_id": "FRESH-POLICY-DOCS-365D"
+    }
+  ]
+}

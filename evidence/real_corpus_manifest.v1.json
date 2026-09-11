@@ -1,0 +1,61 @@
+{
+  "manifest_version": "1.0",
+  "tenant_id": "TENANT-A",
+  "documents": [
+    {
+      "source_file": "DOC-001-sourcing-policy.md",
+      "source_id": "SRC-DOC-001",
+      "source_version": "2.0",
+      "data_classification": "internal",
+      "source_updated_at": "2026-08-26T21:37:09+05:00",
+      "facets": [
+        "supplier_governance_policy",
+        "doc_001_sourcing_policy"
+      ]
+    },
+    {
+      "source_file": "DOC-002-contract-terms.md",
+      "source_id": "SRC-DOC-002",
+      "source_version": "1.4",
+      "data_classification": "internal",
+      "source_updated_at": "2026-08-26T21:37:09+05:00",
+      "facets": [
+        "supplier_governance_policy",
+        "doc_002_contract_terms"
+      ]
+    },
+    {
+      "source_file": "DOC-003-pricing-payment.md",
+      "source_id": "SRC-DOC-003",
+      "source_version": "1.2",
+      "data_classification": "internal",
+      "source_updated_at": "2026-08-26T21:37:09+05:00",
+      "facets": [
+        "supplier_governance_policy",
+        "doc_003_pricing_payment"
+      ]
+    },
+    {
+      "source_file": "DOC-004-onboarding-screening.md",
+      "source_id": "SRC-DOC-004",
+      "source_version": "1.1",
+      "data_classification": "internal",
+      "source_updated_at": "2026-08-26T21:37:09+05:00",
+      "facets": [
+        "supplier_governance_policy",
+        "doc_004_onboarding_screening"
+      ]
+    },
+    {
+      "source_file": "DOC-005-delivery-inspection.md",
+      "source_id": "SRC-DOC-005",
+      "source_version": "1.0",
+      "data_classification": "internal",
+      "source_updated_at": "2026-08-26T21:37:09+05:00",
+      "facets": [
+        "supplier_governance_policy",
+        "doc_005_delivery_inspection"
+      ]
+    }
+  ]
+}

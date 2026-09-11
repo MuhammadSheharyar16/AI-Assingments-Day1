@@ -126,7 +126,7 @@ the full required order end to end at this class's own level
 HTTP request to `/ask/governed` with the committed `gate_b.enabled: true`
 default left untouched and a real Day 10 governed identity.
 
-## Gate-C integration is opt-in, not opt-out (Day 11 Task 13)
+## Gate-C integration (Day 11 Task 13)
 
 Required order for the `rag` lane (`Day 11 Task.pdf`, Task 13):
 
@@ -140,31 +140,39 @@ Everything through Gate-B is exactly the pipeline already described above
 Gateway, inside the `rag` branch of step 6, via a new private method,
 `_answer_rag_with_gate_c()`. Reached only when this service was built with
 `source_registry`/`gate_c_policy_registry`/`evidence_adapter` (see
-`ControlPlaneAnswerService`'s own docstring) -- `None` for all three (the
-default) preserves the exact Day 9/10 `rag` behavior: retrieval flows
-straight into `GroundedAnswerService.answer()`, unmodified.
+`ControlPlaneAnswerService`'s own docstring) -- `None` for all three (still
+the constructor default, and still what a direct `ControlPlaneAnswerService
+(registry, rag_service)` call gets) preserves the exact Day 9/10 `rag`
+behavior: retrieval flows straight into `GroundedAnswerService.answer()`,
+unmodified.
 
-Unlike Gate-B (opt-out by deployment default), Gate-C integration here is
-opt-in only, for the identical reason `ControlPlaneAnswerService` itself
-is not wired into `api/app.py`'s real `/ask`/`/ask/governed` routes (see
-"WHY THIS IS NOT WIRED INTO `api/app.py`'s `/ask` TODAY" below) -- one
-level deeper: a real `EvidenceChunk` (`aico.rag.citation_validator`,
+`source_registry`/`gate_c_policy_registry` govern only Day 11's own pinned
+synthetic fixtures (`evidence/source_registry.v1.json`/`policy/
+gate_c_policy.v1.json`, unmodified -- used exactly as the graded Day 11
+pack shipped them). A real `EvidenceChunk` (`aico.rag.citation_validator`,
 `chunk_id`/`source_file`/`text`) carries none of the governed provenance
-metadata Gate-C's `EvidenceItem` requires (`source_id`/`content_hash`/
-`tenant_id`/`data_classification`/`evidence_facets`/`claims`), and Day
-11's committed source registry/Gate-C policy are the same deliberately
-small, SYNTHETIC governed data Day 9's ontology is (`evidence/
-source_registry.v1.json` governs four synthetic sources, not
-`data/documents/`'s real corpus). Wiring Gate-C against the real BM25
-index today would reject every real chunk outright (`unknown_source` for
-all of them) and would not be a Gate-C bug any more than routing Day 7's
-real golden-eval questions through Gate-A would be a Gate-A bug -- it
-would just as silently break the same permanent regression gate. This
-class is therefore Gate-C's complete, independently testable integration
-(`EvidenceAdapter` is the seam a caller supplies once governed provenance
-metadata for its own real corpus exists), exactly the "ready for a future
-day to route real traffic through" posture the module docstring's closing
-section already documents for Gate-A/Gate-B.
+metadata Gate-C's `EvidenceItem` requires on its own, so wiring Gate-C
+against the real corpus needed its own real, non-fabricated governed data
+rather than reusing (or editing) the pinned synthetic fixtures:
+`RealCorpusEvidenceAdapter` (`aico.rag.real_corpus_evidence_adapter`) maps
+real retrieved chunks against `evidence/real_corpus_source_registry.v1.json`/
+`evidence/real_corpus_manifest.v1.json`/`policy/real_corpus_gate_c_
+policy.v1.json` -- a second, additional, real-corpus-specific set of
+governed data (`scripts/day11_generate_real_corpus_registry.py`, built
+from each document's own front-matter and real commit history, never
+invented values), separate from and never touching the pinned Day 11 pack
+files. `get_control_plane_answer_service` (`api/dependencies.py`) wires
+this real adapter in by default (`config/control-plane.yaml`'s `gate_c.
+enabled: true`) whenever Gate-B is also active, the same "governs by
+default, an explicit opt-out only where a committed synthetic identity
+space would otherwise get a materially different outcome" posture
+`gate_b.enabled` already established (see "Gate-B integration is opt-out,
+not opt-in" above) -- see `real_corpus_evidence_adapter.py`'s own module
+docstring for exactly what is/is not asserted about the real corpus
+(coarse, source/freshness/tenant/classification trust only; no per-
+supplier facet/claim model, since this corpus is governance policy text,
+not supplier records -- conflict detection is consequently always
+`NO_CONFLICT` here, honestly, not a gap papered over).
 
 `_answer_rag_with_gate_c()`'s own required order, once reached:
 
@@ -290,6 +298,7 @@ from aico.control.policy_models import DisclosureAction, DisclosureProfile
 from aico.control.policy_registry import PolicyRegistry
 from aico.evidence.models import EvidencePackage
 from aico.evidence.policy import GateCPolicyRegistry
+from aico.evidence.provenance import GovernedProvenanceIndex
 from aico.evidence.source_registry import SourceRegistry
 from aico.memory.context_builder import MemoryContext, SessionReferenceContext, resolve_reference
 from aico.platform.model_gateway import CancellationToken
@@ -302,14 +311,17 @@ from aico.security.normalization import normalize_input
 # (carries `intent_id`/`domain`) and what retrieval actually returned,
 # produce Gate-C's own candidate `EvidencePackage` plus the governed
 # `request_kind` (`GateCRequest`, `aico.control.gate_c`) this request
-# should be evaluated under. No default/real implementation is provided --
-# see "Gate-C integration is opt-in, not opt-out" below for why -- a real
-# `EvidenceChunk` (`chunk_id`/`source_file`/`text`) carries none of the
-# governed provenance metadata (`source_id`/`content_hash`/`tenant_id`/
-# `data_classification`/`evidence_facets`/`claims`) Gate-C's `EvidenceItem`
-# requires, so this mapping is fundamentally caller/domain-specific, the
-# same reason `Retriever`/`PolicyEvaluator` (`answer_service.py`) are
-# already injectable seams rather than one hardcoded implementation.
+# should be evaluated under. A real `EvidenceChunk` (`chunk_id`/
+# `source_file`/`text`) carries none of the governed provenance metadata
+# (`source_id`/`content_hash`/`tenant_id`/`data_classification`/
+# `evidence_facets`/`claims`) Gate-C's `EvidenceItem` requires on its own,
+# so this mapping is fundamentally caller/domain-specific -- the same
+# reason `Retriever`/`PolicyEvaluator` (`answer_service.py`) are
+# injectable seams rather than one hardcoded implementation.
+# `RealCorpusEvidenceAdapter` (`aico.rag.real_corpus_evidence_adapter`) is
+# the real, production implementation of this seam for the real
+# `data/documents/` corpus (see "Gate-C integration" below); tests build
+# their own throwaway ones against Day 11's pinned synthetic fixtures.
 EvidenceAdapter = Callable[[str, LaneDecision, list[EvidenceChunk]], tuple[EvidencePackage, str | None]]
 
 
@@ -532,13 +544,17 @@ class ControlPlaneAnswerService:
     module docstring's "Gate-B integration is opt-out, not opt-in" section for why.
 
     `source_registry`/`gate_c_policy_registry`/`evidence_adapter` (Day 11
-    Task 13, optional, and only together -- see "Gate-C integration is
-    opt-in, not opt-out" below) activate Gate-C (`GateC`, built from the
-    first two) for the `rag` lane only, once Gate-B has already granted
-    `allow`. All three `None` (the default) preserves Day 9/10 behavior
-    for the `rag` lane exactly: retrieval flows straight into
-    `GroundedAnswerService.answer()`, no Gate-C span, no `GateCRejected`/
-    `GateCInsufficientEvidence`/`GateCClarify` outcome ever produced."""
+    Task 13, optional, and only together -- see "Gate-C real-corpus
+    wiring" below) activate Gate-C (`GateC`, built from the first two) for
+    the `rag` lane only, once Gate-B has already granted `allow`. All
+    three `None` (the default) preserves Day 9/10 behavior for the `rag`
+    lane exactly: retrieval flows straight into `GroundedAnswerService.
+    answer()`, no Gate-C span, no `GateCRejected`/
+    `GateCInsufficientEvidence`/`GateCClarify` outcome ever produced.
+    `provenance_index` (Task 5, optional) is forwarded to every
+    `GateC.evaluate()` call unmodified when given -- `None` runs Task 4's
+    self-consistency check only, exactly `GateC.evaluate()`'s own default
+    behavior when no integrity index is supplied."""
 
     registry: OntologyRegistry
     rag_service: GroundedAnswerService
@@ -547,6 +563,7 @@ class ControlPlaneAnswerService:
     source_registry: SourceRegistry | None = None
     gate_c_policy_registry: GateCPolicyRegistry | None = None
     evidence_adapter: EvidenceAdapter | None = None
+    provenance_index: GovernedProvenanceIndex | None = None
     gate_a: GateA = field(init=False)
     lane_selector: LaneSelector = field(init=False)
     gate_b: GateB | None = field(init=False)
@@ -798,7 +815,10 @@ class ControlPlaneAnswerService:
         # correlation context is preserved the same way every span in
         # this pipeline already preserves it (Day 6 Task 9's mechanism).
         gate_c_decision = self.gate_c.evaluate(
-            gate_b_decision=gate_b_decision, package=package, request=GateCRequest(request_kind=request_kind)
+            gate_b_decision=gate_b_decision,
+            package=package,
+            request=GateCRequest(request_kind=request_kind),
+            provenance_index=self.provenance_index,
         )
 
         if gate_c_decision.decision is GateCStatus.REJECT:

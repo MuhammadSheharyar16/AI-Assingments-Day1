@@ -1777,6 +1777,89 @@ and conflicts are all built and independently tested.
   misconfiguration modes raise `GateCIntegrationError`; and `mode_b` is
   proven entirely unaffected by a Gate-C-configured service.
 
+### Real-corpus extension — Gate-C wired into the live `/ask/governed` route
+
+The paragraph above describes Gate-C's integration as it stood when Task
+13 first landed: fully built and tested, but never actually reachable
+through a real HTTP request, because a real `EvidenceChunk` carried none
+of the governed provenance metadata Gate-C's `EvidenceItem` requires, and
+the only committed source registry/Gate-C policy were Day 11's own
+pinned, deliberately synthetic fixtures (`evidence/source_registry.v1.json`
+/ `policy/gate_c_policy.v1.json` — still exactly as the graded pack
+shipped them, untouched by anything below).
+
+That gap is now closed with real, non-fabricated governed data for the
+real `data/documents/` corpus — not by editing the pinned synthetic
+fixtures, and not by inventing per-document facts the corpus does not
+actually contain:
+
+- `scripts/day11_generate_real_corpus_registry.py` reads each of the five
+  real documents' own front-matter (`**Document ID:**` / `**Version:**` /
+  `**Owner:**` / `**Classification:**`) plus that file's real last-commit
+  timestamp (`git log -1 --format=%aI`) and writes two new, separate,
+  committed files: `evidence/real_corpus_source_registry.v1.json` (one
+  governed `SourceRecord` per document) and `evidence/real_corpus_
+  manifest.v1.json` (the same facts plus `source_updated_at`). A third,
+  hand-authored file, `policy/real_corpus_gate_c_policy.v1.json`, governs
+  the one real request shape this corpus supports (`INT-POLICY-QUESTION`
+  / `request_kind="policy_lookup"`).
+- `src/aico/rag/real_corpus_evidence_adapter.py` — `RealCorpusEvidenceAdapter`,
+  the concrete, production `EvidenceAdapter`: maps real retrieved
+  `EvidenceChunk`s against that manifest (`source_id`/`source_version`/
+  `data_classification`/`source_updated_at`/`evidence_facets`, all real),
+  recomputes `content_hash` fresh from the actually-returned text
+  (Task 4), and separately builds a `GovernedProvenanceIndex` (Task 5)
+  from the real, already-committed `data/index/index.json` chunk hashes —
+  an independent integrity check, not just self-consistency. A chunk from
+  a document outside the manifest is still turned into a typed item
+  (never silently dropped), pointed at a deliberately ungoverned
+  `source_id` so Gate-C's own `unknown_source` check rejects it exactly
+  as it would anywhere else.
+- **Honest scope, not a forced fit**: this corpus is internal governance
+  *policy* text (rules), not per-supplier *records* (facts about one
+  specific supplier) — there is no claimed value for Task 8's conflict
+  detection to reconcile here, so `claims` is left empty and every real
+  request's conflict check is genuinely `NO_CONFLICT`, not a gap papered
+  over with invented values. Completeness is governed by one shared facet
+  (`supplier_governance_policy`, which every document supports) rather
+  than a per-document requirement — real retrieval over five documents
+  only ever returns the 1-2 actually relevant to one question, so a
+  per-document requirement would make every real request fail regardless
+  of whether it was correctly answered. Source trust, provenance
+  (content-hash/source-version), and freshness (each document's real
+  commit date against a governed 365-day threshold) are all still
+  genuinely enforced.
+- `config/control-plane.yaml`'s new `gate_c` section (`GateCActivationConfig`,
+  `src/aico/control/config.py`) — optional at the schema level (absent
+  defaults to disabled, so no pre-existing config file changes behavior),
+  `enabled: true` in the committed file, active only when `gate_b.enabled`
+  is also true (mirrors `gate_b`'s own "opt-out, not opt-in" default
+  rather than shipping ungoverned until an operator remembers a flag).
+  `api/dependencies.py` gained `get_source_registry`/`get_gate_c_policy_registry`
+  /`get_evidence_adapter`/`get_provenance_index` (the same `lru_cache`d-
+  singleton pattern every other provider here uses) and now wires all
+  four into `get_control_plane_answer_service` whenever both flags are
+  true.
+- `api/control_plane_contracts.py` gained the three response-mapping
+  branches `GateCRejected`/`GateCInsufficientEvidence`/`GateCClarify` had
+  never needed before (`gate_c_rejected`/`gate_c_insufficient_evidence`/
+  `gate_c_clarify` — new `GovernedAskStatus` values, plus `source_registry_
+  version`/`missing_facets` response fields) — without this, any live
+  request Gate-C did not `allow` raised an unhandled-variant `TypeError`,
+  invisible until Gate-C was actually reachable.
+- `tests/test_day11_real_corpus_integration.py` — proves this over a real
+  `TestClient(app)` request, using the real `BM25Retriever` over the real
+  committed index (never a fake retriever for the "allow" case): a real
+  policy question reaches `status="answered"` with the Model Gateway
+  called exactly once and a citation naming a real chunk_id; a chunk
+  claiming a `source_file` outside the governed registry is rejected
+  (`gate_c_rejected`, `unknown_source`) with zero Model Gateway calls;
+  `gate_c.enabled: false` reproduces Day 10's exact prior behavior
+  unchanged. `tests/test_day10_api_integration.py` was updated to force
+  `gate_c: enabled: false` for its own requests (its `CountingRetriever`
+  returns a fake, ungoverned `source_file` unrelated to the real corpus —
+  that file's own scope is Gate-B, not Gate-C).
+
 - `src/aico/control/gate_c.py` extended (Task 14) — `GateC.evaluate()` now
   traces itself directly, a deliberate exception to the "gate_a/gate_b/
   disclosure stay trace-free, the orchestrator adds spans" pattern Day
@@ -2635,12 +2718,17 @@ Day 11's required tree (`src/aico/evidence/*`, `src/aico/control/gate_c.py`,
 and `test_day11_regression.py` split coverage out of the minimum named set
 (Tasks 1, 3, 13, 14, 16), the same file-splitting allowance every earlier
 day already used. Task 5's `GovernedProvenanceIndex` is caller-populated
-rather than loaded from a committed file — this pack ships no
-provenance-index fixture, so there is nothing on disk to load (see
-`provenance.py`'s own module docstring). Gate-C integration into
-`ControlPlaneAnswerService` (Task 13) is opt-in, not opt-out like Gate-B —
-`data/documents/`'s real corpus and `ontology/registry.v1.json`'s
-synthetic ontology carry none of the governed provenance metadata Gate-C's
-`EvidenceItem` requires, the identical reason Gate-A/Gate-B are not wired
-into `api/app.py`'s real `/ask` either (see the Day 11 section above,
-"Gate-C integration is opt-in, not opt-out").
+rather than loaded from a committed file for Day 11's own pinned
+synthetic fixtures — this pack ships no provenance-index fixture for
+them, so there is nothing on disk to load there (see `provenance.py`'s
+own module docstring); the real-corpus extension below builds a real one
+instead, from `data/index/index.json`. Gate-C integration into
+`ControlPlaneAnswerService` (Task 13) against Day 11's own pinned
+synthetic fixtures remains a caller-supplied, independently-testable seam
+(`evidence/source_registry.v1.json`/`policy/gate_c_policy.v1.json` govern
+four synthetic sources, never `data/documents/`'s real corpus, and are
+never edited to widen that) — but Gate-C is now also wired live into
+`/ask/governed`'s real `rag` lane, by default, for the real corpus, via a
+second, separate, real (non-fabricated) source registry/manifest/policy
+(see "Real-corpus extension — Gate-C wired into the live `/ask/governed`
+route" in the Day 11 section above).

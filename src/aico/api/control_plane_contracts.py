@@ -9,9 +9,11 @@ result types (`GateBlocked` / `GateClarify` / `ModeBSelected` /
 `SafeFastPathAnswer`, plus Day 5's own five `AnswerResult` variants for the
 `rag` lane) and from `aico.control.models`' decision types (`GateADecision`
 / `LaneDecision`). `governed_ask_response_from_result` below is the one
-place that maps *all nine* possible pipeline outcomes onto this one public
-shape - never a raw dataclass, an internal reason string invented here, or
-provider content passed straight through.
+place that maps *all twelve* possible pipeline outcomes (the original nine
+plus Day 11 Task 13's `GateCRejected`/`GateCInsufficientEvidence`/
+`GateCClarify`) onto this one public shape - never a raw dataclass, an
+internal reason string invented here, or provider content passed straight
+through.
 
 `GovernedAskResponse` extends `AskResponse`'s own field set (Task 9's
 answer-flow order is a strict superset of `/ask`'s: Gate-A/lane selection
@@ -47,7 +49,10 @@ from aico.rag.control_plane_answer_service import (
     GateBAuthorizationClarify,
     GateBDenied,
     GateBlocked,
+    GateCClarify,
+    GateCInsufficientEvidence,
     GateClarify,
+    GateCRejected,
     ModeBSelected,
     SafeFastPathAnswer,
 )
@@ -108,7 +113,12 @@ class GovernedAskStatus(str, Enum):
     `config/control-plane.yaml`'s `gate_b.enabled` is `true` for every
     deployment unless explicitly opted out (see `dependencies.py`'s
     `get_control_plane_answer_service`), so this mapper handles them
-    completely either way."""
+    completely either way. The three Day-11-only values (`gate_c_rejected`,
+    `gate_c_insufficient_evidence`, `gate_c_clarify`) name Gate-C's own
+    three non-allow outcomes (Day 11 Task 9/13) - reachable the identical
+    way, via `config/control-plane.yaml`'s `gate_c.enabled` (`true` by
+    default whenever `gate_b.enabled` is also `true`; see
+    `GateCActivationConfig`'s own docstring)."""
 
     ANSWERED = "answered"
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -119,6 +129,9 @@ class GovernedAskStatus(str, Enum):
     SAFE_FAST_PATH = "safe_fast_path"
     GATE_B_DENIED = "gate_b_denied"
     GATE_B_CLARIFY = "gate_b_clarify"
+    GATE_C_REJECTED = "gate_c_rejected"
+    GATE_C_INSUFFICIENT_EVIDENCE = "gate_c_insufficient_evidence"
+    GATE_C_CLARIFY = "gate_c_clarify"
 
 
 class GovernedCitationOut(BaseModel):
@@ -189,6 +202,19 @@ class GovernedAskResponse(BaseModel):
     )
     rule_id: str | None = Field(
         default=None, description="Matched PermissionRule.rule_id, when Gate-B matched one at all."
+    )
+
+    # ── Day 11 Task 9/13 governed-evidence-quality fields ───────────────
+    source_registry_version: str | None = Field(
+        default=None,
+        description=(
+            "The governed source registry version Gate-C's decision was made against, when Gate-C ran "
+            "(status=gate_c_rejected, gate_c_insufficient_evidence or gate_c_clarify)."
+        ),
+    )
+    missing_facets: list[str] = Field(
+        default_factory=list,
+        description="Governed facets Gate-C's own evidence-quality rule required but validated evidence did not cover, when status=gate_c_insufficient_evidence.",
     )
 
 
@@ -332,6 +358,39 @@ def governed_ask_response_from_result(
             reason_code=result.reason_code,
             policy_version=result.policy_version,
             rule_id=result.rule_id,
+        )
+
+    # ── Day 11 Task 9/13: Gate-C's own three non-allow outcomes ─────────
+    # Reached only after Gate-B already granted `allow` and retrieval ran
+    # (Task 11's no-fall-through guarantee: the Model Gateway was never
+    # called for any of these three) -- carries only Gate-C's own
+    # sanitized decision provenance, never raw evidence content.
+    if isinstance(result, GateCRejected):
+        return GovernedAskResponse(
+            **common,
+            status=GovernedAskStatus.GATE_C_REJECTED,
+            reason_code=",".join(result.reason_codes),
+            policy_version=result.policy_version,
+            source_registry_version=result.source_registry_version,
+        )
+
+    if isinstance(result, GateCInsufficientEvidence):
+        return GovernedAskResponse(
+            **common,
+            status=GovernedAskStatus.GATE_C_INSUFFICIENT_EVIDENCE,
+            reason_code=",".join(result.reason_codes),
+            policy_version=result.policy_version,
+            source_registry_version=result.source_registry_version,
+            missing_facets=list(result.missing_facets),
+        )
+
+    if isinstance(result, GateCClarify):
+        return GovernedAskResponse(
+            **common,
+            status=GovernedAskStatus.GATE_C_CLARIFY,
+            reason_code=",".join(result.reason_codes),
+            policy_version=result.policy_version,
+            source_registry_version=result.source_registry_version,
         )
 
     raise TypeError(f"unhandled ControlPlaneAnswerResult variant: {type(result).__name__}")  # pragma: no cover - exhaustive

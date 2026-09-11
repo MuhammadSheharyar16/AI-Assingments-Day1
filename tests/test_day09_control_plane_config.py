@@ -304,6 +304,7 @@ def test_control_plane_answer_service_honors_config_lane_restriction(real_regist
         clarification=config.clarification,
         model_assisted_interpretation=config.model_assisted_interpretation,
         gate_b=config.gate_b,
+        gate_c=config.gate_c,
     )
     rag_service = GroundedAnswerService(gateway=_NeverCalledGateway(), retriever=_never_called_retriever)
     service = ControlPlaneAnswerService(registry=real_registry, rag_service=rag_service, control_plane_config=narrowed)

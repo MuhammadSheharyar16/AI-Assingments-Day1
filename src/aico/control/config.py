@@ -104,6 +104,32 @@ class GateBActivationConfig:
 
 
 @dataclass(frozen=True)
+class GateCActivationConfig:
+    """Day 11 Task 13 (real-corpus extension) -- whether the live
+    `/ask/governed` route activates Gate-C for the real `data/documents/`
+    corpus (`aico.rag.real_corpus_evidence_adapter.RealCorpusEvidenceAdapter`),
+    on top of an already-active Gate-B. Deliberately OPTIONAL at the
+    section level (unlike `gate_b`, which is a hard-required section) --
+    `gate_c` absent from a config file defaults to `enabled=False`
+    (`source_registry_path`/`gate_c_policy_path` then unused), so every
+    control-plane config written before this section existed keeps
+    behaving exactly as it did (no Gate-C span, no `GateCRejected`/
+    `GateCInsufficientEvidence`/`GateCClarify` outcome). The committed
+    `config/control-plane.yaml` sets `enabled: true` -- once real,
+    non-fabricated governed data exists for the real corpus (see
+    `real_corpus_evidence_adapter.py`'s own module docstring), leaving it
+    off by default would be the same "ships ungoverned until an operator
+    remembers to flip a flag" failure mode Day 10 already closed for
+    Gate-B. `get_control_plane_answer_service` additionally only wires
+    Gate-C in when `gate_b.enabled` is also true (Gate-C's first required
+    input is a real `GateBDecision`; see `GateCIntegrationError`)."""
+
+    enabled: bool
+    source_registry_path: Path
+    gate_c_policy_path: Path
+
+
+@dataclass(frozen=True)
 class ControlPlaneConfig:
     """The fully validated, typed contents of `config/control-plane.yaml`."""
 
@@ -113,6 +139,7 @@ class ControlPlaneConfig:
     clarification: ClarificationPolicy
     model_assisted_interpretation: ModelAssistedInterpretationConfig
     gate_b: GateBActivationConfig
+    gate_c: GateCActivationConfig
 
 
 def _build_config(raw: dict, *, source: Path) -> ControlPlaneConfig:
@@ -167,6 +194,28 @@ def _build_config(raw: dict, *, source: Path) -> ControlPlaneConfig:
         policy_path=Path(str(_require(gate_b_raw, "policy_path", "gate_b"))),
     )
 
+    # `gate_c` -- optional section (see `GateCActivationConfig`'s own
+    # docstring for why, unlike `gate_b`, this one is not hard-required).
+    # Absent -> disabled, with placeholder paths that are never read
+    # (`get_control_plane_answer_service` only resolves them when
+    # `enabled` is true) -- the same "always validated, read only when
+    # actually turned on" rule `model_assisted_interpretation` applies to
+    # its own sub-fields above, one level up (the whole section, not just
+    # a field within it, may be absent here).
+    gate_c_raw = raw.get("gate_c")
+    if isinstance(gate_c_raw, dict):
+        gate_c = GateCActivationConfig(
+            enabled=_require_bool(gate_c_raw, "enabled", "gate_c"),
+            source_registry_path=Path(str(_require(gate_c_raw, "source_registry_path", "gate_c"))),
+            gate_c_policy_path=Path(str(_require(gate_c_raw, "gate_c_policy_path", "gate_c"))),
+        )
+    else:
+        gate_c = GateCActivationConfig(
+            enabled=False,
+            source_registry_path=Path("evidence/real_corpus_source_registry.v1.json"),
+            gate_c_policy_path=Path("policy/real_corpus_gate_c_policy.v1.json"),
+        )
+
     return ControlPlaneConfig(
         version=version,
         registry_path=registry_path,
@@ -174,6 +223,7 @@ def _build_config(raw: dict, *, source: Path) -> ControlPlaneConfig:
         clarification=clarification,
         model_assisted_interpretation=model_assisted_interpretation,
         gate_b=gate_b,
+        gate_c=gate_c,
     )
 
 

@@ -88,3 +88,39 @@ gate_b:
   # to the process working directory, same convention as
   # `ontology.registry_path` above.
   policy_path: policy/gate_b_policy.v1.json
+
+gate_c:
+  # Day 11 Task 13 (real-corpus extension) -- deployment-level toggle for
+  # whether the live `/ask/governed` route also activates Gate-C
+  # (evidence trust/provenance/freshness/completeness), on top of an
+  # already-active Gate-B, for the real `data/documents/` corpus.
+  #
+  # `true` here: once real, non-fabricated governed data exists for the
+  # real corpus (`evidence/real_corpus_source_registry.v1.json`/
+  # `evidence/real_corpus_manifest.v1.json`/`policy/real_corpus_gate_c_
+  # policy.v1.json`, each derived from the documents' own front-matter and
+  # real commit history -- see `aico.rag.real_corpus_evidence_adapter`'s
+  # own module docstring), shipping with Gate-C off by default would be
+  # the same fail-open shape Day 10 already closed for Gate-B. This
+  # section is optional at the schema level (`GateCActivationConfig`) --
+  # a config file that omits it entirely defaults to disabled, so nothing
+  # written before this section existed changes behavior.
+  #
+  # This is a genuinely coarser trust boundary than Day 11's own pinned
+  # synthetic fixtures exercise: the real corpus is internal governance
+  # *policy* text (rules), not per-supplier *records* (facts about one
+  # specific supplier), so there is no per-facet claimed value for
+  # conflict detection (Task 8) to meaningfully reconcile here -- every
+  # real request's conflict check is honestly `NO_CONFLICT`, not a gap
+  # this wiring papers over. Source trust, provenance (content-hash/
+  # source-version), freshness and minimum-evidence completeness are all
+  # still genuinely enforced.
+  enabled: true
+  # Paths to the committed, read-only real-corpus source registry/Gate-C
+  # policy (regenerate via `scripts/day11_generate_real_corpus_registry.py`
+  # if `data/documents/` changes) -- deliberately separate files from the
+  # pinned Day 11 pack fixtures (`evidence/source_registry.v1.json`/
+  # `policy/gate_c_policy.v1.json`), which stay exactly as the graded pack
+  # shipped them.
+  source_registry_path: evidence/real_corpus_source_registry.v1.json
+  gate_c_policy_path: policy/real_corpus_gate_c_policy.v1.json

@@ -1,0 +1,25 @@
+{
+  "policy_version": "1.0",
+  "status": "active",
+  "freshness_policies": [
+    {
+      "policy_id": "FRESH-POLICY-DOCS-365D",
+      "max_age_hours": 8760
+    }
+  ],
+  "intent_requirements": [
+    {
+      "rule_id": "RC-R001",
+      "intent_id": "INT-POLICY-QUESTION",
+      "request_kind": "policy_lookup",
+      "required_facets": [
+        "supplier_governance_policy"
+      ],
+      "minimum_valid_items": 1,
+      "allowed_source_types": [
+        "internal_policy_document"
+      ],
+      "conflict_policy": "authority_then_reject_tie"
+    }
+  ]
+}
