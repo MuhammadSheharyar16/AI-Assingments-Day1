@@ -1324,7 +1324,7 @@ before the Model Gateway: Gate-A/lane selection decide what a request
 *means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
 decides whether the *evidence retrieval actually returned* may be trusted
 enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
-"Retrieval success is not evidence validity"). Only Tasks 1–6 are
+"Retrieval success is not evidence validity"). Only Tasks 1–7 are
 implemented so far — the sections below will grow as later tasks land.
 
 - `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
@@ -1545,18 +1545,41 @@ implemented so far — the sections below will grow as later tasks land.
   unresolved-freshness-policy branch (unreachable through the real,
   cross-validated committed data, so built by hand).
 
+- `src/aico/evidence/completeness.py` (Task 7) — `validate_completeness()`:
+  checks `EvidencePackage.required_facets` coverage (Task 1's own
+  reserved field) against only the items named in a caller-supplied
+  `valid_evidence_ids` set — Gate-C's (Task 9) intersection of Task 4/5/6's
+  `validated_evidence_ids` — never a raw item count ("Completeness is not:
+  'we retrieved 5 chunks'"). Coverage is a `set` union so duplicate
+  facet claims never manufacture a second "covered" credit, and even a
+  valid item's claimed facet is only credited when the item's own
+  governed source (Task 2) actually supports it
+  (`source_registry.supports_facet()`) — "unsupported facet claim cannot
+  be manufactured by the model." Returns one `CompletenessResult`
+  (`status` / `required_facets` / `covered_facets` / `missing_facets`),
+  never calls the Model Gateway.
+- `tests/test_day11_completeness.py` (Task 16's named file) — proves every
+  Required Behavior bullet in isolation against the real committed
+  `SourceRegistry`, then all four real `completeness_cases.json` cases
+  (COMP-001..004) adapted directly — every fixture item built against
+  `SRC-POLICY-A`, the one real governed source whose own `supported_facets`
+  happens to cover every facet those particular fixtures use, so no
+  fixture claim is itself "unsupported" and each case proves exactly what
+  it names (including COMP-004's per-item `valid` flag mapping straight
+  onto `valid_evidence_ids`).
+
 ```
 uv run pytest -q
 uv run ruff check .
 uv run python -m aico.evals.day07
 ```
 
-190 new tests (`tests/test_day11_evidence_envelope.py`,
+206 new tests (`tests/test_day11_evidence_envelope.py`,
 `tests/test_day11_source_registry.py`, `tests/test_day11_gate_c_policy.py`,
-`tests/test_day11_provenance.py`, `tests/test_day11_freshness.py`), 1675
-passing overall (up from 1485 after Day 10) — the Day 7 regression gate is
-unmodified and still passes (`GATE: PASS`, `evals/baseline_v1.json`
-untouched).
+`tests/test_day11_provenance.py`, `tests/test_day11_freshness.py`,
+`tests/test_day11_completeness.py`), 1691 passing overall (up from 1485
+after Day 10) — the Day 7 regression gate is unmodified and still passes
+(`GATE: PASS`, `evals/baseline_v1.json` untouched).
 
 **Environment note:** this repository's `.venv` was originally copied
 forward from the Day 10 project directory rather than created fresh here.

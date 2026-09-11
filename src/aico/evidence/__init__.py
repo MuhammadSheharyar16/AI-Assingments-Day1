@@ -58,11 +58,19 @@ evaluates it against `EvidencePackage.as_of` -- the injectable reference
 time Task 1 already reserved for exactly this. Its typed result is
 `FreshnessReport`/`FreshnessItemResult`/`FreshnessFailureReason`.
 
-Later Day 11 tasks add completeness (Task 7) and conflict detection
-(Task 8), all built on the envelope, source registry, policy, provenance/
-integrity and freshness defined so far.
+Task 7 adds `validate_completeness()` (`completeness.py`): checks
+`EvidencePackage.required_facets` coverage against only the items named in
+a caller-supplied `valid_evidence_ids` set (Task 4/5/6's intersection) --
+never a raw item count, never a facet claim unless the claiming item's own
+governed source (Task 2) actually supports it. Its typed result is
+`CompletenessResult`/`CompletenessStatus`.
+
+Later Day 11 tasks add conflict detection (Task 8), built on the envelope,
+source registry, policy, provenance/integrity, freshness and completeness
+defined so far.
 """
 
+from aico.evidence.completeness import CompletenessResult, CompletenessStatus, validate_completeness
 from aico.evidence.errors import (
     EvidenceEnvelopeError,
     EvidenceError,
@@ -148,4 +156,7 @@ __all__ = [
     "FreshnessItemResult",
     "FreshnessReport",
     "validate_freshness",
+    "CompletenessStatus",
+    "CompletenessResult",
+    "validate_completeness",
 ]
