@@ -1324,12 +1324,12 @@ before the Model Gateway: Gate-A/lane selection decide what a request
 *means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
 decides whether the *evidence retrieval actually returned* may be trusted
 enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
-"Retrieval success is not evidence validity"). Tasks 1–14 are implemented
+"Retrieval success is not evidence validity"). Tasks 1–15 are implemented
 — the full evidence-quality boundary, Gate-C's own decision contract,
 filtering behavior, the no-generation-fall-through proof, Gate-B scope
-preservation, RAG-flow integration, and decision-provenance observability
-— and the sections below will grow as the remaining artifact/test tasks
-land.
+preservation, RAG-flow integration, decision-provenance observability, and
+the required artifacts — and the sections below will grow as the
+remaining test-suite task lands.
 
 - `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
   supplied `day11_pack/` (same convention as `data/day09_pack/` /
@@ -1821,10 +1821,46 @@ and conflicts are all built and independently tested.
   own span; and that no span attribute anywhere ever contains raw evidence
   content or a claimed value.
 
+- `scripts/day11_generate_gate_c_artifacts.py` (Task 15) — generates the
+  three required artifacts from real system behavior, not hand-written
+  prose, the identical discipline `scripts/day09_generate_control_plane_
+  artifacts.py`/`scripts/day10_generate_gate_b_artifacts.py` already
+  established: real `GateC.evaluate()`/`validate_provenance()`/
+  `evaluate_freshness()`/`validate_completeness()`/`evaluate_conflict()`
+  calls against the real committed source registry and Gate-C policy,
+  plus a real, instrumented `CountingGateway` fake (Task 11's own
+  discipline) to show actual Model Gateway call counts. Every evidence
+  item is synthetic demo data the script constructs directly (mirroring
+  `gate_c_cases.json`'s/`conflict_cases.json`'s own shapes, reproduced
+  inline rather than re-read from `data/day11_pack/` at generation time —
+  the same "no dependency on the pack still existing verbatim" discipline
+  Day 10's script already documents); no evidence `content`/`claims`
+  value is ever written to any of the three files, only governed ids,
+  counts, and Gate-C's own typed decision/reason fields.
+  - `artifacts/day11/gate_c_decisions.md` — fully valid evidence (allow,
+    1 Model Gateway call), unknown source, broken provenance (content-
+    hash mismatch), stale evidence, incomplete evidence, and unresolved
+    conflict (all reject/insufficient_evidence, 0 calls each), each a
+    real `GateC.evaluate()` result with its actual Model Gateway call
+    count shown.
+  - `artifacts/day11/provenance_report.md` — the real source registry
+    version, plus valid / content-hash-mismatch / source-version-
+    mismatch / Gate-B-scope-mismatch cases, each a real
+    `validate_provenance()` result.
+  - `artifacts/day11/freshness_completeness_report.md` — the real
+    governed freshness thresholds; the real `gate_c_cases.json`
+    `freshness_cases` values (fresh / exactly-at-threshold / stale) fed
+    through `evaluate_freshness()`; a required/covered/missing-facet
+    completeness case; the real `conflict_cases.json` unresolved and
+    governed-authority-resolved cases; and one combined scenario's final
+    `GateC.evaluate()` decision tying freshness + completeness +
+    conflicts together into a real `allow`.
+
 ```
 uv run pytest -q
 uv run ruff check .
 uv run python -m aico.evals.day07
+uv run python scripts/day11_generate_gate_c_artifacts.py
 ```
 
 309 new tests (`tests/test_day11_evidence_envelope.py`,
