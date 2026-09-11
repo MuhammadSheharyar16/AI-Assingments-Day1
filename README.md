@@ -1324,7 +1324,7 @@ before the Model Gateway: Gate-A/lane selection decide what a request
 *means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
 decides whether the *evidence retrieval actually returned* may be trusted
 enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
-"Retrieval success is not evidence validity"). Only Tasks 1–3 are
+"Retrieval success is not evidence validity"). Only Tasks 1–4 are
 implemented so far — the sections below will grow as later tasks land.
 
 - `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
@@ -1448,17 +1448,52 @@ implemented so far — the sections below will grow as later tasks land.
   `GateCPolicyLookupError`, and `find_rule` exercised against the real
   committed policy's actual data).
 
+- `src/aico/evidence/provenance.py` (Task 4) — `validate_provenance()`:
+  checks the *actual returned evidence* only (never the corpus, per the
+  Day 11 critical rule) against Task 2's `SourceRegistry` and a real Day
+  10 `GateBDecision`, for Task 4's five "At minimum prove" bullets.
+  `stable_content_hash()` (full SHA-256 hex digest, identical scheme to
+  `retrieval/chunker.py`'s own `_content_hash()`) recomputes each item's
+  content hash and compares it to what the item itself carries — catching
+  "content changed but old hash retained" directly. Tenant/data-
+  classification scope is checked against `gate_b_decision.
+  effective_tenant_scope`/`effective_data_classes` — a non-`ALLOW`
+  decision's empty scopes fail every item automatically, fail closed by
+  construction. `SourceRecord` (Task 2) deliberately carries no single
+  "current version", so "source_version matches the governed/returned
+  source version" is enforced as a *package-level* cross-item check
+  instead (two items claiming the same `source_id` must agree on
+  `source_version`) — "stable identity" gets the same treatment one field
+  over (two items sharing a `chunk_id` must agree on `source_id`/
+  `content_hash`); both design decisions are explained in the module's
+  own "Source version"/"Stable identity" docstring sections. Returns one
+  `ProvenanceReport` (`validated_evidence_ids` / `rejected_evidence_ids` /
+  per-item `ProvenanceItemResult` with every `ProvenanceFailureReason` a
+  rejected item triggered, not just the first) — Gate-C (Task 9) is
+  expected to consume this rather than re-running the checks itself.
+- `tests/test_day11_provenance.py` (Task 16's named file) — proves each
+  Task 4 bullet in isolation (unit-level: unknown source, a disabled-but-
+  known source is explicitly *not* provenance's own concern, matching/
+  stale content hash, tenant/classification scope incl. a non-`ALLOW`
+  decision, agreeing/conflicting source versions across items, agreeing/
+  conflicting stable identity across items) and against four real
+  `gate_c_cases.json` cases (GC-001/002/004/005) adapted through the
+  fixture's own documented hash-representation allowance — computing the
+  real `stable_content_hash()` for cases expected to pass integrity, and
+  using the fixture's synthetic placeholder hash directly (which reliably
+  will not match a real digest) for the one expected to fail on it.
+
 ```
 uv run pytest -q
 uv run ruff check .
 uv run python -m aico.evals.day07
 ```
 
-128 new tests (`tests/test_day11_evidence_envelope.py`,
-`tests/test_day11_source_registry.py`, `tests/test_day11_gate_c_policy.py`),
-1613 passing overall (up from 1485 after Day 10) — the Day 7 regression
-gate is unmodified and still passes (`GATE: PASS`,
-`evals/baseline_v1.json` untouched).
+152 new tests (`tests/test_day11_evidence_envelope.py`,
+`tests/test_day11_source_registry.py`, `tests/test_day11_gate_c_policy.py`,
+`tests/test_day11_provenance.py`), 1637 passing overall (up from 1485
+after Day 10) — the Day 7 regression gate is unmodified and still passes
+(`GATE: PASS`, `evals/baseline_v1.json` untouched).
 
 **Environment note:** this repository's `.venv` was originally copied
 forward from the Day 10 project directory rather than created fresh here.

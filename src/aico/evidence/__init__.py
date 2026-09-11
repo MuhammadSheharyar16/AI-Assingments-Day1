@@ -29,9 +29,19 @@ the committed `policy/gate_c_policy.v1.json` through
 `OntologyRegistry` and Task 2's `SourceRegistry` -- plus its typed
 failures (`GateCPolicyLoadError`/`GateCPolicyLookupError`, `errors.py`).
 
-Later Day 11 tasks add provenance (Task 4), integrity (Task 5), freshness
-(Task 6), completeness (Task 7) and conflict detection (Task 8), all built
-on the envelope, source registry and policy defined so far.
+Task 4 adds `validate_provenance()` (`provenance.py`): checks the actual
+returned evidence -- never the corpus -- against `SourceRegistry` (Task 2)
+and a real Day 10 `GateBDecision` for the five governed provenance
+bullets: source existence, content-hash self-consistency
+(`stable_content_hash()`), Gate-B tenant/data-classification scope, and
+two package-level cross-item consistency checks (same `source_id` must
+agree on `source_version`; same `chunk_id` must agree on identity). Its
+typed result is `ProvenanceReport`/`ProvenanceItemResult`/
+`ProvenanceFailureReason`.
+
+Later Day 11 tasks add integrity (Task 5), freshness (Task 6),
+completeness (Task 7) and conflict detection (Task 8), all built on the
+envelope, source registry, policy and provenance defined so far.
 """
 
 from aico.evidence.errors import (
@@ -50,6 +60,13 @@ from aico.evidence.policy import (
     GateCPolicyDocument,
     GateCPolicyRegistry,
     IntentEvidenceRequirement,
+)
+from aico.evidence.provenance import (
+    ProvenanceFailureReason,
+    ProvenanceItemResult,
+    ProvenanceReport,
+    stable_content_hash,
+    validate_provenance,
 )
 from aico.evidence.source_registry import (
     DEFAULT_SOURCE_REGISTRY_PATH,
@@ -81,4 +98,9 @@ __all__ = [
     "DEFAULT_GATE_C_POLICY_PATH",
     "GateCPolicyLoadError",
     "GateCPolicyLookupError",
+    "stable_content_hash",
+    "ProvenanceFailureReason",
+    "ProvenanceItemResult",
+    "ProvenanceReport",
+    "validate_provenance",
 ]
