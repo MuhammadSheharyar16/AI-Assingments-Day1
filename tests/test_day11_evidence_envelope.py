@@ -223,3 +223,29 @@ def test_parse_errors_never_leak_raw_pydantic_validation_error():
         assert exc.field_path == "source_id"
     else:
         pytest.fail("expected EvidenceEnvelopeError")
+
+
+# --- claims (added for Task 8's conflict detection) ------------------------
+
+
+def test_claims_defaults_to_empty_dict():
+    item = parse_evidence_item(_valid_item_data())
+    assert item.claims == {}
+
+
+def test_claims_accepts_per_facet_values():
+    data = {**_valid_item_data(), "claims": {"supplier_identity": "Synthetic Supplier Alpha", "payment_terms": "net 30"}}
+    item = parse_evidence_item(data)
+    assert item.claims == {"supplier_identity": "Synthetic Supplier Alpha", "payment_terms": "net 30"}
+
+
+def test_blank_claim_value_rejected():
+    data = {**_valid_item_data(), "claims": {"payment_terms": "   "}}
+    with pytest.raises(EvidenceEnvelopeError):
+        parse_evidence_item(data)
+
+
+def test_blank_claim_key_rejected():
+    data = {**_valid_item_data(), "claims": {"": "net 30"}}
+    with pytest.raises(EvidenceEnvelopeError):
+        parse_evidence_item(data)

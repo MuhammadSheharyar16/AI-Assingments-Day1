@@ -1324,8 +1324,12 @@ before the Model Gateway: Gate-A/lane selection decide what a request
 *means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
 decides whether the *evidence retrieval actually returned* may be trusted
 enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
-"Retrieval success is not evidence validity"). Only Tasks 1–7 are
-implemented so far — the sections below will grow as later tasks land.
+"Retrieval success is not evidence validity"). Tasks 1–8 (the full
+evidence-quality boundary: envelope, source registry, Gate-C policy,
+provenance, integrity, freshness, completeness and conflicts) are
+implemented — only Gate-C's own decision boundary (Task 9,
+`src/aico/control/gate_c.py`) and the remaining integration tasks are
+left, and the sections below will grow as they land.
 
 - `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
   supplied `day11_pack/` (same convention as `data/day09_pack/` /
@@ -1568,18 +1572,64 @@ implemented so far — the sections below will grow as later tasks land.
   it names (including COMP-004's per-item `valid` flag mapping straight
   onto `valid_evidence_ids`).
 
+- `src/aico/evidence/models.py` extended (Task 8) — `EvidenceItem` gains
+  `claims: dict[str, str]` (default `{}`), the per-facet claimed *values*
+  an item asserts — deliberately left out of Task 1's own minimum field
+  list (only `evidence_facets`, facet *names*, existed until now) since
+  conflict detection is the first thing that actually needs values to
+  compare across items. Additive and backward compatible: every Task 1–7
+  fixture/test predates this field and none of them ever needed to set
+  it.
+- `src/aico/evidence/conflicts.py` (Task 8) — two layers again: `evaluate_
+  conflict()`, a pure core matching `conflict_cases.json`'s own shape
+  exactly (one facet, its claims — `evidence_id`/`authority`/`value` — and
+  the governed `ConflictPolicy`, in; one `ConflictResolution` out — a
+  single distinct value is `NO_CONFLICT` however many items assert it; a
+  tie at the highest authority is `UNRESOLVED_CONFLICT`; a clear highest
+  authority is `RESOLVED_BY_GOVERNED_AUTHORITY`; a `policy` value this
+  function does not explicitly recognize never falls back to resolving by
+  authority anyway); and `validate_conflicts()`, the package-level entry
+  point that groups every *valid* item's `claims` by facet and resolves
+  each claiming item's authority from the real `SourceRegistry` (Task 2)
+  — never from the item itself, which cannot assert its own
+  trustworthiness. Returns one `ConflictReport`
+  (`resolutions`/`unresolved_facets`/`has_unresolved_conflict`) — read by
+  Gate-C (Task 9) before ever reaching the Model Gateway; "the model must
+  not be asked to 'pick whichever source looks better'" is proven
+  structurally, neither function's signature has anywhere a model call
+  could be threaded through.
+- `tests/test_day11_conflicts.py` (Task 16's named file) — proves every
+  Required Behavior bullet on `evaluate_conflict()` (including the
+  "policy must explicitly govern resolution" case, and all three real
+  `conflict_cases.json` cases fed straight through unmodified), then
+  `validate_conflicts()` against the real committed `SourceRegistry` —
+  including the identical-source "tied at the top" scenario (two items
+  from the same real source necessarily share its authority, since no two
+  distinct sources in the committed registry share an `authority_level`),
+  multi-facet independent aggregation, and the `valid_evidence_ids`
+  exclusion changing a real conflict into `NO_CONFLICT`.
+  `tests/test_day11_evidence_envelope.py` also gains four small tests for
+  the new `claims` field itself.
+
+This completes the Day 11 evidence-quality boundary — envelope, source
+registry, Gate-C policy, provenance, integrity, freshness, completeness
+and conflicts are all built and independently tested; only Gate-C's own
+decision boundary (Task 9) remains to compose them into `allow`/
+`insufficient_evidence`/`clarify`/`reject`.
+
 ```
 uv run pytest -q
 uv run ruff check .
 uv run python -m aico.evals.day07
 ```
 
-206 new tests (`tests/test_day11_evidence_envelope.py`,
+234 new tests (`tests/test_day11_evidence_envelope.py`,
 `tests/test_day11_source_registry.py`, `tests/test_day11_gate_c_policy.py`,
 `tests/test_day11_provenance.py`, `tests/test_day11_freshness.py`,
-`tests/test_day11_completeness.py`), 1691 passing overall (up from 1485
-after Day 10) — the Day 7 regression gate is unmodified and still passes
-(`GATE: PASS`, `evals/baseline_v1.json` untouched).
+`tests/test_day11_completeness.py`, `tests/test_day11_conflicts.py`), 1719
+passing overall (up from 1485 after Day 10) — the Day 7 regression gate is
+unmodified and still passes (`GATE: PASS`, `evals/baseline_v1.json`
+untouched).
 
 **Environment note:** this repository's `.venv` was originally copied
 forward from the Day 10 project directory rather than created fresh here.

@@ -65,12 +65,30 @@ never a raw item count, never a facet claim unless the claiming item's own
 governed source (Task 2) actually supports it. Its typed result is
 `CompletenessResult`/`CompletenessStatus`.
 
-Later Day 11 tasks add conflict detection (Task 8), built on the envelope,
-source registry, policy, provenance/integrity, freshness and completeness
-defined so far.
+Task 8 adds `validate_conflicts()`/`evaluate_conflict()` (`conflicts.py`):
+groups every valid item's `EvidenceItem.claims` (a field added to Task 1's
+envelope for this task) by governed facet, resolves each claiming item's
+authority from `SourceRegistry` (Task 2, never self-asserted by the
+item), and resolves each facet's claims under the governed `ConflictPolicy`
+(Task 3) -- a tie at the top authority stays unresolved, never silently
+picked. Its typed result is `ConflictReport`/`ConflictResolution`/
+`ConflictOutcome`.
+
+This completes the Day 11 evidence-quality boundary: envelope, source
+registry, Gate-C policy, provenance, integrity, freshness, completeness
+and conflicts are all defined; only Gate-C's own decision boundary
+(Task 9, `src/aico/control/gate_c.py`) remains to compose them.
 """
 
 from aico.evidence.completeness import CompletenessResult, CompletenessStatus, validate_completeness
+from aico.evidence.conflicts import (
+    ConflictClaim,
+    ConflictOutcome,
+    ConflictReport,
+    ConflictResolution,
+    evaluate_conflict,
+    validate_conflicts,
+)
 from aico.evidence.errors import (
     EvidenceEnvelopeError,
     EvidenceError,
@@ -159,4 +177,10 @@ __all__ = [
     "CompletenessStatus",
     "CompletenessResult",
     "validate_completeness",
+    "ConflictClaim",
+    "ConflictOutcome",
+    "ConflictResolution",
+    "ConflictReport",
+    "evaluate_conflict",
+    "validate_conflicts",
 ]

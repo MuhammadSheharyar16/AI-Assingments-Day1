@@ -17,11 +17,12 @@ Two models:
   this request, carrying the minimum field list Task 1 names
   (`evidence_id` / `chunk_id` / `source_id` / `source_version` /
   `source_updated_at` / `retrieved_at` / `content_hash` / `tenant_id` /
-  `data_classification` / `evidence_facets` / `content`). `chunk_id` is
-  this envelope's stable provenance identifier -- Task 1's "missing
-  provenance identifier" reject case is a missing/blank `chunk_id`,
-  distinct from `content_hash` (integrity, Task 5) and `source_id`/
-  `source_version` (registry identity, Task 2/4).
+  `data_classification` / `evidence_facets` / `content`), plus `claims`
+  (added for Task 8, not part of Task 1's own minimum list -- see below).
+  `chunk_id` is this envelope's stable provenance identifier -- Task 1's
+  "missing provenance identifier" reject case is a missing/blank
+  `chunk_id`, distinct from `content_hash` (integrity, Task 5) and
+  `source_id`/`source_version` (registry identity, Task 2/4).
 - `EvidencePackage` -- the package-level request context Task 1 also
   requires (`request_id` / `intent_id` / `lane` / `as_of` /
   `required_facets` / `items`): what was asked, against which governed
@@ -58,7 +59,24 @@ matches the returned `content` (Task 5), whether the item is fresh enough
 item (Task 8) are all later, separate boundaries -- deliberately not
 duplicated here, the same shape/semantic split `contracts/models.py`
 already draws for Day 4's typed output contract.
-"""
+
+## `claims` (Task 8)
+
+`gate_c_cases.json`'s own items carry a `claims` field (e.g. GC-001:
+`{"supplier_identity": "Synthetic Supplier Alpha", "payment_terms": "net
+30"}`) that Task 1 deliberately left out of the minimum field list --
+conflict detection (Task 8) is the first thing that actually needs
+per-facet *values* to compare across items, not merely which facets an
+item covers (`evidence_facets`, already present since Task 1). Added here,
+not as a separate Task 8 type, because it is a property of the returned
+item itself (what it asserts), the same way `evidence_facets` is -- kept
+optional (`default_factory=dict`) since not every item carries structured
+per-facet claims (a prose-only item may cover a facet through its
+`content` without asserting a single extractable value for it), and
+additive: every Task 1-7 committed fixture/test predates this field and
+none of them ever needed to set it, so its absence (an empty dict) is a
+fully backward-compatible default, not a behavior change to anything
+already built."""
 from __future__ import annotations
 
 from pydantic import (
@@ -124,6 +142,11 @@ class EvidenceItem(BaseModel):
         default_factory=tuple, description="Governed facets this item's content actually covers (Task 7)."
     )
     content: str = Field(min_length=1, description="The evidence text itself.")
+    claims: dict[str, str] = Field(
+        default_factory=dict,
+        description="Per-facet claimed values this item asserts, keyed by governed facet (Task 8's conflict-"
+        "detection input). Empty for an item with no structured claims beyond its raw content.",
+    )
 
     @field_validator("evidence_id", "chunk_id", "source_id", "source_version", "content_hash", "tenant_id")
     @classmethod
@@ -134,6 +157,16 @@ class EvidenceItem(BaseModel):
     @classmethod
     def _validate_evidence_facets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         return _no_blank_entries(value, field_name="evidence_facets")
+
+    @field_validator("claims")
+    @classmethod
+    def _validate_claims(cls, value: dict[str, str]) -> dict[str, str]:
+        for facet, claimed_value in value.items():
+            if not facet.strip():
+                raise ValueError("claims keys must be non-empty")
+            if not claimed_value.strip():
+                raise ValueError("claims values must be non-empty")
+        return value
 
 
 class EvidencePackage(BaseModel):
