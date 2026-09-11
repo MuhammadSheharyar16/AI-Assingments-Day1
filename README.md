@@ -1317,6 +1317,91 @@ the real committed policy — including the cross-tenant/zero-protected-call
 proof and a deterministic redaction example, no raw PII value anywhere in
 the output.
 
+## Day 11 — Gate-C Evidence Trust, Provenance, Freshness & Completeness (in progress)
+
+Adds the evidence-quality boundary that sits after Gate-B/retrieval and
+before the Model Gateway: Gate-A/lane selection decide what a request
+*means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
+decides whether the *evidence retrieval actually returned* may be trusted
+enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
+"Retrieval success is not evidence validity"). Only Task 1 is implemented
+so far — the sections below will grow as later tasks land.
+
+- `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
+  supplied `day11_pack/` (same convention as `data/day09_pack/` /
+  `data/day10_pack/`): `evidence_policy_requirements.md`,
+  `provenance_freshness_rules.md`, and `fixtures/` (`source_registry_v1.json`,
+  `evidence_policy_v1.json`, `gate_c_cases.json`, `conflict_cases.json`,
+  `completeness_cases.json`) — fixed synthetic inputs later Day 11 tasks
+  build the governed source registry (Task 2), Gate-C policy (Task 3) and
+  test suite against; not edited to make anything pass.
+- `src/aico/evidence/models.py` (Task 1) — the typed evidence envelope.
+  `EvidenceItem` is one candidate evidence record as actually returned by
+  retrieval / the protected data adapter (`evidence_id` / `chunk_id`
+  [this envelope's provenance identifier] / `source_id` / `source_version`
+  / `source_updated_at` / `retrieved_at` / `content_hash` / `tenant_id` /
+  `data_classification` / `evidence_facets` / `content`), and
+  `EvidencePackage` is the package-level request context wrapping a batch
+  of them (`request_id` / `intent_id` / `lane` / `as_of` / `required_facets`
+  / `items`). Both are Pydantic (`extra="forbid"`), reuse Day 10's own
+  `DataClassification` and Day 9's own `LaneId` rather than a second,
+  competing vocabulary (Gate-C must validate evidence against the
+  identical closed sets Gate-B's effective scope is expressed in), and use
+  `AwareDatetime` for every timestamp so a naive/malformed timestamp is
+  rejected by Pydantic itself. Every required-but-blank identifier
+  (`source_id`, `chunk_id`, `source_version`, `content_hash`, `tenant_id`,
+  `evidence_id`, `request_id`, `intent_id`) is rejected even when
+  whitespace-padded, and a duplicate `evidence_id` within one package is
+  rejected too.
+- `src/aico/evidence/errors.py` (Task 1) — `EvidenceError` (base, mirrors
+  `OntologyRegistryError`/`PolicyRegistryError`'s one-ancestor-per-boundary
+  shape) and `EvidenceEnvelopeError`, raised by `parse_evidence_item()` /
+  `parse_evidence_package()` (`models.py`) when a raw candidate-evidence
+  payload fails typed validation — one sanitized message plus the
+  offending field path, never a raw `pydantic.ValidationError` leaking to
+  a caller (mirrors `contracts/validator.py`'s identical boundary for Day
+  4's model-output contracts). Nothing downstream is permitted to hand
+  Gate-C an unchecked dict instead of a parsed `EvidenceItem`/
+  `EvidencePackage` (working rule: "Do not pass unchecked dictionaries
+  into Gate-C").
+- `tests/test_day11_evidence_envelope.py` — not one of Task 16's named
+  test files (`test_day11_source_registry.py` onward all cover later
+  tasks); added because Task 1's own envelope needed a home and the
+  assignment explicitly allows a documented filename addition. Covers
+  Table 16's "Evidence envelope | Malformed evidence rejected" row: every
+  Task 1 "Required validation" reject case (missing/blank source id,
+  missing/blank provenance identifier, missing/malformed/naive timestamps,
+  missing/blank content hash, invalid classification enum, a malformed
+  package — unknown field, missing required field, invalid lane, a
+  non-list `items`, a malformed nested item, a duplicate `evidence_id`),
+  plus proof that a valid payload parses into real typed objects (not
+  dicts) and that failures never leak Pydantic's own exception shape.
+
+```
+uv run pytest -q
+uv run ruff check .
+uv run python -m aico.evals.day07
+```
+
+24 new tests (`tests/test_day11_evidence_envelope.py`), 1509 passing
+overall (up from 1485 after Day 10) — the Day 7 regression gate is
+unmodified and still passes (`GATE: PASS`, `evals/baseline_v1.json`
+untouched).
+
+**Environment note:** this repository's `.venv` was originally copied
+forward from the Day 10 project directory rather than created fresh here.
+Its console-script launchers (`pytest.exe`, etc.) embed an absolute
+interpreter path baked in at install time, so they kept resolving `aico`
+from the old `AI-Assignments-Day10\.venv\...\src` tree (no `evidence/`
+package there) even though `uv run python -m pytest` against the same
+`.venv` worked correctly throughout — the ordinary Python import path
+(`sys.path` via `site`/the editable `.pth`) was never wrong, only the
+pre-baked launcher shebang was stale. Fixed once, for good, by deleting
+`.venv` and running `uv sync --frozen` fresh from this directory so every
+generated script now points at this project's own path. Not a code issue
+and not expected to recur — noted here only because it briefly made
+`uv run pytest -q` fail in a way that looked like a real import bug.
+
 ## Key design decisions
 
 **Day 1**

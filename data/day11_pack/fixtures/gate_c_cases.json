@@ -1,0 +1,238 @@
+{
+  "version": "1.0",
+  "as_of": "2026-09-11T12:00:00+05:00",
+  "note": "Fixtures use explicit expected_hash values; implementation may map them into its normal hash/provenance representation.",
+  "cases": [
+    {
+      "id": "GC-001",
+      "name": "valid_payment_evidence",
+      "intent_id": "INT-POLICY-QUESTION",
+      "request_kind": "payment_terms_only",
+      "gate_b_scope": {
+        "tenant_ids": [
+          "TENANT-A"
+        ],
+        "data_classes": [
+          "public",
+          "internal"
+        ]
+      },
+      "items": [
+        {
+          "evidence_id": "E-001",
+          "chunk_id": "CH-001",
+          "source_id": "SRC-POLICY-A",
+          "source_version": "3",
+          "source_updated_at": "2026-09-05T09:00:00+05:00",
+          "retrieved_at": "2026-09-11T11:59:00+05:00",
+          "tenant_id": "TENANT-A",
+          "data_classification": "internal",
+          "evidence_facets": [
+            "supplier_identity",
+            "payment_terms"
+          ],
+          "content": "Synthetic Supplier Alpha uses net 30 payment terms.",
+          "expected_content_hash": "HASH-E001-V3",
+          "provided_content_hash": "HASH-E001-V3",
+          "claims": {
+            "supplier_identity": "Synthetic Supplier Alpha",
+            "payment_terms": "net 30"
+          }
+        }
+      ],
+      "expected_decision": "allow"
+    },
+    {
+      "id": "GC-002",
+      "name": "unknown_source",
+      "intent_id": "INT-POLICY-QUESTION",
+      "request_kind": "payment_terms_only",
+      "gate_b_scope": {
+        "tenant_ids": [
+          "TENANT-A"
+        ],
+        "data_classes": [
+          "public",
+          "internal"
+        ]
+      },
+      "items": [
+        {
+          "evidence_id": "E-002",
+          "chunk_id": "CH-002",
+          "source_id": "SRC-UNKNOWN",
+          "source_version": "1",
+          "source_updated_at": "2026-09-10T09:00:00+05:00",
+          "retrieved_at": "2026-09-11T11:59:00+05:00",
+          "tenant_id": "TENANT-A",
+          "data_classification": "internal",
+          "evidence_facets": [
+            "supplier_identity",
+            "payment_terms"
+          ],
+          "content": "Unregistered source content.",
+          "expected_content_hash": "HASH-E002",
+          "provided_content_hash": "HASH-E002",
+          "claims": {
+            "supplier_identity": "Synthetic Supplier Alpha",
+            "payment_terms": "net 10"
+          }
+        }
+      ],
+      "expected_decision": "reject",
+      "expected_model_calls": 0
+    },
+    {
+      "id": "GC-003",
+      "name": "disabled_source",
+      "intent_id": "INT-POLICY-QUESTION",
+      "request_kind": "payment_terms_only",
+      "gate_b_scope": {
+        "tenant_ids": [
+          "TENANT-A"
+        ],
+        "data_classes": [
+          "public",
+          "internal"
+        ]
+      },
+      "items": [
+        {
+          "evidence_id": "E-003",
+          "chunk_id": "CH-003",
+          "source_id": "SRC-ARCHIVE-A",
+          "source_version": "8",
+          "source_updated_at": "2026-09-09T09:00:00+05:00",
+          "retrieved_at": "2026-09-11T11:59:00+05:00",
+          "tenant_id": "TENANT-A",
+          "data_classification": "internal",
+          "evidence_facets": [
+            "payment_terms"
+          ],
+          "content": "Archived payment term.",
+          "expected_content_hash": "HASH-E003",
+          "provided_content_hash": "HASH-E003",
+          "claims": {
+            "payment_terms": "net 60"
+          }
+        }
+      ],
+      "expected_decision": "reject",
+      "expected_model_calls": 0
+    },
+    {
+      "id": "GC-004",
+      "name": "hash_mismatch",
+      "intent_id": "INT-POLICY-QUESTION",
+      "request_kind": "payment_terms_only",
+      "gate_b_scope": {
+        "tenant_ids": [
+          "TENANT-A"
+        ],
+        "data_classes": [
+          "public",
+          "internal"
+        ]
+      },
+      "items": [
+        {
+          "evidence_id": "E-004",
+          "chunk_id": "CH-004",
+          "source_id": "SRC-POLICY-A",
+          "source_version": "3",
+          "source_updated_at": "2026-09-05T09:00:00+05:00",
+          "retrieved_at": "2026-09-11T11:59:00+05:00",
+          "tenant_id": "TENANT-A",
+          "data_classification": "internal",
+          "evidence_facets": [
+            "supplier_identity",
+            "payment_terms"
+          ],
+          "content": "Mutated content.",
+          "expected_content_hash": "HASH-E004-ORIGINAL",
+          "provided_content_hash": "HASH-E004-MUTATED",
+          "claims": {
+            "supplier_identity": "Synthetic Supplier Alpha",
+            "payment_terms": "net 5"
+          }
+        }
+      ],
+      "expected_decision": "reject",
+      "expected_model_calls": 0
+    },
+    {
+      "id": "GC-005",
+      "name": "cross_tenant_evidence",
+      "intent_id": "INT-POLICY-QUESTION",
+      "request_kind": "payment_terms_only",
+      "gate_b_scope": {
+        "tenant_ids": [
+          "TENANT-A"
+        ],
+        "data_classes": [
+          "public",
+          "internal"
+        ]
+      },
+      "items": [
+        {
+          "evidence_id": "E-005",
+          "chunk_id": "CH-005",
+          "source_id": "SRC-POLICY-A",
+          "source_version": "3",
+          "source_updated_at": "2026-09-05T09:00:00+05:00",
+          "retrieved_at": "2026-09-11T11:59:00+05:00",
+          "tenant_id": "TENANT-B",
+          "data_classification": "internal",
+          "evidence_facets": [
+            "supplier_identity",
+            "payment_terms"
+          ],
+          "content": "Tenant B evidence.",
+          "expected_content_hash": "HASH-E005",
+          "provided_content_hash": "HASH-E005",
+          "claims": {
+            "supplier_identity": "Synthetic Supplier Beta",
+            "payment_terms": "net 45"
+          }
+        }
+      ],
+      "expected_decision": "reject",
+      "expected_model_calls": 0
+    }
+  ],
+  "freshness_cases": [
+    {
+      "id": "FRESH-001",
+      "source_id": "SRC-POLICY-A",
+      "as_of": "2026-09-11T12:00:00+05:00",
+      "source_updated_at": "2026-09-01T12:00:00+05:00",
+      "max_age_hours": 720,
+      "expected": "fresh"
+    },
+    {
+      "id": "FRESH-002",
+      "source_id": "SRC-POLICY-A",
+      "as_of": "2026-09-11T12:00:00+05:00",
+      "source_updated_at": "2026-08-12T12:00:00+05:00",
+      "max_age_hours": 720,
+      "expected": "fresh_at_threshold"
+    },
+    {
+      "id": "FRESH-003",
+      "source_id": "SRC-POLICY-A",
+      "as_of": "2026-09-11T12:00:00+05:00",
+      "source_updated_at": "2026-08-12T11:59:59+05:00",
+      "max_age_hours": 720,
+      "expected": "stale"
+    },
+    {
+      "id": "FRESH-004",
+      "source_id": "SRC-CONTRACT-A",
+      "as_of": "2026-09-11T12:00:00+05:00",
+      "source_updated_at": "2026-09-04T11:59:59+05:00",
+      "max_age_hours": 168,
+      "expected": "stale"
+    }
+  ]
+}

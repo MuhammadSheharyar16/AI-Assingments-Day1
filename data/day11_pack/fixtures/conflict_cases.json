@@ -1,0 +1,63 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "CONFLICT-001",
+      "name": "supporting_claims",
+      "facet": "payment_terms",
+      "items": [
+        {
+          "evidence_id": "E-1",
+          "authority": 90,
+          "value": "net 30"
+        },
+        {
+          "evidence_id": "E-2",
+          "authority": 90,
+          "value": "net 30"
+        }
+      ],
+      "expected": "no_conflict"
+    },
+    {
+      "id": "CONFLICT-002",
+      "name": "same_authority_contradiction",
+      "facet": "payment_terms",
+      "policy": "authority_then_reject_tie",
+      "items": [
+        {
+          "evidence_id": "E-1",
+          "authority": 90,
+          "value": "net 30"
+        },
+        {
+          "evidence_id": "E-2",
+          "authority": 90,
+          "value": "net 45"
+        }
+      ],
+      "expected": "unresolved_conflict",
+      "expected_model_calls": 0
+    },
+    {
+      "id": "CONFLICT-003",
+      "name": "governed_authority_precedence",
+      "facet": "payment_terms",
+      "policy": "authority_then_reject_tie",
+      "items": [
+        {
+          "evidence_id": "E-contract",
+          "authority": 100,
+          "value": "net 30"
+        },
+        {
+          "evidence_id": "E-policy",
+          "authority": 90,
+          "value": "net 45"
+        }
+      ],
+      "expected": "resolved_by_governed_authority",
+      "winning_value": "net 30"
+    }
+  ]
+}

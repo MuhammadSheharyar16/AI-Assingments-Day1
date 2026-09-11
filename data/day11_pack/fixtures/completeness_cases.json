@@ -1,0 +1,116 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "COMP-001",
+      "name": "all_facets_present",
+      "required_facets": [
+        "supplier_identity",
+        "payment_terms",
+        "invoice_window"
+      ],
+      "validated_items": [
+        {
+          "evidence_id": "E-A",
+          "facets": [
+            "supplier_identity",
+            "payment_terms"
+          ]
+        },
+        {
+          "evidence_id": "E-B",
+          "facets": [
+            "invoice_window"
+          ]
+        }
+      ],
+      "expected": "complete"
+    },
+    {
+      "id": "COMP-002",
+      "name": "invoice_missing",
+      "required_facets": [
+        "supplier_identity",
+        "payment_terms",
+        "invoice_window"
+      ],
+      "validated_items": [
+        {
+          "evidence_id": "E-A",
+          "facets": [
+            "supplier_identity",
+            "payment_terms"
+          ]
+        }
+      ],
+      "expected": "insufficient_evidence",
+      "missing_facets": [
+        "invoice_window"
+      ]
+    },
+    {
+      "id": "COMP-003",
+      "name": "duplicate_does_not_help",
+      "required_facets": [
+        "supplier_identity",
+        "payment_terms",
+        "invoice_window"
+      ],
+      "validated_items": [
+        {
+          "evidence_id": "E-A",
+          "facets": [
+            "supplier_identity",
+            "payment_terms"
+          ]
+        },
+        {
+          "evidence_id": "E-B",
+          "facets": [
+            "payment_terms"
+          ]
+        },
+        {
+          "evidence_id": "E-C",
+          "facets": [
+            "payment_terms"
+          ]
+        }
+      ],
+      "expected": "insufficient_evidence",
+      "missing_facets": [
+        "invoice_window"
+      ]
+    },
+    {
+      "id": "COMP-004",
+      "name": "invalid_item_excluded",
+      "required_facets": [
+        "supplier_identity",
+        "payment_terms",
+        "invoice_window"
+      ],
+      "items": [
+        {
+          "evidence_id": "E-A",
+          "valid": true,
+          "facets": [
+            "supplier_identity",
+            "payment_terms"
+          ]
+        },
+        {
+          "evidence_id": "E-B",
+          "valid": false,
+          "facets": [
+            "invoice_window"
+          ]
+        }
+      ],
+      "expected": "insufficient_evidence",
+      "missing_facets": [
+        "invoice_window"
+      ]
+    }
+  ]
+}
