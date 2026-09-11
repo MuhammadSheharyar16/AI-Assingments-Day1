@@ -1317,7 +1317,7 @@ the real committed policy — including the cross-tenant/zero-protected-call
 proof and a deterministic redaction example, no raw PII value anywhere in
 the output.
 
-## Day 11 — Gate-C Evidence Trust, Provenance, Freshness & Completeness (in progress)
+## Day 11 — Gate-C Evidence Trust, Provenance, Freshness & Completeness
 
 Adds the evidence-quality boundary that sits after Gate-B/retrieval and
 before the Model Gateway: Gate-A/lane selection decide what a request
@@ -1982,7 +1982,7 @@ and not expected to recur — noted here only because it briefly made
 
 ## Folder structure
 
-Verified against `git ls-files` on 2026-09-10 — every path below exists in
+Verified against `git ls-files` on 2026-09-11 — every path below exists in
 the repo as shown; nothing here is aspirational.
 
 ```
@@ -2014,7 +2014,13 @@ aico-ai-engineer-lab/
   policy/
     gate_b_policy.v1.json           Day 10 Task 1/2 — committed, read-only governed Gate-B policy
                                      (byte-identical to data/day10_pack/fixtures/gate_b_policy_v1.json)
-    README.md                       Day 10 — what the policy is, why it's read-only, how a v2 would be added
+    gate_c_policy.v1.json           Day 11 Task 3 — committed, read-only governed Gate-C evidence-quality
+                                     policy (byte-identical to data/day11_pack/fixtures/evidence_policy_v1.json)
+    README.md                       Day 10/11 — what each policy is, why it's read-only, how a v2 would be added
+  evidence/
+    source_registry.v1.json         Day 11 Task 2 — committed, read-only governed source registry
+                                     (byte-identical to data/day11_pack/fixtures/source_registry_v1.json)
+    README.md                       Day 11 — what the registry is, why it's read-only, how a v2 would be added
   contracts/schema/
     cited_answer.v1.schema.json           Day 4 — generated from CitedAnswer, never hand-edited
     response_envelope.v1.schema.json      Day 4 — generated from ResponseEnvelope, never hand-edited
@@ -2047,6 +2053,11 @@ aico-ai-engineer-lab/
     day10_generate_gate_b_artifacts.py         Day 10 Task 15 — regenerates artifacts/day10/*.md from real
                                                 GateB.authorize()/ControlPlaneAnswerService.answer()/
                                                 apply_disclosure() calls against the real committed policy
+    day11_generate_gate_c_artifacts.py         Day 11 Task 15 — regenerates artifacts/day11/*.md from real
+                                                GateC.evaluate()/validate_provenance()/evaluate_freshness()/
+                                                validate_completeness()/evaluate_conflict() calls against the
+                                                real committed source registry/Gate-C policy, plus a real
+                                                instrumented CountingGateway fake for Model Gateway call counts
   src/aico/
     api/                             Day 6 — the typed FastAPI service (Tasks 1-6, 10)
       app.py                         Task 1 — FastAPI app, POST /ask, middleware/router wiring
@@ -2104,7 +2115,13 @@ aico-ai-engineer-lab/
                                      in front of the unmodified GroundedAnswerService (identity -> session ->
                                      Day 5 policy -> Gate-A -> lane selector -> selected-lane behavior); only
                                      the rag branch reaches retrieval/Model Gateway; gate_a/lane_selection
-                                     OTel spans. Not yet wired into api/app.py's /ask (see Day 9 section above)
+                                     OTel spans. Not yet wired into api/app.py's /ask (see Day 9 section above).
+                                     Day 10 Task 13 — Gate-B slotted in after the lane selector, opt-out by
+                                     deployment default. Day 11 Task 13 — Gate-C (_answer_rag_with_gate_c())
+                                     slotted in between retrieval and the Model Gateway inside the rag branch,
+                                     opt-in only (requires source_registry/gate_c_policy_registry/
+                                     evidence_adapter all supplied together); the prompt builder receives only
+                                     Gate-C-validated evidence, Day 5 citation validation still runs unmodified
     security/                       Day 5 — input-side defense (Tasks 5-6)
       __init__.py
       normalization.py              Day 5 Task 5 — bounded, deterministic obfuscation normalization
@@ -2181,6 +2198,40 @@ aico-ai-engineer-lab/
       errors.py                     Tasks 2/5/12 (Day 9) + 2/3 (Day 10) — OntologyLoadError/
                                      OntologyLookupError/LaneSelectionError/ControlPlaneConfigurationError/
                                      PolicyLoadError/PolicyLookupError/GateBError
+      gate_c.py                     Day 11 Task 9/10/12/14 — GateC.evaluate(): the deterministic evidence-
+                                     trust/quality boundary, fail-closed at every stage (Gate-B allow check ->
+                                     request_kind resolved -> governed rule resolved -> per-item registry+
+                                     policy/provenance/integrity/freshness checks -> conflicts over the
+                                     validated set only -> minimum_valid_items -> completeness against the
+                                     rule's own required_facets -> allow); Task 10's filtering and Task 12's
+                                     "preserve Gate-B scope" folded in, not separate modules; owns its own
+                                     gate_c/provenance_validation/freshness_validation/completeness_validation
+                                     OTel spans (Task 14), sanitized attributes only
+    evidence/                       Day 11 — the evidence-quality boundary (Tasks 1-8)
+      models.py                     Task 1 — typed EvidenceItem/EvidencePackage envelope, extra="forbid",
+                                     AwareDatetime timestamps, parse_evidence_item/parse_evidence_package
+                                     boundary parsers (never an unchecked dict reaches Gate-C)
+      source_registry.py            Task 2 — loads + validates evidence/source_registry.v1.json against the
+                                     real OntologyRegistry, read-only lookups (is_source_active/supports_intent/
+                                     supports_facet), exposes the active registry_version
+      policy.py                     Task 3 — loads + cross-validates policy/gate_c_policy.v1.json (freshness
+                                     policies, per-intent evidence requirements, conflict policy) against the
+                                     real SourceRegistry, read-only lookups, find_rule(intent_id, request_kind)
+      provenance.py                 Task 4/5 — validate_provenance() (source exists, content hash matches the
+                                     returned content, tenant/classification within Gate-B scope, cross-item
+                                     source-version/identity consistency) + validate_integrity() (an
+                                     independent GovernedProvenanceIndex-backed check; a missing governed
+                                     record fails closed, never silently recomputed/repaired)
+      freshness.py                  Task 6 — evaluate_freshness() (pure, injectable as_of, never wall-clock)
+                                     + validate_freshness() (per-item governed threshold via source_registry ->
+                                     policy_registry); no rank/score parameter anywhere in either signature
+      completeness.py               Task 7 — validate_completeness(): required_facets coverage from only the
+                                     valid, source-governed evidence — never a raw chunk count
+      conflicts.py                  Task 8 — evaluate_conflict()/validate_conflicts(): same-authority
+                                     contradictions detected, governed authority precedence resolves only for
+                                     a recognized ConflictPolicy, an unresolved conflict never silently passes
+      errors.py                     Task 1-8 — typed EvidenceEnvelopeError/SourceRegistry.../GateCPolicy...
+                                     error family, sanitized messages (no raw pydantic ValidationError leaks)
   data/
     documents/                      DOC-001 .. DOC-005 (synthetic, unchanged across all days)
     evals/
@@ -2239,6 +2290,19 @@ aico-ai-engineer-lab/
                                       request-body/memory override attempts
         pii_disclosure_cases.json    6 cases (PII-001..006) + synthetic_record/field_metadata: allow/
                                       redact/deny across profiles
+    day11_pack/                     Day 11 — supplied resource pack (fixed synthetic inputs, never edited
+                                     to make the implementation pass)
+      README.md
+      evidence_policy_requirements.md  Task 1-3's required envelope/registry/policy validation bullets
+      provenance_freshness_rules.md    Task 4-8's required provenance/freshness/conflict rules
+      fixtures/
+        source_registry_v1.json     the governed v1 source registry (copied verbatim to
+                                     evidence/source_registry.v1.json)
+        evidence_policy_v1.json     the governed v1 Gate-C policy (copied verbatim to
+                                     policy/gate_c_policy.v1.json)
+        gate_c_cases.json           5 decision cases (GC-001..005) + freshness_cases (FRESH-001..004)
+        conflict_cases.json         3 cases (CONFLICT-001..003): supporting/contradictory/precedence
+        completeness_cases.json     4 cases (COMP-001..004): complete/missing/duplicate/invalid-excluded
     index/                         build output (gitignored) - python -m aico.retrieval.ingest
     vectors/                       build output (gitignored) - python -m aico.retrieval.embed
     sessions/                      Day 8 — local SqliteSessionStore data (gitignored; every test uses
@@ -2301,6 +2365,14 @@ aico-ai-engineer-lab/
       disclosure_report.md          public/internal-allowed, deterministically-redacted, and denied-
                                      sensitive-field examples from a real apply_disclosure() call; no raw
                                      protected PII value anywhere in the report itself
+    day11/                          Day 11 Task 15 — generated by day11_generate_gate_c_artifacts.py
+      gate_c_decisions.md           fully valid / unknown source / broken provenance / stale / incomplete /
+                                     unresolved-conflict cases, each a real GateC.evaluate() result with its
+                                     actual Model Gateway call count shown
+      provenance_report.md          source registry version, valid / content-hash-mismatch /
+                                     source-version-mismatch / Gate-B-scope-mismatch cases, no raw content
+      freshness_completeness_report.md  governed thresholds, fresh/edge/stale cases, required/covered/
+                                     missing facets, conflict cases, one combined final GateC.evaluate() decision
   tests/
     __init__.py
     conftest.py                     Day 8 Task 4 — shared fixtures (get_session_store override so
@@ -2318,8 +2390,9 @@ aico-ai-engineer-lab/
         api_cases.json                    synthetic Content-Type/size/validation/correlation cases
         identity_claim_cases.json         synthetic trusted-principal claims cases (allow/reject)
         dependency_health_cases.json      synthetic dependency-outage combinations
-      (Day 8/9 tests read their fixtures directly from data/day08_pack/fixtures/ and
-      data/day09_pack/fixtures/ — no separate tests/fixtures/day08|day09/ copy is kept)
+      (Day 8/9/10/11 tests read their fixtures directly from data/day08_pack/fixtures/,
+      data/day09_pack/fixtures/, data/day10_pack/fixtures/ and data/day11_pack/fixtures/ —
+      no separate tests/fixtures/day08|day09|day10|day11/ copy is kept)
     test_chunker.py                 (11)
     test_bm25.py                    (6)
     test_ingest.py                  (4)
@@ -2443,22 +2516,70 @@ aico-ai-engineer-lab/
                                      side-by-side gate_b.enabled: false confirmation (5)
     test_day10_regression.py        Day 10 Task 16 — the real Day 7 evaluation CLI and the Day 8/9
                                      regression suites re-run in-process (6)
+    test_day11_evidence_envelope.py       Day 11 Task 1 — typed envelope, every required rejection
+                                     (missing source ID/version/provenance identifier, invalid/naive
+                                     timestamp, missing content hash, invalid classification enum, malformed
+                                     package, duplicate evidence_id), sanitized parse errors (28)
+    test_day11_source_registry.py   Day 11 Task 2 — loads the real registry into typed objects, every
+                                     required rejection (duplicate source_id, unknown ontology intent
+                                     reference, invalid status), is_source_active/supports_intent/
+                                     supports_facet, read-only (51)
+    test_day11_gate_c_policy.py     Day 11 Task 3 — loads the real Gate-C policy, every required rejection
+                                     (unknown source reference, unknown intent, unknown freshness-policy
+                                     reference, duplicate rule/policy IDs, invalid status), find_rule (53)
+    test_day11_provenance.py        Day 11 Task 4/5 — validate_provenance() (source exists, content-hash
+                                     match, Gate-B tenant/classification scope, cross-item source-version/
+                                     identity consistency) + validate_integrity() (unchanged/mutated content,
+                                     version mismatch, missing governed record fails closed, no silent
+                                     hash repair) (39)
+    test_day11_freshness.py         Day 11 Task 6 — fresh/exactly-at-threshold/stale/missing/future-
+                                     timestamp, the real freshness_cases fixture parametrized, an AST-based
+                                     check that no wall-clock call exists, per-source independent thresholds,
+                                     stale-top-ranked-still-stale (23)
+    test_day11_completeness.py      Day 11 Task 7 — required_facets coverage, missing facet ->
+                                     insufficient_evidence, duplicate coverage not double-counted, invalid/
+                                     unsupported-facet claims excluded, the real completeness_cases fixture (16)
+    test_day11_conflicts.py         Day 11 Task 8 — non-conflicting/duplicate-supporting evidence passes,
+                                     same-authority contradiction detected, governed precedence resolves only
+                                     when policy allows, the real conflict_cases fixture (24)
+    test_day11_gate_c.py            Day 11 Task 9/10/12 — all four decision outcomes against the real
+                                     registry/policy, the real gate_c_cases.json replayed end to end, both
+                                     Task 10 filtering worked examples (+ the freshness-dimension analog),
+                                     Gate-B scope preservation, no-widening-parameter proof (38)
+    test_day11_no_fallthrough.py    Day 11 Task 11 — counting fake: allow reaches generation exactly once,
+                                     insufficient_evidence/reject/unresolved-conflict/clarify = 0 calls,
+                                     rejected evidence's content never reaches the prompt, the documented
+                                     too-late failure mode reproduced and contrasted (11)
+    test_day11_control_plane_integration.py  Day 11 Task 13 — full pipeline order through
+                                     ControlPlaneAnswerService with real source_registry/gate_c_policy_registry/
+                                     evidence_adapter, citation validation still enforced independently after
+                                     Gate-C allows (12)
+    test_day11_observability.py     Day 11 Task 14 — gate_c/provenance_validation/freshness_validation/
+                                     completeness_validation spans, required fields per decision outcome,
+                                     trace_id inherited from a parent span, no raw evidence/claim value ever
+                                     in a span attribute (14)
+    test_day11_regression.py        Day 11 Task 16 — the required-coverage audit (docstring table mapping
+                                     every row to its proving test) plus the real Day 7 evaluation CLI and
+                                     the Day 8/9/10 regression suites re-run in-process (4)
 ```
 
-1471 tests pass in total (`uv run pytest -q`, verified 2026-09-10, count
+1798 tests pass in total (`uv run pytest -q`, verified 2026-09-11, count
 includes parametrized cases as pytest reports them — the per-file counts
 in the tree above are the same pytest-collected counts, and do sum to
-this number): 544 for Day 1-6, 212 for Day 7, 225 for Day 8, 227 for
-Day 9, 263 new for Day 10 (253 across `test_day10_*.py`, 2 gate_b
-activation-toggle cases folded into `test_day09_control_plane_config.py`
-above, and 8 in `test_day06_identity.py` proving `TrustedIdentity`'s new
+this number): 555 for `tests/test_{chunker,bm25,ingest,day01_eval,
+embedding_provider,vector_index,embed,hybrid,search,day2_regression,
+model_gateway*,foundry_adapter*,day04_*,day05_*,day06_*}.py` (Day 1-6;
+includes the 8 `test_day06_identity.py` cases proving `TrustedIdentity`'s
 `roles` claim — Day 10 Task 3's extension to Day 6's own trust boundary —
-parses/rejects correctly and defaults to no roles rather than rejecting
-an otherwise-valid identity). `test_day05_answer_support.py`
-is new (post-review hardening — see `support_validator.py` above); every
-other Day 1-6 test still passes unchanged, satisfying the working-rule
-regression requirement, and `uv run python -m aico.evals.day07` remains
-green with `evals/baseline_v1.json` unchanged by any Day 8/9/10 commit.
+and `test_day05_answer_support.py`, post-review hardening), 212 for
+`test_day07_*.py`, 236 for `test_day08_*.py`, 229 for `test_day09_*.py`
+(includes the 2 gate_b activation-toggle cases in
+`test_day09_control_plane_config.py`, Day 10 Task 13), 253 for
+`test_day10_*.py`, and 313 new for `test_day11_*.py` (Day 11, see the
+per-file breakdown above). Every pre-Day-11 test still passes unchanged
+(re-proven directly, not just assumed, in `test_day11_regression.py`),
+and `uv run python -m aico.evals.day07` remains green with
+`evals/baseline_v1.json` unchanged by any Day 8/9/10/11 commit.
 
 Note: the task brief's "Required structure" names `requirements.txt`; this
 repo uses `pyproject.toml` + `uv.lock` (via `uv`) instead, which is the
@@ -2504,3 +2625,22 @@ model-candidate-validation checks are satisfied structurally
 (`OntologyRegistry.resolve_concepts()` rejects an unknown candidate id,
 `test_day09_ontology.py::test_resolve_concepts_rejects_unknown_candidate_id`)
 rather than by an interpreter that exists but is unused.
+
+Day 11's required tree (`src/aico/evidence/*`, `src/aico/control/gate_c.py`,
+`evidence/source_registry.v1.json`, `policy/gate_c_policy.v1.json`,
+`data/day11_pack/*` used as supplied and never edited to force a pass,
+`artifacts/day11/*`, the `test_day11_*.py` files) matches exactly;
+`test_day11_evidence_envelope.py`, `test_day11_gate_c_policy.py`,
+`test_day11_control_plane_integration.py`, `test_day11_observability.py`
+and `test_day11_regression.py` split coverage out of the minimum named set
+(Tasks 1, 3, 13, 14, 16), the same file-splitting allowance every earlier
+day already used. Task 5's `GovernedProvenanceIndex` is caller-populated
+rather than loaded from a committed file — this pack ships no
+provenance-index fixture, so there is nothing on disk to load (see
+`provenance.py`'s own module docstring). Gate-C integration into
+`ControlPlaneAnswerService` (Task 13) is opt-in, not opt-out like Gate-B —
+`data/documents/`'s real corpus and `ontology/registry.v1.json`'s
+synthetic ontology carry none of the governed provenance metadata Gate-C's
+`EvidenceItem` requires, the identical reason Gate-A/Gate-B are not wired
+into `api/app.py`'s real `/ask` either (see the Day 11 section above,
+"Gate-C integration is opt-in, not opt-out").
