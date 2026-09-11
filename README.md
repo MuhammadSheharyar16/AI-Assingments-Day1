@@ -1324,7 +1324,7 @@ before the Model Gateway: Gate-A/lane selection decide what a request
 *means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
 decides whether the *evidence retrieval actually returned* may be trusted
 enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
-"Retrieval success is not evidence validity"). Only Tasks 1–4 are
+"Retrieval success is not evidence validity"). Only Tasks 1–5 are
 implemented so far — the sections below will grow as later tasks land.
 
 - `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
@@ -1483,15 +1483,46 @@ implemented so far — the sections below will grow as later tasks land.
   using the fixture's synthetic placeholder hash directly (which reliably
   will not match a real digest) for the one expected to fail on it.
 
+- `src/aico/evidence/provenance.py` (Task 5, same file as Task 4) —
+  `validate_integrity()`: a *stronger*, independent check than Task 4's
+  self-consistency check alone, against a caller-supplied
+  `GovernedProvenanceIndex` of `GovernedProvenanceRecord`s (`source_id` /
+  `chunk_id` / `source_version` / `content_hash`) — what governed
+  ingestion actually recorded, untouched by whatever the returned item
+  itself claims. No committed provenance-index file ships with this pack
+  (unlike the source registry/Gate-C policy), so `GovernedProvenanceIndex`
+  is a plain in-memory lookup a caller populates, not a `load()`-from-disk
+  registry. Catches the one thing self-consistency alone cannot: a
+  coordinated forgery where `content` *and* its own `content_hash` were
+  both changed together (so they still agree with each other) but no
+  longer agree with the independent governed record. Task 5's four
+  required behaviors map onto four distinct, isolatable
+  `IntegrityFailureReason`s (`CONTENT_HASH_MISMATCH` — self-consistency;
+  `EXPECTED_HASH_MISMATCH` — the forgery case; `SOURCE_VERSION_MISMATCH`;
+  `MISSING_EXPECTED_RECORD` — no governed reference at all resolves for
+  the item, which fails closed rather than silently defaulting to valid,
+  the anti-pattern Task 5 explicitly names: "Do not silently recompute a
+  missing/incorrect expected hash and then treat the item as valid").
+  Returns one `IntegrityReport`, the `IntegrityResult`/
+  `IntegrityFailureReason` analog of Task 4's `ProvenanceReport`.
+- `tests/test_day11_provenance.py` extended (no separate Task 5 test file
+  — Task 16 names none, and Task 5 lives in the same source file as
+  Task 4) — proves all four Task 5 behaviors in isolation, including the
+  coordinated-forgery scenario proven two ways: a hand-built case, and a
+  reinterpretation of real `gate_c_cases.json` GC-001/GC-004 through the
+  `expected_content_hash`/`provided_content_hash` split those fixtures
+  were actually designed for (a closer fit for Task 5's governed-reference
+  design than Task 4's own self-consistency-only remapping).
+
 ```
 uv run pytest -q
 uv run ruff check .
 uv run python -m aico.evals.day07
 ```
 
-152 new tests (`tests/test_day11_evidence_envelope.py`,
+167 new tests (`tests/test_day11_evidence_envelope.py`,
 `tests/test_day11_source_registry.py`, `tests/test_day11_gate_c_policy.py`,
-`tests/test_day11_provenance.py`), 1637 passing overall (up from 1485
+`tests/test_day11_provenance.py`), 1652 passing overall (up from 1485
 after Day 10) — the Day 7 regression gate is unmodified and still passes
 (`GATE: PASS`, `evals/baseline_v1.json` untouched).
 

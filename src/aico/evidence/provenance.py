@@ -1,5 +1,6 @@
 """
 Day 11 Task 4 -- provenance validation.
+Day 11 Task 5 -- integrity / mutation check.
 
 Gate-C's critical rule (`Day 11 Task.pdf`, Task 4): do not validate "the
 corpus contains a valid chunk somewhere" -- validate "the evidence item
@@ -104,10 +105,74 @@ representation") -- this module's tests build `EvidenceItem`s whose
 cases the fixture expects to pass, and a deliberately non-matching value
 for cases it expects to fail on integrity grounds, rather than feeding the
 fixture's own placeholder strings through a real hash comparison.
+
+## Task 5 -- integrity / mutation check
+
+`validate_provenance()` (Task 4) proves an item is *self-consistent* --
+its own `content_hash` matches a fresh hash of its own `content`. That
+catches naive corruption but not a coordinated forgery: an attacker (or a
+bug) that mutates `content` *and* recomputes `content_hash` to match would
+sail through a self-consistency check undetected. Task 5's own words are
+the tell: "the evidence must carry/derive its expected provenance value
+from the governed ingestion/source path" -- the *expected* value has to
+come from somewhere the returned item itself cannot influence, exactly
+`gate_c_cases.json`'s `expected_content_hash` (what governed ingestion
+actually recorded) versus `provided_content_hash` (whatever the returned
+item happens to carry) split.
+
+`validate_integrity()` is that stronger, independent check:
+`GovernedProvenanceRecord` (`source_id` / `chunk_id` / `source_version` /
+`content_hash`) is what the governed ingestion/source path recorded for
+one evidence record, resolved by `GovernedProvenanceIndex` -- an
+in-memory lookup a caller populates from wherever real governed
+provenance metadata lives (this pack ships no committed provenance-index
+file, unlike the source registry/Gate-C policy, so there is nothing to
+load from disk here; Task 1's own docstring already anticipated this:
+"If your ingestion pipeline already produces stronger provenance
+metadata, preserve and validate it"). Every governed source's own hash/
+version, once resolved, is compared against the *returned* item on two
+independent axes, plus the internal self-consistency check Task 4 already
+performs:
+
+    - unchanged content + same
+      version -> integrity passes   -> all three below hold: the item is
+                                        self-consistent AND matches the
+                                        governed record on both hash and
+                                        version.
+    - content changed but old hash
+      retained -> fail              -> `stable_content_hash(item.content)
+                                        != item.content_hash` (the same
+                                        self-consistency check Task 4
+                                        performs, reused rather than
+                                        duplicated).
+    - source version mismatch
+      -> fail                       -> `item.source_version !=
+                                        expected.source_version`.
+    - missing hash -> fail          -> "hash" here is the *expected*
+                                        governed hash, not the item's own
+                                        `content_hash` (Task 1's envelope
+                                        already makes that field required
+                                        and non-blank, so it can never
+                                        itself be "missing" by the time it
+                                        reaches this module) -- no
+                                        `GovernedProvenanceRecord` found
+                                        for this item at all fails closed
+                                        (`MISSING_EXPECTED_RECORD`)
+                                        rather than falling back to
+                                        Task 4's self-consistency result
+                                        or any other silent default.
+
+The explicit anti-pattern Task 5 names -- "Do not silently recompute a
+missing/incorrect expected hash and then treat the item as valid" -- is
+why `validate_integrity()` never invents a `GovernedProvenanceRecord`
+when `GovernedProvenanceIndex.get()` returns `None`: a missing governed
+reference is exactly as fatal as a mismatched one, never treated as "no
+opinion, so allow."
 """
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -278,4 +343,128 @@ def validate_provenance(
         validated_evidence_ids=tuple(validated_ids),
         rejected_evidence_ids=tuple(rejected_ids),
         item_results=tuple(item_results),
+    )
+
+
+# ===========================================================================
+# Task 5 -- integrity / mutation check
+# ===========================================================================
+
+
+class GovernedProvenanceRecord(BaseModel):
+    """What the governed ingestion/source path recorded for one evidence
+    record -- Task 5's "expected provenance value" -- independent of
+    whatever the returned `EvidenceItem` claims about itself. Resolved by
+    `source_id` + `chunk_id`, never derived from the returned item's own
+    (possibly mutated) `content`/`content_hash`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(min_length=1)
+    chunk_id: str = Field(min_length=1)
+    source_version: str = Field(min_length=1)
+    content_hash: str = Field(min_length=1)
+
+
+class GovernedProvenanceIndex:
+    """A read-only, in-memory lookup from `(source_id, chunk_id)` to the
+    `GovernedProvenanceRecord` a caller has resolved for it. Not a
+    committed/loaded-from-disk registry like `SourceRegistry`/
+    `GateCPolicyRegistry` -- this pack ships no committed provenance-index
+    file, so there is nothing to `load()`; a caller (a test, or a future
+    real ingestion adapter) populates one from whatever governed
+    provenance metadata it actually has. `get()` returns `None` for an
+    id this index carries no record for -- `validate_integrity()` treats
+    that as `MISSING_EXPECTED_RECORD`, never as "no opinion, so allow"
+    (Task 5's own anti-pattern warning)."""
+
+    def __init__(self, records: Iterable[GovernedProvenanceRecord] = ()):
+        self._records: dict[tuple[str, str], GovernedProvenanceRecord] = {
+            (record.source_id, record.chunk_id): record for record in records
+        }
+
+    def get(self, source_id: str, chunk_id: str) -> GovernedProvenanceRecord | None:
+        return self._records.get((source_id, chunk_id))
+
+
+class IntegrityFailureReason(str, Enum):
+    """The closed set of reasons `validate_integrity()` ever cites for
+    marking one evidence item invalid."""
+
+    CONTENT_HASH_MISMATCH = "content_hash_mismatch"
+    EXPECTED_HASH_MISMATCH = "expected_hash_mismatch"
+    SOURCE_VERSION_MISMATCH = "source_version_mismatch"
+    MISSING_EXPECTED_RECORD = "missing_expected_record"
+
+
+class IntegrityResult(BaseModel):
+    """Integrity's per-item verdict -- the `IntegrityFailureReason` analog
+    of `ProvenanceItemResult`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: str = Field(min_length=1)
+    valid: bool
+    reasons: tuple[IntegrityFailureReason, ...] = Field(default_factory=tuple)
+
+
+class IntegrityReport(BaseModel):
+    """The full package-level integrity result -- the `IntegrityResult`
+    analog of `ProvenanceReport`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    validated_evidence_ids: tuple[str, ...] = Field(default_factory=tuple)
+    rejected_evidence_ids: tuple[str, ...] = Field(default_factory=tuple)
+    item_results: tuple[IntegrityResult, ...] = Field(default_factory=tuple)
+
+    def result_for(self, evidence_id: str) -> IntegrityResult:
+        """Resolve one item's result by `evidence_id`. Raises `KeyError`
+        for an id this report has no result for, matching
+        `ProvenanceReport.result_for()`'s identical contract."""
+        for result in self.item_results:
+            if result.evidence_id == evidence_id:
+                return result
+        raise KeyError(evidence_id)
+
+
+def _validate_item_integrity(item: EvidenceItem, expected: GovernedProvenanceRecord | None) -> IntegrityResult:
+    if expected is None:
+        return IntegrityResult(
+            evidence_id=item.evidence_id,
+            valid=False,
+            reasons=(IntegrityFailureReason.MISSING_EXPECTED_RECORD,),
+        )
+
+    reasons: list[IntegrityFailureReason] = []
+
+    if stable_content_hash(item.content) != item.content_hash:
+        reasons.append(IntegrityFailureReason.CONTENT_HASH_MISMATCH)
+
+    if item.content_hash != expected.content_hash:
+        reasons.append(IntegrityFailureReason.EXPECTED_HASH_MISMATCH)
+
+    if item.source_version != expected.source_version:
+        reasons.append(IntegrityFailureReason.SOURCE_VERSION_MISMATCH)
+
+    return IntegrityResult(evidence_id=item.evidence_id, valid=not reasons, reasons=tuple(reasons))
+
+
+def validate_integrity(package: EvidencePackage, *, provenance_index: GovernedProvenanceIndex) -> IntegrityReport:
+    """Validate every item `package` carries against Task 5's four
+    required behaviors, each checked against an independent governed
+    reference (`provenance_index`) rather than only the item's own
+    self-reported fields -- see module docstring's "Task 5" section for
+    why this is a stronger check than `validate_provenance()`'s
+    self-consistency check alone, and why a missing governed reference
+    fails closed rather than falling back to that weaker check. Returns
+    one `IntegrityReport`; never raises for an individual item's failure,
+    never mutates `package`/`provenance_index`."""
+    item_results = tuple(
+        _validate_item_integrity(item, provenance_index.get(item.source_id, item.chunk_id)) for item in package.items
+    )
+    return IntegrityReport(
+        validated_evidence_ids=tuple(r.evidence_id for r in item_results if r.valid),
+        rejected_evidence_ids=tuple(r.evidence_id for r in item_results if not r.valid),
+        item_results=item_results,
     )

@@ -39,9 +39,18 @@ agree on `source_version`; same `chunk_id` must agree on identity). Its
 typed result is `ProvenanceReport`/`ProvenanceItemResult`/
 `ProvenanceFailureReason`.
 
-Later Day 11 tasks add integrity (Task 5), freshness (Task 6),
-completeness (Task 7) and conflict detection (Task 8), all built on the
-envelope, source registry, policy and provenance defined so far.
+Task 5 adds `validate_integrity()` (also `provenance.py`): a stronger,
+independent check against a caller-supplied `GovernedProvenanceIndex` of
+`GovernedProvenanceRecord`s (what governed ingestion actually recorded),
+not just the returned item's own self-reported fields -- catches a
+coordinated content+hash mutation Task 4's self-consistency check alone
+would miss, and fails closed (never "no opinion, so allow") when no
+governed record exists for an item at all. Its typed result is
+`IntegrityReport`/`IntegrityResult`/`IntegrityFailureReason`.
+
+Later Day 11 tasks add freshness (Task 6), completeness (Task 7) and
+conflict detection (Task 8), all built on the envelope, source registry,
+policy and provenance/integrity defined so far.
 """
 
 from aico.evidence.errors import (
@@ -62,10 +71,16 @@ from aico.evidence.policy import (
     IntentEvidenceRequirement,
 )
 from aico.evidence.provenance import (
+    GovernedProvenanceIndex,
+    GovernedProvenanceRecord,
+    IntegrityFailureReason,
+    IntegrityReport,
+    IntegrityResult,
     ProvenanceFailureReason,
     ProvenanceItemResult,
     ProvenanceReport,
     stable_content_hash,
+    validate_integrity,
     validate_provenance,
 )
 from aico.evidence.source_registry import (
@@ -103,4 +118,10 @@ __all__ = [
     "ProvenanceItemResult",
     "ProvenanceReport",
     "validate_provenance",
+    "GovernedProvenanceRecord",
+    "GovernedProvenanceIndex",
+    "IntegrityFailureReason",
+    "IntegrityResult",
+    "IntegrityReport",
+    "validate_integrity",
 ]

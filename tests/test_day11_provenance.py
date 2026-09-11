@@ -1,5 +1,6 @@
 """
 Day 11 Task 4 -- provenance validation (`src/aico/evidence/provenance.py`).
+Day 11 Task 5 -- integrity / mutation check (same module).
 
 Proves each of Task 4's five "At minimum prove" bullets in isolation
 (unknown source, content-hash self-consistency, Gate-B tenant/data-
@@ -16,6 +17,15 @@ evidence actually returned" -- is proven structurally here: every test
 builds an `EvidencePackage`/`EvidenceItem` by hand or from the fixture's
 own `items`, never touches `data/documents/` or any index, and
 `validate_provenance()`'s signature has no parameter for one.
+
+The second half of this file proves Task 5's `validate_integrity()`
+against its four named "Required behavior" bullets, each checked against
+an independent, caller-supplied `GovernedProvenanceIndex` rather than only
+the item's own self-reported fields -- including the specific "content
+changed *and* its accompanying hash was recomputed to match" forgery
+Task 4's self-consistency check alone cannot catch, and the "missing
+governed reference fails closed, never silently allowed" anti-pattern
+Task 5 explicitly names.
 
 Gate-C itself (Task 9) is not implemented yet and is out of scope here --
 disabled-source rejection (Task 2's own concern) and the overall
@@ -35,9 +45,14 @@ from aico.control.ontology import LaneId
 from aico.control.policy_models import DataClassification
 from aico.evidence.models import EvidenceItem, EvidencePackage
 from aico.evidence.provenance import (
+    GovernedProvenanceIndex,
+    GovernedProvenanceRecord,
+    IntegrityFailureReason,
+    IntegrityReport,
     ProvenanceFailureReason,
     ProvenanceReport,
     stable_content_hash,
+    validate_integrity,
     validate_provenance,
 )
 from aico.evidence.source_registry import SourceRegistry
@@ -514,3 +529,287 @@ def test_gc005_cross_tenant_evidence_rejected_by_provenance(source_registry):
     result = report.result_for("E-005")
     assert result.valid is False
     assert ProvenanceFailureReason.TENANT_OUT_OF_SCOPE in result.reasons
+
+
+# ===========================================================================
+# Task 5 -- validate_integrity()
+# ===========================================================================
+
+
+def _governed_record(**overrides) -> GovernedProvenanceRecord:
+    content = "Synthetic Supplier Alpha uses net 30 payment terms."
+    data = {
+        "source_id": "SRC-POLICY-A",
+        "chunk_id": "CH-001",
+        "source_version": "3",
+        "content_hash": stable_content_hash(content),
+    }
+    data.update(overrides)
+    return GovernedProvenanceRecord(**data)
+
+
+# ---------------------------------------------------------------------------
+# "unchanged content + same version -> integrity passes"
+# ---------------------------------------------------------------------------
+
+
+def test_unchanged_content_and_matching_version_passes_integrity():
+    index = GovernedProvenanceIndex([_governed_record()])
+
+    report = validate_integrity(_package([_valid_item()]), provenance_index=index)
+
+    result = report.result_for("E-001")
+    assert result.valid is True
+    assert result.reasons == ()
+    assert report.validated_evidence_ids == ("E-001",)
+
+
+def test_validate_integrity_returns_typed_report():
+    index = GovernedProvenanceIndex([_governed_record()])
+    report = validate_integrity(_package([_valid_item()]), provenance_index=index)
+    assert isinstance(report, IntegrityReport)
+
+
+# ---------------------------------------------------------------------------
+# "content changed but old hash retained -> fail"
+# ---------------------------------------------------------------------------
+
+
+def test_content_changed_but_old_hash_retained_fails():
+    """The item's own content_hash was never updated after content was
+    mutated -- caught by the self-consistency dimension
+    (stable_content_hash(item.content) != item.content_hash), the same
+    check validate_provenance() performs, reused here rather than
+    duplicated."""
+    original_content = "Synthetic Supplier Alpha uses net 30 payment terms."
+    item_data = _valid_item(
+        content_hash=stable_content_hash(original_content), content="Mutated content, hash not updated."
+    )
+    index = GovernedProvenanceIndex([_governed_record(content_hash=stable_content_hash(original_content))])
+
+    report = validate_integrity(_package([item_data]), provenance_index=index)
+
+    result = report.result_for("E-001")
+    assert result.valid is False
+    assert IntegrityFailureReason.CONTENT_HASH_MISMATCH in result.reasons
+
+
+# ---------------------------------------------------------------------------
+# The forgery scenario self-consistency alone cannot catch: content AND
+# its own hash were both changed together, but the governed record was not
+# ---------------------------------------------------------------------------
+
+
+def test_coordinated_content_and_hash_mutation_still_caught_against_governed_record():
+    """Self-consistency alone (Task 4's validate_provenance()) would
+    pass this item outright: content and content_hash were both
+    updated together, so they agree with each other. Only comparing
+    against the independent governed record catches that they no longer
+    agree with what was actually ingested -- exactly the gap Task 5 exists
+    to close."""
+    mutated_content = "Forged: Synthetic Supplier Alpha uses net 90 payment terms."
+    item_data = _valid_item(content=mutated_content, content_hash=stable_content_hash(mutated_content))
+    index = GovernedProvenanceIndex([_governed_record()])  # governed hash is of the ORIGINAL content
+
+    # Self-consistency alone: this item looks perfectly fine.
+    assert stable_content_hash(item_data["content"]) == item_data["content_hash"]
+
+    report = validate_integrity(_package([item_data]), provenance_index=index)
+
+    result = report.result_for("E-001")
+    assert result.valid is False
+    assert IntegrityFailureReason.CONTENT_HASH_MISMATCH not in result.reasons  # self-consistent
+    assert IntegrityFailureReason.EXPECTED_HASH_MISMATCH in result.reasons  # but not the governed truth
+
+
+# ---------------------------------------------------------------------------
+# "source version mismatch -> fail"
+# ---------------------------------------------------------------------------
+
+
+def test_source_version_mismatch_against_governed_record_fails():
+    item_data = _valid_item(source_version="4")  # governed record below still says "3"
+    index = GovernedProvenanceIndex([_governed_record(source_version="3")])
+
+    report = validate_integrity(_package([item_data]), provenance_index=index)
+
+    result = report.result_for("E-001")
+    assert result.valid is False
+    assert IntegrityFailureReason.SOURCE_VERSION_MISMATCH in result.reasons
+    # Content itself is untouched and correct -- only the version disagrees.
+    assert IntegrityFailureReason.CONTENT_HASH_MISMATCH not in result.reasons
+    assert IntegrityFailureReason.EXPECTED_HASH_MISMATCH not in result.reasons
+
+
+def test_matching_source_version_does_not_fail_on_version_grounds():
+    index = GovernedProvenanceIndex([_governed_record(source_version="3")])
+    report = validate_integrity(_package([_valid_item(source_version="3")]), provenance_index=index)
+    assert IntegrityFailureReason.SOURCE_VERSION_MISMATCH not in report.result_for("E-001").reasons
+
+
+# ---------------------------------------------------------------------------
+# "missing hash -> fail" (no governed reference resolves for this item)
+# ---------------------------------------------------------------------------
+
+
+def test_missing_governed_record_fails_closed():
+    """No GovernedProvenanceRecord exists for this items
+    (source_id, chunk_id) at all -- fails closed (MISSING_EXPECTED_RECORD),
+    never silently falls back to treating the item as valid just because
+    nothing contradicts it (Task 5's own anti-pattern warning: "Do not
+    silently recompute a missing/incorrect expected hash and then treat
+    the item as valid")."""
+    empty_index = GovernedProvenanceIndex([])
+
+    report = validate_integrity(_package([_valid_item()]), provenance_index=empty_index)
+
+    result = report.result_for("E-001")
+    assert result.valid is False
+    assert result.reasons == (IntegrityFailureReason.MISSING_EXPECTED_RECORD,)
+    assert report.rejected_evidence_ids == ("E-001",)
+
+
+def test_missing_governed_record_never_falls_back_to_self_consistency_alone():
+    """Even a perfectly self-consistent item (real content, real matching
+    hash) must still fail when no governed record resolves for it --
+    self-consistency is not a substitute for a governed reference."""
+    empty_index = GovernedProvenanceIndex([])
+    item_data = _valid_item()  # content_hash is already the real hash of content
+    assert stable_content_hash(item_data["content"]) == item_data["content_hash"]
+
+    report = validate_integrity(_package([item_data]), provenance_index=empty_index)
+
+    assert report.result_for("E-001").valid is False
+
+
+# ---------------------------------------------------------------------------
+# GovernedProvenanceIndex
+# ---------------------------------------------------------------------------
+
+
+def test_governed_provenance_index_resolves_by_source_and_chunk_id():
+    record = _governed_record(source_id="SRC-POLICY-A", chunk_id="CH-001")
+    index = GovernedProvenanceIndex([record])
+
+    assert index.get("SRC-POLICY-A", "CH-001") == record
+    assert index.get("SRC-POLICY-A", "CH-DIFFERENT") is None
+    assert index.get("SRC-DIFFERENT", "CH-001") is None
+
+
+def test_governed_provenance_index_empty_by_default():
+    assert GovernedProvenanceIndex().get("anything", "anything") is None
+
+
+# ---------------------------------------------------------------------------
+# Package-level aggregation / IntegrityReport.result_for
+# ---------------------------------------------------------------------------
+
+
+def test_validate_integrity_aggregates_multiple_items():
+    good_content = "Synthetic Supplier Alpha uses net 30 payment terms."
+    bad_item = _valid_item(evidence_id="E-002", chunk_id="CH-002", content_hash="not-a-real-hash")
+    package = _package(
+        [
+            _valid_item(
+                evidence_id="E-001",
+                chunk_id="CH-001",
+                content=good_content,
+                content_hash=stable_content_hash(good_content),
+            ),
+            bad_item,
+        ]
+    )
+    index = GovernedProvenanceIndex(
+        [
+            _governed_record(source_id="SRC-POLICY-A", chunk_id="CH-001", content_hash=stable_content_hash(good_content)),
+            # No record for CH-002 at all -- E-002 fails closed regardless of its own hash.
+        ]
+    )
+
+    report = validate_integrity(package, provenance_index=index)
+
+    assert report.validated_evidence_ids == ("E-001",)
+    assert report.rejected_evidence_ids == ("E-002",)
+    assert report.result_for("E-002").reasons == (IntegrityFailureReason.MISSING_EXPECTED_RECORD,)
+
+
+def test_integrity_report_result_for_unknown_evidence_id_raises_key_error():
+    index = GovernedProvenanceIndex([_governed_record()])
+    report = validate_integrity(_package([_valid_item()]), provenance_index=index)
+
+    with pytest.raises(KeyError):
+        report.result_for("E-DOES-NOT-EXIST")
+
+
+def test_validate_integrity_never_mutates_inputs():
+    index = GovernedProvenanceIndex([_governed_record()])
+    package = _package([_valid_item()])
+    items_before = package.items
+
+    validate_integrity(package, provenance_index=index)
+
+    assert package.items == items_before
+
+
+# ---------------------------------------------------------------------------
+# gate_c_cases.json GC-001/GC-004, adapted for the expected-vs-governed split
+# Task 5's design maps onto directly (unlike Task 4's self-consistency-only
+# check, this is exactly what expected_content_hash/provided_content_hash
+# were made for).
+# ---------------------------------------------------------------------------
+
+
+def test_gc001_valid_payment_evidence_passes_integrity_against_governed_record():
+    case = CASES_BY_ID["GC-001"]
+    raw_item = case["items"][0]
+    content = raw_item["content"]
+    real_hash = stable_content_hash(content)
+    item_data = _item_from_case(case, matching_hash=True)
+    index = GovernedProvenanceIndex(
+        [
+            GovernedProvenanceRecord(
+                source_id=raw_item["source_id"],
+                chunk_id=raw_item["chunk_id"],
+                source_version=raw_item["source_version"],
+                content_hash=real_hash,  # provided_content_hash == expected_content_hash in this fixture
+            )
+        ]
+    )
+
+    report = validate_integrity(_package([item_data]), provenance_index=index)
+
+    result = report.result_for(raw_item["evidence_id"])
+    assert result.valid is True
+    assert result.reasons == ()
+
+
+def test_gc004_hash_mismatch_caught_even_when_self_consistent():
+    """GC-004's real intent (expected_content_hash != provided_content_hash):
+    the returned item was forged to be internally self-consistent (its own
+    hash was recomputed to match its own, mutated content), but the
+    governed record -- untouched by the forgery -- still holds the
+    original, correct hash. validate_integrity() is what catches this;
+    validate_provenance()'s self-consistency check alone would not."""
+    case = CASES_BY_ID["GC-004"]
+    raw_item = case["items"][0]
+    mutated_content = raw_item["content"]
+    item_data = _item_from_case(case, matching_hash=True)  # self-consistent: forged hash matches mutated content
+    original_content = "Synthetic Supplier Alpha uses net 5 payment terms (original, before mutation)."
+    index = GovernedProvenanceIndex(
+        [
+            GovernedProvenanceRecord(
+                source_id=raw_item["source_id"],
+                chunk_id=raw_item["chunk_id"],
+                source_version=raw_item["source_version"],
+                content_hash=stable_content_hash(original_content),  # what governed ingestion actually recorded
+            )
+        ]
+    )
+    assert stable_content_hash(mutated_content) == item_data["content_hash"]  # self-consistency alone would pass
+
+    report = validate_integrity(_package([item_data]), provenance_index=index)
+
+    result = report.result_for(raw_item["evidence_id"])
+    assert result.valid is False
+    assert IntegrityFailureReason.CONTENT_HASH_MISMATCH not in result.reasons
+    assert IntegrityFailureReason.EXPECTED_HASH_MISMATCH in result.reasons
