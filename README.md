@@ -1324,11 +1324,11 @@ before the Model Gateway: Gate-A/lane selection decide what a request
 *means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
 decides whether the *evidence retrieval actually returned* may be trusted
 enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
-"Retrieval success is not evidence validity"). Tasks 1–11 are implemented
-— the full evidence-quality boundary, Gate-C's own decision contract and
-filtering behavior, and the no-generation-fall-through proof — and the
-sections below will grow as the remaining integration/observability/
-artifact tasks land.
+"Retrieval success is not evidence validity"). Tasks 1–12 are implemented
+— the full evidence-quality boundary, Gate-C's own decision contract,
+filtering behavior, the no-generation-fall-through proof, and Gate-B scope
+preservation — and the sections below will grow as the remaining
+integration/observability/artifact tasks land.
 
 - `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
   supplied `day11_pack/` (same convention as `data/day09_pack/` /
@@ -1691,17 +1691,39 @@ and conflicts are all built and independently tested.
   AST/source-inspection ordering proof that the correct harness checks
   first and the wrong one doesn't.
 
+- Task 12 (Preserve Gate-B scope) needed no new production code — it was
+  already true by construction: `validate_provenance()`'s own
+  `_check_gate_b_scope()` (Task 4) is one of several inputs
+  `GateC.evaluate()` accumulates per-item reasons from
+  (`item_reasons[...].extend(...)`, never reset/overwritten by a later
+  check), `evaluate()`'s signature has no parameter for a role/identity/
+  scope override, and completeness/conflicts are only ever computed over
+  the already-narrowed `validated_evidence_ids`. `src/aico/control/
+  gate_c.py`'s docstring gained a dedicated "Task 12" section explaining
+  this explicitly, and `tests/test_day11_gate_c.py` gained a dedicated
+  section proving each of Task 12's four bullets: evidence above Gate-B's
+  permitted classification is rejected; an otherwise-flawless item (active
+  source, allowed type, correct hash, fresh) still fails purely on scope,
+  proven paired against the identical item minus the violation (which
+  *does* allow); "filtering cannot reintroduce a disallowed item" — a
+  scope-violating item that is the *only* one that could complete required
+  coverage still correctly degrades the decision to `insufficient_evidence`
+  rather than being let back in; an item failing scope *and* every other
+  check simultaneously still carries the scope reason among its others
+  (proving accumulation, not overwriting); and a structural signature
+  check that `evaluate()` has no authorization-widening parameter at all.
+
 ```
 uv run pytest -q
 uv run ruff check .
 uv run python -m aico.evals.day07
 ```
 
-278 new tests (`tests/test_day11_evidence_envelope.py`,
+283 new tests (`tests/test_day11_evidence_envelope.py`,
 `tests/test_day11_source_registry.py`, `tests/test_day11_gate_c_policy.py`,
 `tests/test_day11_provenance.py`, `tests/test_day11_freshness.py`,
 `tests/test_day11_completeness.py`, `tests/test_day11_conflicts.py`,
-`tests/test_day11_gate_c.py`, `tests/test_day11_no_fallthrough.py`), 1763
+`tests/test_day11_gate_c.py`, `tests/test_day11_no_fallthrough.py`), 1768
 passing overall (up from 1485 after Day 10) — the Day 7 regression gate is
 unmodified and still passes (`GATE: PASS`, `evals/baseline_v1.json`
 untouched).

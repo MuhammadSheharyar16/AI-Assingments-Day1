@@ -2,6 +2,9 @@
 Day 11 Task 9 -- the Gate-C decision contract (`src/aico/control/gate_c.py`).
 Day 11 Task 10 -- filtering behavior (proven here too; see `gate_c.py`'s
 own docstring for why the two are one algorithm, not two modules).
+Day 11 Task 12 -- preserve Gate-B scope (also folded in, its own dedicated
+section below -- see `gate_c.py`'s own docstring for why this is not a
+separate check either).
 
 Structure: the first section proves all four Task 9 decision outcomes
 individually, against real committed `SourceRegistry`/`GateCPolicyRegistry`
@@ -442,6 +445,136 @@ def test_validated_evidence_ids_empty_for_every_non_allow_decision(gate_c):
     )
     assert decision.decision is not GateCStatus.ALLOW
     assert decision.validated_evidence_ids == ()
+
+
+# ===========================================================================
+# Task 12 -- Preserve Gate-B scope
+# ===========================================================================
+
+# `test_reject_cross_tenant_evidence` (Task 9 section above) already
+# proves "evidence from another tenant is rejected" -- this section proves
+# Task 12's remaining three bullets.
+
+
+def test_evidence_above_permitted_classification_rejected(gate_c):
+    """"Evidence above Gate-B permitted classification is rejected" --
+    Gate-B granted `internal` only; an item claiming `restricted` (a
+    *narrower* classification is never implied by a *wider* one being
+    permitted, `DataClassification`'s own no-hierarchy contract) is
+    rejected even though nothing else about it is wrong."""
+    package = _package(
+        [_item("E-A", source_id="SRC-POLICY-A", facets=["supplier_identity", "payment_terms"], data_classification="restricted")]
+    )
+    decision = gate_c.evaluate(
+        gate_b_decision=_allow_decision(data_classes=(DataClassification.INTERNAL,)),
+        package=package,
+        request=GateCRequest(request_kind="payment_terms_only"),
+    )
+
+    assert decision.decision is GateCStatus.REJECT
+    assert "data_classification_out_of_scope" in decision.reason_codes
+    assert decision.validated_evidence_ids == ()
+
+
+def test_otherwise_trusted_source_still_fails_on_scope_violation(gate_c):
+    """"Evidence from an otherwise trusted source still fails if it
+    violates effective scope" -- `SRC-POLICY-A` is active, governed for
+    `INT-POLICY-QUESTION`, an allowed `source_type` for this rule, its
+    content hash matches, and it is fresh; only its `tenant_id` violates
+    Gate-B's effective scope. Proven paired with the identical item minus
+    the scope violation, which *does* allow -- isolating that the scope
+    check alone is what flips the outcome, not some other defect."""
+    trusted_but_out_of_scope = _item(
+        "E-A", source_id="SRC-POLICY-A", facets=["supplier_identity", "payment_terms"], tenant_id="TENANT-B"
+    )
+    in_scope_control = _item("E-A", source_id="SRC-POLICY-A", facets=["supplier_identity", "payment_terms"])
+
+    rejected = gate_c.evaluate(
+        gate_b_decision=_allow_decision(tenant_ids=("TENANT-A",)),
+        package=_package([trusted_but_out_of_scope]),
+        request=GateCRequest(request_kind="payment_terms_only"),
+    )
+    allowed = gate_c.evaluate(
+        gate_b_decision=_allow_decision(tenant_ids=("TENANT-A",)),
+        package=_package([in_scope_control]),
+        request=GateCRequest(request_kind="payment_terms_only"),
+    )
+
+    assert rejected.decision is GateCStatus.REJECT
+    assert "tenant_out_of_scope" in rejected.reason_codes
+    assert allowed.decision is GateCStatus.ALLOW
+
+
+def test_filtering_cannot_reintroduce_a_disallowed_item(gate_c):
+    """"Filtering cannot reintroduce a disallowed item" -- the
+    scope-violating item is the *only* one that could complete required-
+    facet coverage. Excluding it correctly degrades the decision to
+    `insufficient_evidence`; nothing about needing its facet coverage
+    "reintroduces" it into `validated_evidence_ids`, and no other item's
+    passing check can restore it once a scope violation has been
+    recorded."""
+    package = _package(
+        [
+            _item("E-in-scope", source_id="SRC-POLICY-A", facets=["supplier_identity"]),
+            _item(
+                "E-out-of-scope",
+                source_id="SRC-CONTRACT-A",
+                facets=["payment_terms"],
+                tenant_id="TENANT-B",  # the only violation -- everything else about this item is valid
+            ),
+        ]
+    )
+    decision = gate_c.evaluate(
+        gate_b_decision=_allow_decision(tenant_ids=("TENANT-A",)),
+        package=package,
+        request=GateCRequest(request_kind="payment_terms_only"),
+    )
+
+    assert decision.decision is GateCStatus.INSUFFICIENT_EVIDENCE
+    assert decision.missing_facets == ("payment_terms",)
+    assert "E-out-of-scope" not in decision.validated_evidence_ids
+    assert decision.rejected_evidence_ids == ("E-out-of-scope",)
+
+
+def test_scope_violation_reason_survives_every_other_passing_check(gate_c):
+    """Structural proof that Gate-C's own aggregation only ever
+    *accumulates* per-item reasons (`list.extend`), never resets or
+    overwrites them -- an item that fails registry+policy gating,
+    provenance's content-hash check, freshness *and* Gate-B scope all at
+    once is still unambiguously rejected on scope grounds among its
+    reasons, exactly as an item failing on scope alone is."""
+    package = _package(
+        [
+            _item(
+                "E-A",
+                source_id="SRC-POLICY-A",
+                facets=["supplier_identity", "payment_terms"],
+                tenant_id="TENANT-B",
+                content_hash="not-a-real-hash",
+            )
+        ]
+    )
+    decision = gate_c.evaluate(
+        gate_b_decision=_allow_decision(tenant_ids=("TENANT-A",)),
+        package=package,
+        request=GateCRequest(request_kind="payment_terms_only"),
+    )
+
+    assert decision.decision is GateCStatus.REJECT
+    assert "tenant_out_of_scope" in decision.reason_codes
+    assert "content_hash_mismatch" in decision.reason_codes
+
+
+def test_gate_c_evaluate_has_no_authorization_widening_parameters(gate_c):
+    """"Gate-C is an evidence-quality boundary, not a second authorization
+    system" -- structurally, `evaluate()` has no parameter through which a
+    caller could assert a role, an identity, or a tenant/classification
+    override; the only scope Gate-C ever sees is whatever `gate_b_decision`
+    itself already grants."""
+    import inspect
+
+    params = set(inspect.signature(gate_c.evaluate).parameters)
+    assert params == {"gate_b_decision", "package", "request", "provenance_index"}
 
 
 # ===========================================================================

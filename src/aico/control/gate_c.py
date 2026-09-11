@@ -8,6 +8,21 @@ module: Gate-C cannot decide `allow` without first knowing exactly which
 evidence survived every other Day 11 check, so "which items are still
 valid" and "what does that set of survivors justify" are one algorithm,
 not two).
+Day 11 Task 12 -- preserve Gate-B scope (also folded in, not a separate
+check: it is exactly `_check_gate_b_scope()` inside `validate_provenance()`
+(Task 4), reused here as one input among several). Gate-C may further
+*narrow* what Gate-B already granted (rejecting a tenant/classification
+Gate-B never authorized) but has no code path that could ever *widen* it:
+`evaluate()`'s own signature has no parameter for a role, an identity, or
+a scope override, and the only scope value it ever reads is whatever
+`gate_b_decision.effective_tenant_scope`/`effective_data_classes` already
+grants -- "Gate-C is an evidence-quality boundary, not a second
+authorization system." A scope-violating item's reason is *accumulated*
+alongside every other check's (`item_reasons[...].extend(...)`, never
+reset or overwritten), and only ever removed from consideration by being
+*excluded* from `validated_evidence_ids` -- there is no path in this
+module through which "the request needed that item's facet" or "every
+other check on it passed" could reintroduce it.
 
 "Gate-A/lane selection decided what a request means and which governed
 route it takes; Gate-B decided whether the trusted caller may proceed,
