@@ -52,6 +52,15 @@ and `apply_disclosure()`/`SafeDisclosureView` (`disclosure.py`), the safe-
 disclosure view builder that combines all of the above into the final,
 policy-approved output for one `GateBDecision` and its candidate
 `ProtectedField`s.
+
+Day 11 Task 9 adds `GateC` (`gate_c.py`) and its typed result,
+`GateCDecision`/`GateCStatus`/`GateCReasonCode`/`GateCRequest` (same
+module) -- the deterministic evidence-trust/quality boundary, run from a
+`GateBDecision` plus a candidate `EvidencePackage` (`aico.evidence`,
+Day 11 Tasks 1-8), before any evidence reaches the Model Gateway. Day 11
+Task 10's filtering behavior is folded into the same `GateC.evaluate()`
+algorithm -- see `gate_c.py`'s own docstring for why the two are
+inseparable.
 """
 from aico.control.config import (
     DEFAULT_CONTROL_PLANE_CONFIG_PATH,
@@ -74,6 +83,7 @@ from aico.control.errors import (
 )
 from aico.control.gate_a import GateA
 from aico.control.gate_b import GateB, GateBRequest
+from aico.control.gate_c import GateC, GateCDecision, GateCReasonCode, GateCRequest, GateCStatus
 from aico.control.lane_selector import LaneSelector
 from aico.control.models import GateADecision, GateAStatus, GateBDecision, GateBStatus, LaneDecision
 from aico.control.ontology import (
@@ -154,4 +164,9 @@ __all__ = [
     "ProtectedField",
     "DisclosedField",
     "SafeDisclosureView",
+    "GateC",
+    "GateCDecision",
+    "GateCStatus",
+    "GateCReasonCode",
+    "GateCRequest",
 ]

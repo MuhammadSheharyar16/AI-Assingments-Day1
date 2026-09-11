@@ -1324,12 +1324,12 @@ before the Model Gateway: Gate-A/lane selection decide what a request
 *means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
 decides whether the *evidence retrieval actually returned* may be trusted
 enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
-"Retrieval success is not evidence validity"). Tasks 1–8 (the full
-evidence-quality boundary: envelope, source registry, Gate-C policy,
-provenance, integrity, freshness, completeness and conflicts) are
-implemented — only Gate-C's own decision boundary (Task 9,
-`src/aico/control/gate_c.py`) and the remaining integration tasks are
-left, and the sections below will grow as they land.
+"Retrieval success is not evidence validity"). Tasks 1–10 are implemented
+— the full evidence-quality boundary (envelope, source registry, Gate-C
+policy, provenance, integrity, freshness, completeness, conflicts) plus
+Gate-C's own decision contract and filtering behavior — and the sections
+below will grow as the remaining integration/observability/artifact tasks
+land.
 
 - `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
   supplied `day11_pack/` (same convention as `data/day09_pack/` /
@@ -1613,9 +1613,52 @@ left, and the sections below will grow as they land.
 
 This completes the Day 11 evidence-quality boundary — envelope, source
 registry, Gate-C policy, provenance, integrity, freshness, completeness
-and conflicts are all built and independently tested; only Gate-C's own
-decision boundary (Task 9) remains to compose them into `allow`/
-`insufficient_evidence`/`clarify`/`reject`.
+and conflicts are all built and independently tested.
+
+- `src/aico/control/gate_c.py` (Task 9, Task 10 folded in) — `GateC`, the
+  Gate-C decision boundary, `@dataclass`-built once against a loaded
+  `SourceRegistry`/`GateCPolicyRegistry` and reused per request (mirrors
+  `GateB`'s own shape). `GateC.evaluate()` consumes exactly Task 9's five
+  named inputs (a real `GateBDecision`, `package.intent_id` +
+  `GateCRequest.request_kind` for "governed request/intent metadata", the
+  candidate `EvidencePackage`, `SourceRegistry`, `GateCPolicyRegistry` —
+  plus an optional Task 5 `GovernedProvenanceIndex`, run only when
+  supplied) and runs an ordered, fail-closed algorithm: Gate-B must have
+  actually granted `ALLOW` (never widened); an unresolved `request_kind`
+  is `clarify`; an unresolved governed rule is `reject`; every candidate
+  item is checked independently against Task 2/3's own registry+policy
+  gating (source exists/active/intent-compatible/its `source_type` is
+  governed for this rule — the "trusted source types" concept nothing
+  else had enforced yet) plus Tasks 4/5/6's validators, producing
+  `validated_evidence_ids`/`rejected_evidence_ids`; Task 8's conflict
+  check runs only over the survivors and an unresolved conflict rejects
+  outright; a non-empty candidate set with zero survivors rejects (broken
+  evidence, not merely incomplete); below `minimum_valid_items` or missing
+  required-facet coverage (checked against *the governed rule's own*
+  `required_facets`, never the caller-supplied `package.required_facets`)
+  is `insufficient_evidence`; otherwise `allow`, using only the validated
+  set. `GateCDecision` carries every Task 9 required field
+  (`decision`/`validated_evidence_ids`/`rejected_evidence_ids`/
+  `reason_codes`/`missing_facets`/`conflict_facets`/`freshness_summary`/
+  `policy_version`/`source_registry_version`) — `validated_evidence_ids`
+  is populated for `allow` only (least privilege, mirrors
+  `GateBDecision.effective_tenant_scope`).
+- `tests/test_day11_gate_c.py` (Task 16's named file) — all four decision
+  outcomes proven individually against real committed data (including
+  every registry+policy gating reason, a resolved-vs-unresolved conflict
+  pair, and Gate-B `DENY` never being overridable); Task 10's own two
+  worked examples (5 retrieved/2 invalid/3 valid, allow vs. insufficient
+  depending on whether the survivors still cover required facets); a
+  throwaway policy proving `minimum_valid_items` (every real committed
+  rule's is 1, so this needs a hand-built rule requiring 2); decision-
+  provenance/purity/statelessness checks; and all five real
+  `gate_c_cases.json` cases replayed end-to-end, each reaching its own
+  documented `expected_decision`.
+- `src/aico/control/__init__.py` extended with `GateC`/`GateCDecision`/
+  `GateCStatus`/`GateCReasonCode`/`GateCRequest` — the first `aico.control`
+  module to import from `aico.evidence`, proven not to introduce an import
+  cycle (`aico.evidence` already imports specific `aico.control`
+  submodules directly, never `aico.control`'s own aggregated `__init__`).
 
 ```
 uv run pytest -q
@@ -1623,13 +1666,13 @@ uv run ruff check .
 uv run python -m aico.evals.day07
 ```
 
-234 new tests (`tests/test_day11_evidence_envelope.py`,
+265 new tests (`tests/test_day11_evidence_envelope.py`,
 `tests/test_day11_source_registry.py`, `tests/test_day11_gate_c_policy.py`,
 `tests/test_day11_provenance.py`, `tests/test_day11_freshness.py`,
-`tests/test_day11_completeness.py`, `tests/test_day11_conflicts.py`), 1719
-passing overall (up from 1485 after Day 10) — the Day 7 regression gate is
-unmodified and still passes (`GATE: PASS`, `evals/baseline_v1.json`
-untouched).
+`tests/test_day11_completeness.py`, `tests/test_day11_conflicts.py`,
+`tests/test_day11_gate_c.py`), 1750 passing overall (up from 1485 after
+Day 10) — the Day 7 regression gate is unmodified and still passes
+(`GATE: PASS`, `evals/baseline_v1.json` untouched).
 
 **Environment note:** this repository's `.venv` was originally copied
 forward from the Day 10 project directory rather than created fresh here.
