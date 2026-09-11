@@ -1324,12 +1324,12 @@ before the Model Gateway: Gate-A/lane selection decide what a request
 *means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
 decides whether the *evidence retrieval actually returned* may be trusted
 enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
-"Retrieval success is not evidence validity"). Tasks 1–15 are implemented
-— the full evidence-quality boundary, Gate-C's own decision contract,
-filtering behavior, the no-generation-fall-through proof, Gate-B scope
-preservation, RAG-flow integration, decision-provenance observability, and
-the required artifacts — and the sections below will grow as the
-remaining test-suite task lands.
+"Retrieval success is not evidence validity"). All 16 tasks are
+implemented — the full evidence-quality boundary, Gate-C's own decision
+contract, filtering behavior, the no-generation-fall-through proof, Gate-B
+scope preservation, RAG-flow integration, decision-provenance
+observability, the required artifacts, and the required-coverage
+regression audit.
 
 - `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
   supplied `day11_pack/` (same convention as `data/day09_pack/` /
@@ -1856,6 +1856,28 @@ and conflicts are all built and independently tested.
     `GateC.evaluate()` decision tying freshness + completeness +
     conflicts together into a real `allow`.
 
+- `tests/test_day11_regression.py` (Task 16's named file) — the required-
+  coverage audit: a docstring table mapping every Task 16 row to the
+  test(s) across the other ten Day 11 test files that actually prove it
+  (never existence-only — each row names a behavioral assertion), plus
+  the four rows no other Day 11 file owns, each re-run for real rather
+  than assumed from "the other tests still pass": the real Day 7
+  evaluation CLI against an isolated `--artifacts-dir` (the committed
+  `artifacts/day07/*` untouched); Day 8's own same-owner/cross-user/
+  cross-tenant/guessed-session-id isolation matrix against a real
+  `MemorySessionService`; Day 9's own exact/synonym/ambiguous/unsupported
+  classification table and every governed lane outcome against a real
+  `GateA`/`LaneSelector`; and Day 10's own same-tenant-allow/cross-tenant-
+  deny-before-data-access plus allow/redact/deny disclosure behavior
+  against a real `GateB`/`apply_disclosure()`.
+
+Day 11 is now complete — all 16 tasks implemented, the full evidence-
+quality boundary (envelope → source registry → Gate-C policy →
+provenance/integrity → freshness → completeness → conflicts → Gate-C's
+own decision) built, integrated into the RAG flow, observable, documented
+with real artifacts, and covered by a required-coverage regression audit
+that keeps Day 7-10's own permanent gates green.
+
 ```
 uv run pytest -q
 uv run ruff check .
@@ -1863,15 +1885,16 @@ uv run python -m aico.evals.day07
 uv run python scripts/day11_generate_gate_c_artifacts.py
 ```
 
-309 new tests (`tests/test_day11_evidence_envelope.py`,
+313 new tests (`tests/test_day11_evidence_envelope.py`,
 `tests/test_day11_source_registry.py`, `tests/test_day11_gate_c_policy.py`,
 `tests/test_day11_provenance.py`, `tests/test_day11_freshness.py`,
 `tests/test_day11_completeness.py`, `tests/test_day11_conflicts.py`,
 `tests/test_day11_gate_c.py`, `tests/test_day11_no_fallthrough.py`,
 `tests/test_day11_control_plane_integration.py`,
-`tests/test_day11_observability.py`), 1794 passing overall (up from 1485
-after Day 10) — the Day 7 regression gate is unmodified and still passes
-(`GATE: PASS`, `evals/baseline_v1.json` untouched).
+`tests/test_day11_observability.py`, `tests/test_day11_regression.py`),
+1798 passing overall (up from 1485 after Day 10) — the Day 7 regression
+gate is unmodified and still passes (`GATE: PASS`, `evals/baseline_v1.json`
+untouched).
 
 **Environment note:** this repository's `.venv` was originally copied
 forward from the Day 10 project directory rather than created fresh here.
