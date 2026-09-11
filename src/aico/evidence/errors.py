@@ -1,14 +1,15 @@
 """
 Day 11 Task 1 -- typed evidence-boundary failures.
+Day 11 Task 2 -- typed governed-source-registry failures.
 
 `EvidenceError` is the base class every typed failure `aico.evidence`
 raises inherits from -- the same shape `OntologyRegistryError`
 (`control/errors.py`) and `PolicyRegistryError` give the ontology/Gate-B
 policy boundaries: one common ancestor a caller can catch broadly, plus
 narrow, documented subclasses for the specific failure. Later Day 11 tasks
-(source registry Task 2, Gate-C policy Task 3, provenance Task 4) add their
-own subclasses here as those boundaries are built; this file starts with
-the one Task 1 needs.
+(Gate-C policy Task 3, provenance Task 4) add their own subclasses here as
+those boundaries are built; this file so far carries Task 1's envelope
+error plus Task 2's source-registry pair.
 
 `EvidenceEnvelopeError` (Task 1) is raised when a raw candidate-evidence
 payload -- the actual evidence returned by retrieval / the protected data
@@ -54,3 +55,30 @@ class EvidenceEnvelopeError(EvidenceError):
     def __init__(self, message: str, *, field_path: str | None = None):
         self.field_path = field_path
         super().__init__(message)
+
+
+class SourceRegistryLoadError(EvidenceError):
+    """Raised by `SourceRegistry.load()` (`source_registry.py`, Task 2)
+    when the committed `evidence/source_registry.v1.json` cannot be read,
+    is not valid JSON, fails `SourceRegistryDocument`'s typed validation
+    (duplicate `source_id`, an `allowed_intents` entry naming an intent the
+    loaded `OntologyRegistry` does not govern, invalid `status`, missing
+    `registry_version`, ...), or fails the registry's own integrity check.
+    Mirrors `OntologyLoadError`/`PolicyLoadError`'s fail-loud contract --
+    there is never a silent fallback to an empty/default/permissive
+    registry."""
+
+
+class SourceRegistryLookupError(EvidenceError):
+    """Raised by `SourceRegistry.get_source()` (and the compatibility
+    checks built on it) when a given `source_id` does not exist in the
+    loaded, governed registry. Callers are expected to treat this the same
+    way `OntologyLookupError`/`PolicyLookupError` are treated -- fail
+    closed, never invent a fallback source record for an id the registry
+    does not govern (working rule: "unknown ... source cannot pass
+    Gate-C")."""
+
+    def __init__(self, kind: str, identifier: str):
+        self.kind = kind
+        self.identifier = identifier
+        super().__init__(f"unknown {kind}: {identifier!r}")

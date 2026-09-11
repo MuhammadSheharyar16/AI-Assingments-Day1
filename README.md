@@ -1324,8 +1324,8 @@ before the Model Gateway: Gate-A/lane selection decide what a request
 *means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
 decides whether the *evidence retrieval actually returned* may be trusted
 enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
-"Retrieval success is not evidence validity"). Only Task 1 is implemented
-so far — the sections below will grow as later tasks land.
+"Retrieval success is not evidence validity"). Only Tasks 1–2 are
+implemented so far — the sections below will grow as later tasks land.
 
 - `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
   supplied `day11_pack/` (same convention as `data/day09_pack/` /
@@ -1376,6 +1376,39 @@ so far — the sections below will grow as later tasks land.
   non-list `items`, a malformed nested item, a duplicate `evidence_id`),
   plus proof that a valid payload parses into real typed objects (not
   dicts) and that failures never leak Pydantic's own exception shape.
+- `evidence/source_registry.v1.json` (Task 2) — the committed, governed
+  source registry (byte-identical to the Day 11 resource pack's fixture;
+  see `evidence/README.md`). `src/aico/evidence/source_registry.py`
+  defines its typed shape (`SourceRegistryDocument` / `SourceRecord` /
+  `SourceStatus`, Task 2's field list — `source_id` / `source_type` /
+  `authority_level` / `owner` / `status` / `allowed_intents` /
+  `supported_facets` / `freshness_policy_id`) and `SourceRegistry`, the
+  read-only, typed loader/lookup service Gate-C (Task 9) will be built
+  against — mirroring `ontology_registry.py`/`policy_registry.py`'s
+  load/lookup shape, folded into one file since Day 11's own required
+  structure gives `evidence/` a single file per concern rather than a
+  model/registry pair. Duplicate `source_id` and an invalid `status` are
+  rejected at parse time; `allowed_intents` is cross-checked against the
+  real committed `OntologyRegistry`'s governed intent ids at load time
+  (the identical `known_intent_ids` context mechanism `policy_registry.py`
+  already uses for Gate-B's policy). `is_source_active()` folds "unknown"
+  and "disabled" into one `False` (Task 2's "unknown/disabled source
+  cannot pass Gate-C"); `supports_intent()`/`supports_facet()` give the
+  other two named "Required behavior" bullets ("source intent
+  compatibility is enforced" / "source supported facets are enforced") as
+  directly callable, fixture-proven predicates rather than something
+  Gate-C would otherwise have to reimplement inline.
+- `tests/test_day11_source_registry.py` (Task 16's named file) — proves
+  `SourceRegistryDocument`/`SourceRecord` directly against Pydantic
+  (fixture loads into typed objects, every required-validation reject
+  case, the ontology cross-reference mechanism with/without context) and
+  `SourceRegistry` end to end (loading the real committed file and every
+  documented failure mode, read-only collection accessors, `get_source`
+  resolving or raising `SourceRegistryLookupError`, and
+  `is_source_active`/`supports_intent`/`supports_facet` exercised against
+  the real committed registry's actual data — e.g. `SRC-ARCHIVE-A` is
+  disabled, `SRC-POLICY-A` does not support `INT-STRUCTURED-LOOKUP`,
+  `SRC-REFERENCE-A` does not support `payment_terms`).
 
 ```
 uv run pytest -q
@@ -1383,10 +1416,10 @@ uv run ruff check .
 uv run python -m aico.evals.day07
 ```
 
-24 new tests (`tests/test_day11_evidence_envelope.py`), 1509 passing
-overall (up from 1485 after Day 10) — the Day 7 regression gate is
-unmodified and still passes (`GATE: PASS`, `evals/baseline_v1.json`
-untouched).
+75 new tests (`tests/test_day11_evidence_envelope.py`,
+`tests/test_day11_source_registry.py`), 1560 passing overall (up from
+1485 after Day 10) — the Day 7 regression gate is unmodified and still
+passes (`GATE: PASS`, `evals/baseline_v1.json` untouched).
 
 **Environment note:** this repository's `.venv` was originally copied
 forward from the Day 10 project directory rather than created fresh here.

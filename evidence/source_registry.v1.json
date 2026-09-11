@@ -1,0 +1,66 @@
+{
+  "registry_version": "1.0",
+  "sources": [
+    {
+      "source_id": "SRC-POLICY-A",
+      "source_type": "policy_document",
+      "authority_level": 90,
+      "owner": "AICO Synthetic Procurement",
+      "status": "active",
+      "allowed_intents": [
+        "INT-POLICY-QUESTION"
+      ],
+      "supported_facets": [
+        "supplier_identity",
+        "payment_terms",
+        "invoice_window"
+      ],
+      "freshness_policy_id": "FRESH-POLICY-30D"
+    },
+    {
+      "source_id": "SRC-CONTRACT-A",
+      "source_type": "contract_record",
+      "authority_level": 100,
+      "owner": "AICO Synthetic Procurement",
+      "status": "active",
+      "allowed_intents": [
+        "INT-POLICY-QUESTION",
+        "INT-STRUCTURED-LOOKUP"
+      ],
+      "supported_facets": [
+        "supplier_identity",
+        "contract_status",
+        "payment_terms"
+      ],
+      "freshness_policy_id": "FRESH-CONTRACT-7D"
+    },
+    {
+      "source_id": "SRC-ARCHIVE-A",
+      "source_type": "archived_policy",
+      "authority_level": 50,
+      "owner": "AICO Synthetic Procurement",
+      "status": "disabled",
+      "allowed_intents": [
+        "INT-POLICY-QUESTION"
+      ],
+      "supported_facets": [
+        "payment_terms"
+      ],
+      "freshness_policy_id": "FRESH-POLICY-30D"
+    },
+    {
+      "source_id": "SRC-REFERENCE-A",
+      "source_type": "reference_record",
+      "authority_level": 80,
+      "owner": "AICO Synthetic Procurement",
+      "status": "active",
+      "allowed_intents": [
+        "INT-POLICY-QUESTION"
+      ],
+      "supported_facets": [
+        "invoice_window"
+      ],
+      "freshness_policy_id": "FRESH-POLICY-30D"
+    }
+  ]
+}
