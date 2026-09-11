@@ -8,8 +8,19 @@ individually, against real committed `SourceRegistry`/`GateCPolicyRegistry`
 data throughout; the second proves Task 10's own filtering examples
 ("5 retrieved, 2 invalid, 3 valid, required facets covered -> allow" /
 "... facet still missing -> insufficient_evidence") using the identical
-real data; the third replays all five real `gate_c_cases.json` cases
-end-to-end, reproducing each one's own `expected_decision`.
+real data, plus the freshness-dimension analog of the same pair (a stale
+item filtered out, allow-using-the-remainder vs. insufficient-when-it-was-
+needed) -- Task 10's own "remaining validated evidence still satisfies
+source trust / provenance / freshness / completeness / conflict policy"
+is proven dimension by dimension across this file: source trust and
+provenance via the two worked filtering examples themselves (an unknown
+source and a cross-tenant item, mixed with valid ones), freshness via its
+own pair here, completeness via the second worked example, and conflict
+policy via `test_reject_unresolved_conflict`/
+`test_conflict_resolved_by_governed_authority_does_not_reject` in the
+Task 9 section above; the third section replays all five real
+`gate_c_cases.json` cases end-to-end, reproducing each one's own
+`expected_decision`.
 
 Task 11 (no-generation-fall-through, with an instrumented fake Model
 Gateway) and Task 16's separately named `test_day11_no_fallthrough.py` are
@@ -363,6 +374,48 @@ def test_filtering_five_retrieved_two_invalid_required_facet_missing(gate_c):
     assert decision.decision is GateCStatus.INSUFFICIENT_EVIDENCE
     assert decision.missing_facets == ("invoice_window",)
     assert set(decision.rejected_evidence_ids) == {"E-4", "E-5"}
+
+
+def test_stale_item_filtered_out_allow_using_remaining(gate_c):
+    """Task 10's "remaining validated evidence still satisfies ...
+    freshness" -- the fifth dimension, exercised the same way source
+    trust/provenance/completeness already are above. `SRC-CONTRACT-A` is
+    governed by a 7-day (168h) freshness policy; this item is 10 days
+    stale and gets filtered out, but the surviving fresh item alone still
+    covers everything required."""
+    package = _package(
+        [
+            _item("E-fresh", source_id="SRC-POLICY-A", facets=["supplier_identity", "payment_terms"]),
+            _item("E-stale", source_id="SRC-CONTRACT-A", facets=["payment_terms"], source_updated_at="2026-09-01T00:00:00+05:00"),
+        ]
+    )
+    decision = gate_c.evaluate(
+        gate_b_decision=_allow_decision(), package=package, request=GateCRequest(request_kind="payment_terms_only")
+    )
+
+    assert decision.decision is GateCStatus.ALLOW
+    assert decision.validated_evidence_ids == ("E-fresh",)
+    assert decision.rejected_evidence_ids == ("E-stale",)
+
+
+def test_stale_item_filtered_out_insufficient_when_it_was_needed(gate_c):
+    """Task 10's paired counter-example for the freshness dimension: the
+    same stale item is the *only* one covering `payment_terms` -- once
+    filtered out, the surviving evidence no longer covers what the request
+    requires."""
+    package = _package(
+        [
+            _item("E-fresh", source_id="SRC-POLICY-A", facets=["supplier_identity"]),
+            _item("E-stale", source_id="SRC-CONTRACT-A", facets=["payment_terms"], source_updated_at="2026-09-01T00:00:00+05:00"),
+        ]
+    )
+    decision = gate_c.evaluate(
+        gate_b_decision=_allow_decision(), package=package, request=GateCRequest(request_kind="payment_terms_only")
+    )
+
+    assert decision.decision is GateCStatus.INSUFFICIENT_EVIDENCE
+    assert decision.missing_facets == ("payment_terms",)
+    assert decision.rejected_evidence_ids == ("E-stale",)
 
 
 def test_rejected_evidence_never_appears_in_validated_ids(gate_c):

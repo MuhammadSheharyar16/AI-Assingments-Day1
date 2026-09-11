@@ -1648,10 +1648,21 @@ and conflicts are all built and independently tested.
   every registry+policy gating reason, a resolved-vs-unresolved conflict
   pair, and Gate-B `DENY` never being overridable); Task 10's own two
   worked examples (5 retrieved/2 invalid/3 valid, allow vs. insufficient
-  depending on whether the survivors still cover required facets); a
-  throwaway policy proving `minimum_valid_items` (every real committed
-  rule's is 1, so this needs a hand-built rule requiring 2); decision-
-  provenance/purity/statelessness checks; and all five real
+  depending on whether the survivors still cover required facets), plus
+  the identical pair for the freshness dimension (a stale item filtered
+  out — allow using the fresh remainder, vs. insufficient when the stale
+  item was the only one covering a required facet) — Task 10's "remaining
+  validated evidence still satisfies source trust / provenance /
+  freshness / completeness / conflict policy" is proven dimension by
+  dimension: source trust and provenance through the worked filtering
+  examples themselves, freshness through its own pair, completeness
+  through the second worked example, conflict policy through the
+  resolved/unresolved conflict tests already in the Task 9 section — and
+  `rejected_evidence_ids` never overlapping `validated_evidence_ids`
+  proven directly ("rejected evidence must never be passed to
+  generation"); a throwaway policy proving `minimum_valid_items` (every
+  real committed rule's is 1, so this needs a hand-built rule requiring
+  2); decision-provenance/purity/statelessness checks; and all five real
   `gate_c_cases.json` cases replayed end-to-end, each reaching its own
   documented `expected_decision`.
 - `src/aico/control/__init__.py` extended with `GateC`/`GateCDecision`/
@@ -1666,11 +1677,11 @@ uv run ruff check .
 uv run python -m aico.evals.day07
 ```
 
-265 new tests (`tests/test_day11_evidence_envelope.py`,
+267 new tests (`tests/test_day11_evidence_envelope.py`,
 `tests/test_day11_source_registry.py`, `tests/test_day11_gate_c_policy.py`,
 `tests/test_day11_provenance.py`, `tests/test_day11_freshness.py`,
 `tests/test_day11_completeness.py`, `tests/test_day11_conflicts.py`,
-`tests/test_day11_gate_c.py`), 1750 passing overall (up from 1485 after
+`tests/test_day11_gate_c.py`), 1752 passing overall (up from 1485 after
 Day 10) — the Day 7 regression gate is unmodified and still passes
 (`GATE: PASS`, `evals/baseline_v1.json` untouched).
 
