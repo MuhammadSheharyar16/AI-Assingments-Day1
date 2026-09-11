@@ -33,6 +33,20 @@ from aico.observability.logging import log_event
 from aico.observability.metrics import record_compaction
 
 
+class _SessionWasReset(Exception):
+    """Internal sentinel, never raised across this module's public
+    boundary - raised from `record_turn`'s `_mutate` closure when the
+    session's `reset_count` (`memory/models.py`) has moved on from what
+    `record_turn`'s own `session` argument observed, meaning a `clear()`
+    (Task 8 reset) happened after this request loaded its session but
+    before this call's own save. Deliberately its own exception, distinct
+    from `SessionConflictError`: a normal concurrent turn-append from
+    another in-flight request bumps `version` but never `reset_count`,
+    and must still retry-and-append as usual (Task 9's "two writers
+    cannot silently overwrite each other's accepted turn") - only a
+    reset must stop this call from writing at all."""
+
+
 class SessionAccessError(ApiError):
     """Day 8 Task 4 - raised when a caller-supplied `session_id` does not
     resolve for the trusted identity making this request. Deliberately
@@ -152,6 +166,19 @@ def record_turn(
     compaction = {"occurred": False}
 
     def _mutate(current: SessionState) -> SessionState:
+        if current.reset_count != session.reset_count:
+            # The session was clear()-ed (Task 8 reset) after `session`
+            # (this request's own load, from `resolve_session`) was
+            # observed - `question`/`answer_text` above were computed
+            # from memory context that predates the reset. Persisting
+            # this turn now would silently re-populate a session the
+            # user just asked to be cleared; refuse instead, exactly as
+            # deliberately as the store already refuses a stale-version
+            # save (Task 9) or a stale-but-version-matching save against
+            # an expired session (Task 8). This is never retried, unlike
+            # SessionConflictError below - a reset is not something a
+            # retry could ever get past.
+            raise _SessionWasReset()
         # `current` is reloaded fresh on every retry attempt (Task 9) -
         # appending this call's own turns onto whatever is actually
         # stored right now, not onto a possibly-stale copy, is what makes
@@ -166,6 +193,20 @@ def record_turn(
 
     try:
         saved = memory_service.update_session(identity, session.session_id, _mutate)
+    except _SessionWasReset:
+        # The user cleared this session while this request was still in
+        # flight - this call's own turn (computed from pre-clear memory
+        # context) is discarded rather than persisted, so a `clear()`
+        # cannot be immediately followed by an in-flight request quietly
+        # repopulating the very session the user just reset.
+        log_event(
+            request_id=request_id,
+            correlation_id=correlation_id,
+            stage="session_lifecycle",
+            outcome="discarded_after_reset",
+            session_id=session.session_id,
+        )
+        return
     except SessionConflictError:
         # Task 9's bounded retry (update_session) was exhausted - a rare,
         # sustained-contention case, not the ordinary "detected once,

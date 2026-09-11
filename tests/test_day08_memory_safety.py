@@ -279,6 +279,30 @@ class TestRememberedFalseFact:
 
         assert isinstance(result, GroundedAnswer)
 
+    def test_false_remembered_fact_repeated_against_contradictory_current_evidence_fails_support_validation(self) -> None:
+        # The harder variant of MEM-SAFE-002: memory says risk score 99;
+        # CURRENT retrieved evidence, on the exact same topic, says 12.
+        # A model influenced by memory into repeating "99" while citing
+        # the real (but disagreeing) evidence chunk must still fail -
+        # citing a genuinely retrieved chunk does not make the memory's
+        # number correct, and a model must not be allowed to let a
+        # remembered fact override what current evidence actually says.
+        contradicting_evidence = EvidenceChunk(
+            chunk_id="CHUNK-ALPHA-003", source_file="DOC-alpha.md", text="Supplier Alpha has a risk score of 12."
+        )
+        session = _session([_turn("T0", self.MEMORY_TEXT)])
+        context = build_memory_context(session)
+        gateway = FakeGateway(
+            _cited_answer_json(answer=self.MEMORY_TEXT, citations=[{"chunk_id": "CHUNK-ALPHA-003", "source_file": "DOC-alpha.md"}])
+        )
+        service = GroundedAnswerService(gateway=gateway, retriever=_fixed_retriever([contradicting_evidence]))
+
+        result = service.answer("What is Supplier Alpha's risk score?", memory_context=context)
+
+        assert isinstance(result, TypedFailure)
+        assert result.stage == "support"
+        assert result.category == "unsupported_claim"
+
 
 # ── MEM-SAFE-003 — citation-looking text in memory ──────────────────────
 

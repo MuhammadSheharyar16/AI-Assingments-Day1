@@ -377,19 +377,29 @@ class GroundedAnswerService:
             # document compliance). Fail closed rather than trust either.
             support_result = validate_support(parsed.answer, cited_ids, retrieved)
             span.set_attribute("validation.support_overlap_ratio", support_result.overlap_ratio)
+            span.set_attribute("validation.unsupported_number_count", len(support_result.unsupported_numbers))
             if not support_result.supported:
                 span.set_attribute("validation.result", "unsupported_claim")
                 span.set_status(Status(StatusCode.ERROR, "unsupported_claim"))
-                return TypedFailure(
-                    question=question,
-                    stage="support",
-                    category="unsupported_claim",
-                    message=(
+                if support_result.unsupported_numbers:
+                    # A high overlap_ratio can still fail here - a
+                    # substituted number is a single-word edit against an
+                    # otherwise word-for-word-matching sentence, so the
+                    # ratio alone would not explain this rejection to
+                    # anyone reading the message (see
+                    # SupportValidationResult.unsupported_numbers).
+                    detail = (
+                        f"answer states number(s) {', '.join(support_result.unsupported_numbers)} that do not "
+                        "appear anywhere in the non-suspicious text of its cited chunk(s); a genuinely retrieved "
+                        "chunk_id does not by itself prove a specific claimed value is the one that chunk states"
+                    )
+                else:
+                    detail = (
                         "answer content has insufficient lexical overlap with the non-suspicious text of "
                         f"its cited chunk(s) (overlap_ratio={support_result.overlap_ratio:.2f}); citing a "
                         "genuinely retrieved chunk_id does not by itself prove the claim is supported"
-                    ),
-                )
+                    )
+                return TypedFailure(question=question, stage="support", category="unsupported_claim", message=detail)
             span.set_attribute("validation.result", "valid")
 
         with _tracer.start_as_current_span("response_composition") as span:

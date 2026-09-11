@@ -96,7 +96,21 @@ def _memory_block(context: MemoryContext | None) -> str | None:
     model has no chunk-ID-shaped token here to even attempt citing from
     memory (module docstring's citation-immunity note). Only
     `SessionTurn.content`/`MemorySummary.text` - the conversational
-    content itself - ever appears."""
+    content itself - ever appears.
+
+    Token-budget note: this adds a small, FIXED block of labelling/safety
+    framing text (the two lines below) on top of `context`'s own already-
+    budgeted content (`MemoryBudget.max_memory_tokens`,
+    `memory/context_builder.py`). That framing is intentionally not
+    counted against `max_memory_tokens` - it never grows with session
+    size, unlike the turns/summary it wraps, so it is not the "unbounded
+    raw history" that budget exists to prevent. It is also never worth
+    shrinking to fit inside it: this framing is what keeps memory from
+    being treated as a trusted instruction or as evidence at all (Task
+    7) - removing it to hit a token count would be actively unsafe, not
+    an optimization. A caller sizing an end-to-end token ceiling for this
+    whole rendered section must budget for this fixed overhead on top of
+    `max_memory_tokens`, not expect the two figures to match."""
 
     if context is None or context.is_empty:
         return None

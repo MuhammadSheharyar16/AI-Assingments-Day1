@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 
-from aico.memory.context_builder import build_memory_context
+from aico.memory.context_builder import MemoryBudget, build_memory_context, estimate_tokens
 from aico.memory.models import SESSION_STATE_SCHEMA_VERSION, MemorySummary, SessionState, SessionTurn, TurnRole
 from aico.platform.model_gateway import CallMetadata, ChatRequest, ChatResult
 from aico.rag.answer_service import GroundedAnswer, GroundedAnswerService, TypedFailure
@@ -171,6 +171,32 @@ class TestMemoryIsSeparatelyLabelled:
         assert "TURN-42" not in prompt.memory_message.content
         assert "TURN-777" not in prompt.memory_message.content
         assert "7" not in prompt.memory_message.content  # no stray summary_version digit rendered
+
+    def test_rendered_memory_section_carries_a_fixed_framing_overhead_beyond_the_token_budget(self) -> None:
+        # A prior review round flagged that the fully-rendered SESSION
+        # MEMORY section is noticeably larger than `MemoryContext.token_count`
+        # (the selected-content figure `max_memory_tokens` actually bounds -
+        # `context_builder.py`'s `MemoryBudget` docstring). This documents
+        # and pins that gap rather than leaving it as an undocumented
+        # surprise: the difference is the section's own fixed labelling/
+        # safety framing text, which does not grow with session size and
+        # is not the "unbounded raw history" the budget exists to guard
+        # against - it must never shrink or disappear to fit a budget,
+        # since it is what keeps memory from being treated as a trusted
+        # instruction or as evidence at all (Task 7).
+        session = _session([_turn("T0", content="word " * 30)])
+        budget = MemoryBudget(max_memory_tokens=40, max_recent_turns=4)
+        context = build_memory_context(session, budget=budget)
+
+        prompt = build_prompt("current question", [_TRUE_EVIDENCE], context)
+        rendered_tokens = estimate_tokens(prompt.memory_message.content)
+
+        assert context.token_count <= budget.max_memory_tokens  # the selector's own promise still holds
+        assert rendered_tokens > context.token_count  # the rendered section is larger - the framing overhead
+        # The overhead is a small, fixed cost of the two labelling/safety
+        # sentences `_memory_block` always prepends - not a per-turn cost
+        # that would scale with session size.
+        assert rendered_tokens - context.token_count < 100
 
 
 # ── Memory chunk/turn IDs cannot satisfy citation validation ──────────────

@@ -189,6 +189,24 @@ class TestGet:
         assert str(wrong_owner.value) == str(nonexistent.value)
         assert wrong_owner.value.reason == nonexistent.value.reason == "not_found"
 
+    def test_mutating_a_returned_session_object_never_reaches_stored_state(self, store: SessionStore) -> None:
+        # Regression: a `SessionState` handed back by the store must be a
+        # defensive copy, never a live reference into the store's own
+        # internal state - otherwise a caller mutating a mutable field in
+        # place (e.g. `session.recent_turns.append(...)`) could silently
+        # change what is "stored" without ever calling `save()`, bypassing
+        # the version-based optimistic-concurrency contract entirely.
+        created = store.create(tenant_id=TENANT_A, user_id=USER_1)
+
+        loaded = store.get(tenant_id=TENANT_A, user_id=USER_1, session_id=created.session_id)
+        loaded.recent_turns.append(
+            SessionTurn(turn_id="SNEAKY", role=TurnRole.USER, timestamp=loaded.created_at, content="direct mutation")
+        )
+
+        reloaded = store.get(tenant_id=TENANT_A, user_id=USER_1, session_id=created.session_id)
+        assert reloaded.recent_turns == []
+        assert reloaded.version == 1
+
 
 class TestSave:
     def test_save_persists_updated_content_and_increments_version(self, store: SessionStore, clock: FakeClock) -> None:
@@ -261,6 +279,44 @@ class TestExpire:
         session = store.create(tenant_id=TENANT_A, user_id=USER_1)
         with pytest.raises(SessionNotFoundError):
             store.expire(tenant_id=TENANT_A, user_id=USER_2, session_id=session.session_id)
+
+    def test_stale_save_cannot_resurrect_an_administratively_expired_session(self, store: SessionStore) -> None:
+        # Regression: a caller can hold a `SessionState` snapshot taken
+        # BEFORE `expire()` was called - its own `version` still matches
+        # whatever is stored, since `expire()` is itself a real,
+        # version-bumping mutation (like `clear()`). Without an explicit
+        # expiry check in `save()` itself, that stale-but-version-valid
+        # snapshot could be saved back and silently restore the old,
+        # future `expires_at` - un-expiring a session `expire()` (or TTL)
+        # already closed off. `save()` must re-check `expires_at` on the
+        # STORED record on every write, not trust the caller's snapshot.
+        pre_expire_snapshot = store.create(tenant_id=TENANT_A, user_id=USER_1, ttl_seconds=3600.0)
+
+        store.expire(tenant_id=TENANT_A, user_id=USER_1, session_id=pre_expire_snapshot.session_id)
+
+        with pytest.raises(SessionNotFoundError) as excinfo:
+            store.save(pre_expire_snapshot)
+        assert excinfo.value.reason == "expired"
+
+        # And the session must still be unreachable afterward - the
+        # rejected save must not have partially applied anything.
+        with pytest.raises(SessionNotFoundError) as excinfo:
+            store.get(tenant_id=TENANT_A, user_id=USER_1, session_id=pre_expire_snapshot.session_id)
+        assert excinfo.value.reason == "expired"
+
+    def test_stale_save_cannot_resurrect_a_ttl_expired_session(self, store: SessionStore, clock: FakeClock) -> None:
+        # Same regression as above, but via ordinary TTL elapsing rather
+        # than an administrative `expire()` call - the version-bumping
+        # defense from `expire()` above does not apply here at all (TTL
+        # expiry never touches `version`), so this proves `save()`'s own
+        # expiry check is the real fix, not merely a side effect of
+        # `expire()` bumping version.
+        pre_expire_snapshot = store.create(tenant_id=TENANT_A, user_id=USER_1, ttl_seconds=60.0)
+        clock.advance(61)
+
+        with pytest.raises(SessionNotFoundError) as excinfo:
+            store.save(pre_expire_snapshot)
+        assert excinfo.value.reason == "expired"
 
 
 class TestClear:

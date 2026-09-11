@@ -112,6 +112,55 @@ def test_mixed_real_and_fabricated_claim_in_one_answer_is_not_supported():
     assert result.supported is False
 
 
+# ── Regression: a substituted number cannot hide behind high word overlap ──
+
+
+def test_a_single_substituted_number_is_rejected_even_at_high_word_overlap():
+    # A prior review round found this gap: a claim that shares every
+    # non-numeric content word with its cited chunk - differing only in
+    # the number itself - still passes a pure bag-of-words overlap check
+    # (5 of 6 content words match, ratio 0.83, well above
+    # _MIN_OVERLAP_RATIO=0.6). This is exactly the shape a memory-
+    # poisoning attack uses: repeat a remembered false numeric claim
+    # while citing real, on-topic evidence that actually disagrees with
+    # it. `unsupported_numbers` must catch this independently of
+    # overlap_ratio.
+    chunk = EvidenceChunk(chunk_id="CHUNK-101", source_file="s.md", text="Supplier Alpha has a risk score of 12.")
+    result = validate_support("Supplier Alpha has a risk score of 99.", ["CHUNK-101"], [chunk])
+
+    assert result.overlap_ratio >= 0.6  # the word-overlap check alone would have passed this
+    assert result.unsupported_numbers == ("99",)
+    assert result.supported is False
+
+
+def test_an_answer_number_that_genuinely_matches_its_cited_text_is_unaffected():
+    # Positive control - the numeric check must not turn into a
+    # false-positive rejector for a correctly-cited number.
+    chunk = EvidenceChunk(chunk_id="CHUNK-101", source_file="s.md", text="Supplier Alpha has a risk score of 12.")
+    result = validate_support("Supplier Alpha has a risk score of 12.", ["CHUNK-101"], [chunk])
+
+    assert result.unsupported_numbers == ()
+    assert result.supported is True
+
+
+def test_full_pipeline_rejects_a_model_that_states_a_number_contradicted_by_its_own_cited_evidence():
+    chunk = EvidenceChunk(chunk_id="CHUNK-101", source_file="synthetic.md", text="Supplier Alpha has a risk score of 12.")
+    gateway = FakeGateway(
+        _cited_answer_json(
+            answer="Supplier Alpha has a risk score of 99.",
+            citations=[{"chunk_id": "CHUNK-101", "source_file": "synthetic.md"}],
+        )
+    )
+    service = GroundedAnswerService(gateway=gateway, retriever=_fixed_retriever([chunk]))
+
+    result = service.answer("What is Supplier Alpha's risk score?")
+
+    assert isinstance(result, TypedFailure)
+    assert result.stage == "support"
+    assert result.category == "unsupported_claim"
+    assert "99" in result.message
+
+
 def test_no_citations_is_trivially_unsupported_by_an_empty_check_but_returns_supported_true_for_empty_input():
     # validate_support only checks what it's given - a caller with zero
     # cited_ids has nothing to validate support against here; that shape

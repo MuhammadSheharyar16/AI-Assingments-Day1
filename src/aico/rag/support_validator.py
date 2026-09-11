@@ -105,9 +105,33 @@ _WORD_RE = re.compile(r"[a-z0-9]+")
 # one) catches.
 _MIN_OVERLAP_RATIO = 0.6
 
+# How much of the answer's NON-numeric content words must already match
+# its cited text before a missing/contradicted number is treated as
+# disqualifying on its own - the "same claim, different number" signature
+# a value-substitution attack produces ("risk score of 99" vs a chunk that
+# actually says "risk score of 12": every other word matches exactly,
+# ratio 1.0). Deliberately high and separate from `_MIN_OVERLAP_RATIO`:
+# a stray number that merely sits inside an otherwise differently-worded
+# or unrelated answer (e.g. an identifying marker like "ANSWER-TEXT-55102"
+# next to an unrelated real claim - tests/test_day06_observability.py's
+# own fixture shape) must NOT be vetoed by this check; that case is left
+# to the ordinary `_MIN_OVERLAP_RATIO` check below, which already fails a
+# wholesale-unrelated claim on its own. See
+# tests/test_day05_answer_support.py's calibration cases for both shapes.
+_NUMBER_CONTEXT_MATCH_RATIO = 0.9
+
 
 def _content_words(text: str) -> set[str]:
     return {w for w in _WORD_RE.findall(text.lower()) if w not in _STOPWORDS and len(w) > 1}
+
+
+def _numeric_tokens(words: set[str]) -> set[str]:
+    """The subset of `words` that are pure numbers - `_WORD_RE` already
+    tokenizes "99"/"12" as their own content words (it matches `[a-z0-9]+`
+    runs, and punctuation like the trailing "." in "score of 99." is not
+    part of that run), so no separate number-extraction regex is needed
+    here; this just filters the set `_content_words` already produced."""
+    return {w for w in words if w.isdigit()}
 
 
 def _clean_supporting_text(chunk_text: str) -> str:
@@ -126,6 +150,20 @@ class SupportValidationResult:
     overlap_ratio: float
     answer_content_words: tuple[str, ...]
     supporting_words: tuple[str, ...]
+    unsupported_numbers: tuple[str, ...] = ()
+    """Numeric tokens the answer states that do NOT appear anywhere in
+    its cited chunks' non-suspicious text, AND whose surrounding
+    non-numeric words already match that text almost exactly (see
+    `_NUMBER_CONTEXT_MATCH_RATIO`) - e.g. the answer says "risk score of
+    99" but the cited text says "risk score of 12", every other word
+    matching. Checked independently of `overlap_ratio`: a changed number
+    in an otherwise near-identical sentence is a single-word edit, so
+    bag-of-words overlap alone can sit far above `_MIN_OVERLAP_RATIO`
+    while still asserting a fabricated/contradicted value - see
+    `validate_support`'s docstring. A number that merely sits inside a
+    differently-worded or unrelated answer does NOT appear here (left to
+    `overlap_ratio` instead); non-empty here always forces
+    `supported=False`, regardless of `overlap_ratio`."""
 
 
 def validate_support(answer: str, cited_ids: list[str], retrieved: list[EvidenceChunk]) -> SupportValidationResult:
@@ -133,7 +171,22 @@ def validate_support(answer: str, cited_ids: list[str], retrieved: list[Evidence
     the non-suspicious text of the chunks it cites. Only meaningful once
     citation-ID membership (`citation_validator.validate_citations`) has
     already passed - this does not repeat that check, and an empty
-    `cited_ids` trivially has nothing to validate support against."""
+    `cited_ids` trivially has nothing to validate support against.
+
+    Bag-of-words overlap alone cannot catch a single substituted number
+    in an otherwise word-for-word-matching sentence ("risk score of 99"
+    vs a cited chunk that actually says "risk score of 12" - five of six
+    content words still match, well above `_MIN_OVERLAP_RATIO`). This is
+    exactly the shape a memory-poisoning attack uses: repeat a remembered
+    false numeric claim while citing real, on-topic evidence that
+    disagrees with it. `unsupported_numbers` closes that specific gap: a
+    numeric content word missing from the cited text fails support
+    outright when the REST of the answer's words already match that text
+    almost exactly (`_NUMBER_CONTEXT_MATCH_RATIO`) - the "same claim,
+    different number" signature. A number sitting inside an otherwise
+    differently-worded or unrelated answer is left to the ordinary
+    overlap_ratio check instead, so an incidental marker/id number (never
+    itself the claim) cannot trip this on its own."""
     retrieved_by_id = {c.chunk_id: c for c in retrieved}
     supporting_text = " ".join(
         _clean_supporting_text(retrieved_by_id[cid].text) for cid in cited_ids if cid in retrieved_by_id
@@ -148,9 +201,21 @@ def validate_support(answer: str, cited_ids: list[str], retrieved: list[Evidence
 
     overlap = answer_words & supporting_words
     ratio = len(overlap) / len(answer_words)
+
+    missing_numbers = _numeric_tokens(answer_words) - _numeric_tokens(supporting_words)
+    unsupported_numbers: tuple[str, ...] = ()
+    if missing_numbers:
+        answer_non_numeric = answer_words - _numeric_tokens(answer_words)
+        if answer_non_numeric:
+            supporting_non_numeric = supporting_words - _numeric_tokens(supporting_words)
+            non_numeric_overlap = len(answer_non_numeric & supporting_non_numeric) / len(answer_non_numeric)
+            if non_numeric_overlap >= _NUMBER_CONTEXT_MATCH_RATIO:
+                unsupported_numbers = tuple(sorted(missing_numbers))
+
     return SupportValidationResult(
-        supported=ratio >= _MIN_OVERLAP_RATIO,
+        supported=ratio >= _MIN_OVERLAP_RATIO and not unsupported_numbers,
         overlap_ratio=ratio,
         answer_content_words=tuple(sorted(answer_words)),
         supporting_words=tuple(sorted(supporting_words)),
+        unsupported_numbers=unsupported_numbers,
     )

@@ -168,3 +168,15 @@ class SessionState(BaseModel):
     version: int = Field(ge=1, description="Optimistic-concurrency version, incremented on every accepted write (Task 9).")
     recent_turns: list[SessionTurn] = Field(default_factory=list, description="Bounded recent-turn window (Task 5).")
     summary: MemorySummary | None = Field(default=None, description="Compacted older turns, when compaction has occurred (Task 6).")
+    reset_count: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Incremented only by SessionStore.clear() (Task 8) - never by an ordinary turn-append save, and "
+            "distinct from `version`, which both kinds of write bump. A caller that loaded this session BEFORE "
+            "a clear() can compare the `reset_count` it observed against a freshly reloaded session's current "
+            "value to detect that a reset happened in between - see api/session_flow.py's record_turn, which "
+            "uses exactly this to refuse to silently re-populate a just-cleared session with an in-flight "
+            "request's turn that was computed from pre-clear context."
+        ),
+    )

@@ -132,9 +132,13 @@ class SessionStore(ABC):
         """Reset a session's conversational state: `recent_turns` and
         `summary` are removed, but the session record itself (ownership,
         `created_at`, `expires_at`) is kept - this is the Task 8
-        "clear/reset" operation, distinct from `delete`. Returns the
-        cleared session. Raises `SessionNotFoundError` under the same
-        rules as `get`."""
+        "clear/reset" operation, distinct from `delete`. Also increments
+        `reset_count` (unlike an ordinary turn-append save, which never
+        touches it) - the signal `api/session_flow.py::record_turn` uses
+        to detect and refuse an in-flight request's stale, pre-clear turn
+        rather than silently re-populating a just-cleared session with
+        it. Returns the cleared session. Raises `SessionNotFoundError`
+        under the same rules as `get`."""
 
     @abstractmethod
     def delete(self, *, tenant_id: str, user_id: str, session_id: str) -> None:
@@ -162,6 +166,13 @@ class InMemorySessionStore(SessionStore):
         self._lock = threading.Lock()
 
     def _scoped(self, *, tenant_id: str, user_id: str, session_id: str) -> SessionState | None:
+        """Internal lookup only - returns the LIVE object actually held in
+        `self._sessions`, deliberately not a copy, so `save()`/`clear()`/
+        `delete()`/`expire()` can compare against it (e.g. `stored.version`)
+        without extra copying on every internal call. Every PUBLIC method
+        that hands a `SessionState` back to a caller must return a copy of
+        what this returns, never this reference itself - see `get()`,
+        `create()`, `save()`, `clear()` below."""
         session = self._sessions.get(session_id)
         if session is None or session.tenant_id != tenant_id or session.user_id != user_id:
             return None
@@ -196,7 +207,14 @@ class InMemorySessionStore(SessionStore):
                 summary=None,
             )
             self._sessions[new_id] = session
-        return session
+        # A defensive copy, not the object just stored - see `_scoped()`'s
+        # docstring. Without this, a caller that mutates a mutable field
+        # in place (e.g. `session.recent_turns.append(...)`) would change
+        # this store's internal state directly, bypassing `save()` and
+        # its version-based optimistic-concurrency check entirely - the
+        # store's own single-source-of-truth guarantee would be only a
+        # convention, not something this class actually enforces.
+        return session.model_copy(deep=True)
 
     def get(self, *, tenant_id: str, user_id: str, session_id: str) -> SessionState:
         with self._lock:
@@ -205,18 +223,35 @@ class InMemorySessionStore(SessionStore):
                 raise SessionNotFoundError(reason="not_found")
             if self._clock() >= session.expires_at:
                 raise SessionNotFoundError(reason="expired")
-            return session
+            return session.model_copy(deep=True)
 
     def save(self, session: SessionState) -> SessionState:
         with self._lock:
             stored = self._scoped(tenant_id=session.tenant_id, user_id=session.user_id, session_id=session.session_id)
             if stored is None:
                 raise SessionNotFoundError(reason="not_found")
+            # A stale-but-version-matching write must not be able to
+            # resurrect an already-expired session (a caller can hold a
+            # pre-expiry `SessionState` snapshot whose own `version` still
+            # equals what's stored, since `expire()` is itself just
+            # another version-bumping mutation below - but the version
+            # check alone is not the source of truth for "is this session
+            # still alive"; `expires_at` is, and it must be re-checked
+            # against the STORED record, not trusted from the caller's
+            # possibly-stale `session` argument, on every save.
+            if self._clock() >= stored.expires_at:
+                raise SessionNotFoundError(reason="expired")
             if stored.version != session.version:
                 raise SessionConflictError(expected_version=session.version, actual_version=stored.version)
-            updated = session.model_copy(update={"version": stored.version + 1, "updated_at": self._clock()})
+            # `deep=True` so the object this store now holds shares no
+            # mutable field (`recent_turns`, in particular) with the
+            # caller's own `session` argument - otherwise a caller who
+            # later mutated their in-hand `session` object in place could
+            # still reach into this store's internal state, the exact
+            # aliasing hole `get()`/`create()` close on the read side.
+            updated = session.model_copy(deep=True, update={"version": stored.version + 1, "updated_at": self._clock()})
             self._sessions[updated.session_id] = updated
-            return updated
+            return updated.model_copy(deep=True)
 
     def clear(self, *, tenant_id: str, user_id: str, session_id: str) -> SessionState:
         with self._lock:
@@ -224,10 +259,16 @@ class InMemorySessionStore(SessionStore):
             if stored is None:
                 raise SessionNotFoundError(reason="not_found")
             cleared = stored.model_copy(
-                update={"recent_turns": [], "summary": None, "version": stored.version + 1, "updated_at": self._clock()}
+                update={
+                    "recent_turns": [],
+                    "summary": None,
+                    "version": stored.version + 1,
+                    "updated_at": self._clock(),
+                    "reset_count": stored.reset_count + 1,
+                }
             )
             self._sessions[session_id] = cleared
-            return cleared
+            return cleared.model_copy(deep=True)
 
     def delete(self, *, tenant_id: str, user_id: str, session_id: str) -> None:
         with self._lock:
@@ -241,7 +282,14 @@ class InMemorySessionStore(SessionStore):
             stored = self._scoped(tenant_id=tenant_id, user_id=user_id, session_id=session_id)
             if stored is None:
                 raise SessionNotFoundError(reason="not_found")
-            self._sessions[session_id] = stored.model_copy(update={"expires_at": self._clock()})
+            # A real mutation, exactly like `clear()` - bumping `version`
+            # here is defense in depth alongside `save()`'s own expiry
+            # check above: a caller holding a pre-expiry snapshot now also
+            # fails the ordinary stale-version check, not only the
+            # expiry check, should either be changed independently later.
+            self._sessions[session_id] = stored.model_copy(
+                update={"expires_at": self._clock(), "version": stored.version + 1, "updated_at": self._clock()}
+            )
 
 
 class SqliteSessionStore(SessionStore):
@@ -363,6 +411,13 @@ class SqliteSessionStore(SessionStore):
             stored = self._fetch_scoped_locked(tenant_id=session.tenant_id, user_id=session.user_id, session_id=session.session_id)
             if stored is None:
                 raise SessionNotFoundError(reason="not_found")
+            # See InMemorySessionStore.save()'s identical check: a stale-
+            # but-version-matching write must not be able to resurrect an
+            # already-expired session. `expires_at` on the STORED record
+            # is the source of truth, re-checked on every save - never
+            # trusted from the caller's possibly-stale `session` argument.
+            if self._clock() >= stored.expires_at:
+                raise SessionNotFoundError(reason="expired")
             if stored.version != session.version:
                 raise SessionConflictError(expected_version=session.version, actual_version=stored.version)
             updated = session.model_copy(update={"version": stored.version + 1, "updated_at": self._clock()})
@@ -375,7 +430,13 @@ class SqliteSessionStore(SessionStore):
             if stored is None:
                 raise SessionNotFoundError(reason="not_found")
             cleared = stored.model_copy(
-                update={"recent_turns": [], "summary": None, "version": stored.version + 1, "updated_at": self._clock()}
+                update={
+                    "recent_turns": [],
+                    "summary": None,
+                    "version": stored.version + 1,
+                    "updated_at": self._clock(),
+                    "reset_count": stored.reset_count + 1,
+                }
             )
             self._write_locked(cleared)
             return cleared
@@ -393,5 +454,10 @@ class SqliteSessionStore(SessionStore):
             stored = self._fetch_scoped_locked(tenant_id=tenant_id, user_id=user_id, session_id=session_id)
             if stored is None:
                 raise SessionNotFoundError(reason="not_found")
-            expired = stored.model_copy(update={"expires_at": self._clock()})
+            # See InMemorySessionStore.expire()'s identical reasoning -
+            # a real mutation, bumping `version` as defense in depth
+            # alongside `save()`'s own expiry check above.
+            expired = stored.model_copy(
+                update={"expires_at": self._clock(), "version": stored.version + 1, "updated_at": self._clock()}
+            )
             self._write_locked(expired)
