@@ -1324,11 +1324,11 @@ before the Model Gateway: Gate-A/lane selection decide what a request
 *means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
 decides whether the *evidence retrieval actually returned* may be trusted
 enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
-"Retrieval success is not evidence validity"). Tasks 1–12 are implemented
+"Retrieval success is not evidence validity"). Tasks 1–13 are implemented
 — the full evidence-quality boundary, Gate-C's own decision contract,
-filtering behavior, the no-generation-fall-through proof, and Gate-B scope
-preservation — and the sections below will grow as the remaining
-integration/observability/artifact tasks land.
+filtering behavior, the no-generation-fall-through proof, Gate-B scope
+preservation, and RAG-flow integration — and the sections below will grow
+as the remaining observability/artifact tasks land.
 
 - `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
   supplied `day11_pack/` (same convention as `data/day09_pack/` /
@@ -1713,20 +1713,83 @@ and conflicts are all built and independently tested.
   (proving accumulation, not overwriting); and a structural signature
   check that `evaluate()` has no authorization-widening parameter at all.
 
+- `src/aico/rag/answer_service.py` extended (Task 13, pure refactor, zero
+  behavior change) — `GroundedAnswerService.answer()`'s own steps 4-7
+  (build prompt → Model Gateway → Day 4 typed/semantic validation →
+  citation/support validation → response composition) are extracted into
+  `_answer_from_evidence()`; `answer()` itself still retrieves via
+  `self.retriever` and calls this method with exactly what it retrieved —
+  identical order, identical spans, identical outcome for every existing
+  caller (confirmed: `uv run pytest -q` and the Day 7 gate both stayed
+  green *before any other Task 13 change was made*, isolating this step as
+  risk-free on its own). The only reason this exists: `ControlPlaneAnswerService`
+  can now call it with a *Gate-C-narrowed* evidence list instead of raw
+  retriever output, reusing Day 5's real prompt-building/generation/
+  citation-validation rather than a second, parallel reimplementation of
+  it ("do not let Gate-C replace post-generation citation validation").
+- `src/aico/rag/control_plane_answer_service.py` extended (Task 13) — the
+  `rag` branch of `ControlPlaneAnswerService.answer()` gains Gate-C
+  (Task 9) between retrieval and the Model Gateway, via a new private
+  method, `_answer_rag_with_gate_c()`, reached only once Gate-B has
+  already granted `allow`. Three new, optional, *all-or-nothing*
+  constructor fields activate it: `source_registry`/`gate_c_policy_registry`
+  (Task 2/3) and `evidence_adapter` (new: `EvidenceChunk` ×
+  `LaneDecision` → a governed `EvidencePackage` + `request_kind`) —
+  `None` for all three (the default) preserves the exact Day 9/10 `rag`
+  behavior. Like `ControlPlaneAnswerService` itself is never wired into
+  the real `/ask`/`/ask/governed` routes (Day 9's synthetic ontology
+  doesn't cover the real corpus), Gate-C integration here is opt-in for
+  the identical reason one level deeper: a real `EvidenceChunk` carries
+  none of the governed provenance metadata (`source_id`/`content_hash`/
+  `tenant_id`/`data_classification`/`evidence_facets`/`claims`) Gate-C's
+  `EvidenceItem` requires, and Day 11's committed source registry/Gate-C
+  policy are the same deliberately small, synthetic governed data Day 9's
+  ontology is — wiring Gate-C against the real BM25 index today would
+  reject every real chunk outright and would silently break Day 7's
+  permanent regression gate, exactly the reason Gate-A/Gate-B integration
+  documents for staying independently testable rather than defaulted-on.
+  `reject`/`insufficient_evidence`/`clarify` each return their own typed,
+  sanitized result (`GateCRejected`/`GateCInsufficientEvidence`/
+  `GateCClarify`); `allow` matches `validated_evidence_ids` back to the
+  *original* retrieved `EvidenceChunk` objects (never reconstructed) and
+  hands only those to `GroundedAnswerService._answer_from_evidence()` —
+  Day 5's real citation validation then runs unmodified over exactly that
+  narrowed set. Partial Gate-C configuration, or Gate-C configured
+  without Gate-B, both raise a new `GateCIntegrationError` at construction
+  time. A new `"gate_c"` OTel span carries Task 14-shaped sanitized
+  attributes (versions, decision, reason codes, evidence/missing-facet/
+  conflict *counts*, a freshness summary string) — never raw evidence
+  content.
+- `tests/test_day11_control_plane_integration.py` — proves the full
+  required order end to end against every real committed Day 9-11
+  governed resource and a real `GateA`/`LaneSelector`/`GateB`/`GateC`:
+  `allow` reaches generation with a prompt containing only the validated
+  chunk's text (a rejected chunk mixed into the same retrieval batch never
+  appears in it); `reject`/`insufficient_evidence`/`clarify` each make
+  zero Model Gateway calls while retrieval still runs; a forged citation —
+  and a citation naming the *Gate-C-rejected* chunk — both still fail
+  citation validation exactly as before; Day 5's own `InsufficientEvidence`
+  (the model declining to answer) is proven distinct from Gate-C's own;
+  a service built without Gate-C's three fields behaves exactly as Day
+  9/10 left it (a direct side-by-side confirmation, the same pattern
+  `test_day10_control_plane_integration.py` already uses for Gate-B); both
+  misconfiguration modes raise `GateCIntegrationError`; and `mode_b` is
+  proven entirely unaffected by a Gate-C-configured service.
+
 ```
 uv run pytest -q
 uv run ruff check .
 uv run python -m aico.evals.day07
 ```
 
-283 new tests (`tests/test_day11_evidence_envelope.py`,
+295 new tests (`tests/test_day11_evidence_envelope.py`,
 `tests/test_day11_source_registry.py`, `tests/test_day11_gate_c_policy.py`,
 `tests/test_day11_provenance.py`, `tests/test_day11_freshness.py`,
 `tests/test_day11_completeness.py`, `tests/test_day11_conflicts.py`,
-`tests/test_day11_gate_c.py`, `tests/test_day11_no_fallthrough.py`), 1768
-passing overall (up from 1485 after Day 10) — the Day 7 regression gate is
-unmodified and still passes (`GATE: PASS`, `evals/baseline_v1.json`
-untouched).
+`tests/test_day11_gate_c.py`, `tests/test_day11_no_fallthrough.py`,
+`tests/test_day11_control_plane_integration.py`), 1780 passing overall (up
+from 1485 after Day 10) — the Day 7 regression gate is unmodified and
+still passes (`GATE: PASS`, `evals/baseline_v1.json` untouched).
 
 **Environment note:** this repository's `.venv` was originally copied
 forward from the Day 10 project directory rather than created fresh here.

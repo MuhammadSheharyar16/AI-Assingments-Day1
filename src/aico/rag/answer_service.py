@@ -56,6 +56,23 @@ turn's retrieved evidence. This is what makes Day 8's core rule
 structurally true here, not just documented: memory literally cannot
 reach the stages that decide what is retrieved or what counts as a valid
 citation, because those stages never receive it as an argument.
+
+Day 11 Task 13 — `answer()`'s own steps 4-7 (build prompt -> Model Gateway
+-> Day 4 typed/semantic validation -> citation/support validation ->
+response composition) are extracted into `_answer_from_evidence()`, a pure
+refactor with zero behavior change for every existing caller: `answer()`
+still retrieves via `self.retriever` and still runs every step in the
+identical order, it just does so by calling this new method with what it
+retrieved. The only reason this exists is so `ControlPlaneAnswerService`
+(Day 11 Task 13's own RAG integration) can call it with a *Gate-C-narrowed*
+evidence list instead of raw retriever output -- "the prompt builder must
+receive only Gate-C-validated evidence" -- while still reusing this
+service's own real, already-tested contract/semantic/citation/support
+validation rather than a second, parallel reimplementation of it ("do not
+let Gate-C replace post-generation citation validation; they solve
+different problems"). `_answer_from_evidence()` has no retrieval concept
+of its own at all (no `self.retriever` call, no "retrieval" span) -- it
+starts from whatever evidence its caller already decided was valid to use.
 """
 from __future__ import annotations
 
@@ -229,6 +246,25 @@ class GroundedAnswerService:
             retrieved = self.retriever(question)
             span.set_attribute("retrieval.retrieved_count", len(retrieved))
 
+        return self._answer_from_evidence(question, retrieved, cancellation, memory_context)
+
+    def _answer_from_evidence(
+        self,
+        question: str,
+        retrieved: list[EvidenceChunk],
+        cancellation: CancellationToken | None,
+        memory_context: MemoryContext | None,
+    ) -> AnswerResult:
+        """Steps 4-7 of the pipeline (build prompt -> Model Gateway -> Day 4
+        typed/semantic validation -> citation/support validation -> response
+        composition), given evidence a caller has *already* decided is the
+        right evidence to answer from -- `answer()` (above) is the only
+        caller for every day through Day 10, always with its own freshly
+        retrieved `retrieved`; Day 11 Task 13's `ControlPlaneAnswerService`
+        is the first caller to supply a *narrowed* list instead (Gate-C's
+        `validated_evidence_ids` only). See the module docstring's own
+        "Day 11 Task 13" section for why this exists as a separate method
+        rather than folded back into `answer()`."""
         # 4. Build the explicitly-labelled prompt (Task 2; Day 8 Task 7
         # adds the optional SESSION MEMORY section). Local/in-process
         # string assembly, not worth a span of its own - it is not one of

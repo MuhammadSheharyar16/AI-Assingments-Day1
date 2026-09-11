@@ -126,6 +126,85 @@ the full required order end to end at this class's own level
 HTTP request to `/ask/governed` with the committed `gate_b.enabled: true`
 default left untouched and a real Day 10 governed identity.
 
+## Gate-C integration is opt-in, not opt-out (Day 11 Task 13)
+
+Required order for the `rag` lane (`Day 11 Task.pdf`, Task 13):
+
+    trusted identity -> session -> input policy -> Gate-A -> lane selector
+    -> Gate-B -> retrieval -> Gate-C -> Model Gateway -> typed contract
+    validation -> semantic validation -> citation validation -> safe
+    disclosure -> response
+
+Everything through Gate-B is exactly the pipeline already described above
+(steps 1-5); Gate-C (Task 9) slots in between retrieval and the Model
+Gateway, inside the `rag` branch of step 6, via a new private method,
+`_answer_rag_with_gate_c()`. Reached only when this service was built with
+`source_registry`/`gate_c_policy_registry`/`evidence_adapter` (see
+`ControlPlaneAnswerService`'s own docstring) -- `None` for all three (the
+default) preserves the exact Day 9/10 `rag` behavior: retrieval flows
+straight into `GroundedAnswerService.answer()`, unmodified.
+
+Unlike Gate-B (opt-out by deployment default), Gate-C integration here is
+opt-in only, for the identical reason `ControlPlaneAnswerService` itself
+is not wired into `api/app.py`'s real `/ask`/`/ask/governed` routes (see
+"WHY THIS IS NOT WIRED INTO `api/app.py`'s `/ask` TODAY" below) -- one
+level deeper: a real `EvidenceChunk` (`aico.rag.citation_validator`,
+`chunk_id`/`source_file`/`text`) carries none of the governed provenance
+metadata Gate-C's `EvidenceItem` requires (`source_id`/`content_hash`/
+`tenant_id`/`data_classification`/`evidence_facets`/`claims`), and Day
+11's committed source registry/Gate-C policy are the same deliberately
+small, SYNTHETIC governed data Day 9's ontology is (`evidence/
+source_registry.v1.json` governs four synthetic sources, not
+`data/documents/`'s real corpus). Wiring Gate-C against the real BM25
+index today would reject every real chunk outright (`unknown_source` for
+all of them) and would not be a Gate-C bug any more than routing Day 7's
+real golden-eval questions through Gate-A would be a Gate-A bug -- it
+would just as silently break the same permanent regression gate. This
+class is therefore Gate-C's complete, independently testable integration
+(`EvidenceAdapter` is the seam a caller supplies once governed provenance
+metadata for its own real corpus exists), exactly the "ready for a future
+day to route real traffic through" posture the module docstring's closing
+section already documents for Gate-A/Gate-B.
+
+`_answer_rag_with_gate_c()`'s own required order, once reached:
+
+    1. Retrieval (`self.rag_service.retriever(resolved_question)`) -- its
+       own `"retrieval"` span, identical shape to `GroundedAnswerService.
+       answer()`'s own (this method is what *replaces* that call for the
+       Gate-C-active `rag` lane, not something layered on top of it).
+    2. `self.evidence_adapter(resolved_question, lane_decision, retrieved)`
+       builds the candidate `EvidencePackage` plus the governed
+       `request_kind` Gate-C needs (`GateCRequest`) -- the one place this
+       pipeline's real chunks become Day 11's governed shape.
+    3. `GateC.evaluate()` (Task 9) -- its own `"gate_c"` span, sanitized
+       decision-provenance attributes only (Task 14: policy/source-
+       registry versions, the decision itself, reason codes, evidence/
+       missing-facet/conflict *counts*, a freshness summary string) --
+       never raw evidence content, never `question`/`resolved_question`.
+    4. `reject`/`insufficient_evidence`/`clarify` each return their own
+       typed result (`GateCRejected`/`GateCInsufficientEvidence`/
+       `GateCClarify`, all carrying only Gate-C's own sanitized
+       provenance) -- zero Model Gateway calls (Task 11's no-fall-through
+       guarantee, proven again here at the service-integration level, the
+       same way `test_day10_control_plane_integration.py` re-proves
+       Gate-B's identical guarantee beyond `test_day10_no_fallthrough.py`'s
+       own `GateB`-direct proof).
+    5. `allow` -- "the prompt builder must receive only Gate-C-validated
+       evidence" (Task 13's own rule): `validated_evidence_ids` is matched
+       back to the *original* `EvidenceChunk` objects retrieval actually
+       returned (never a chunk reconstructed from `EvidenceItem` fields),
+       then handed to `GroundedAnswerService._answer_from_evidence()`
+       (Task 13's own refactor of `answer_service.py`) -- Day 5's real,
+       already-tested prompt building, Model Gateway call, typed contract/
+       semantic validation, citation validation and support validation run
+       completely unmodified from here, over exactly this narrowed list.
+       "Do not let Gate-C replace post-generation citation validation;
+       they solve different problems" is true structurally: citation
+       validation still runs, as Day 5 left it, checking membership
+       against `filtered_chunks` -- a citation naming a chunk Gate-C
+       rejected fails exactly as a citation naming a chunk retrieval never
+       returned at all always has.
+
 Task 11 -- decision provenance / observability: steps 3, 4 and (when
 active) 5 above each run inside their own OTel span (`"gate_a"`,
 `"lane_selection"`, `"gate_b"`), carrying exactly the sanitized fields the
@@ -186,7 +265,7 @@ actually covers the corpus it gates.
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from opentelemetry import trace
@@ -196,17 +275,50 @@ from aico.control.config import ControlPlaneConfig
 from aico.control.disclosure import ProtectedField, SafeDisclosureView, apply_disclosure
 from aico.control.gate_a import GateA
 from aico.control.gate_b import GateB, GateBRequest
+from aico.control.gate_c import GateC, GateCRequest, GateCStatus
 from aico.control.lane_selector import LaneSelector
 from aico.control.models import GateADecision, GateBDecision, GateBStatus, LaneDecision
 from aico.control.ontology import LaneId, LifecycleStatus
 from aico.control.ontology_registry import OntologyRegistry
 from aico.control.policy_models import DisclosureAction, DisclosureProfile
 from aico.control.policy_registry import PolicyRegistry
+from aico.evidence.models import EvidencePackage
+from aico.evidence.policy import GateCPolicyRegistry
+from aico.evidence.source_registry import SourceRegistry
 from aico.memory.context_builder import MemoryContext, SessionReferenceContext, resolve_reference
 from aico.platform.model_gateway import CancellationToken
 from aico.rag.answer_service import AnswerResult, Blocked, Clarify, GroundedAnswerService
+from aico.rag.citation_validator import EvidenceChunk
 from aico.security.input_policy import PolicyOutcome, evaluate_policy
 from aico.security.normalization import normalize_input
+
+# Day 11 Task 13 -- given the resolved question, the current LaneDecision
+# (carries `intent_id`/`domain`) and what retrieval actually returned,
+# produce Gate-C's own candidate `EvidencePackage` plus the governed
+# `request_kind` (`GateCRequest`, `aico.control.gate_c`) this request
+# should be evaluated under. No default/real implementation is provided --
+# see "Gate-C integration is opt-in, not opt-out" below for why -- a real
+# `EvidenceChunk` (`chunk_id`/`source_file`/`text`) carries none of the
+# governed provenance metadata (`source_id`/`content_hash`/`tenant_id`/
+# `data_classification`/`evidence_facets`/`claims`) Gate-C's `EvidenceItem`
+# requires, so this mapping is fundamentally caller/domain-specific, the
+# same reason `Retriever`/`PolicyEvaluator` (`answer_service.py`) are
+# already injectable seams rather than one hardcoded implementation.
+EvidenceAdapter = Callable[[str, LaneDecision, list[EvidenceChunk]], tuple[EvidencePackage, str | None]]
+
+
+class GateCIntegrationError(Exception):
+    """Raised by `ControlPlaneAnswerService.__post_init__` when Gate-C
+    integration is only *partially* configured -- `source_registry`,
+    `gate_c_policy_registry` and `evidence_adapter` must all be supplied
+    together (Gate-C cannot evaluate without a source registry, a policy,
+    or a way to build the candidate package at all), and `policy_registry`
+    (Gate-B) must also be active (Gate-C's own required input list starts
+    with "Gate-B allowed decision/effective scope" -- there is no
+    `GateBDecision` to hand it otherwise). Never raised for a normal,
+    fully-configured-or-fully-inactive construction; exists to fail loudly
+    at construction time rather than crash confusingly inside the first
+    `.answer()` call that reaches the `rag` lane."""
 
 # Task 11 -- same pattern `answer_service.py` already uses and documents:
 # `opentelemetry.trace.get_tracer(__name__)` directly, never importing
@@ -317,13 +429,73 @@ class GateBAuthorizationClarify:
     rule_id: str | None = None
 
 
+@dataclass(frozen=True)
+class GateCRejected:
+    """Day 11 Task 13 -- the `rag` lane reached Gate-C (Task 9), which
+    returned `reject`: an untrusted source, broken provenance, a Gate-B
+    scope violation, or an unresolved conflict (working rule: "unresolved
+    conflict cannot silently proceed to the model"). Carries only Gate-C's
+    own sanitized decision provenance -- never raw evidence content, and
+    never any generated content: Gate-C runs strictly before the Model
+    Gateway (Task 11's no-fall-through guarantee), so there is nothing
+    here that could leak it."""
+
+    question: str
+    reason_codes: tuple[str, ...]
+    rejected_evidence_ids: tuple[str, ...]
+    policy_version: str
+    source_registry_version: str
+
+
+@dataclass(frozen=True)
+class GateCInsufficientEvidence:
+    """Day 11 Task 13 -- Gate-C returned `insufficient_evidence`: valid
+    evidence exists but does not cover what this governed request
+    requires (missing required facets, or fewer validated items than the
+    governed rule's own `minimum_valid_items`). Distinct from Day 5's own
+    `InsufficientEvidence` (the *model* explicitly declining to answer
+    from evidence it was actually shown) -- this fires before generation
+    ever runs at all."""
+
+    question: str
+    reason_codes: tuple[str, ...]
+    missing_facets: tuple[str, ...]
+    policy_version: str
+    source_registry_version: str
+
+
+@dataclass(frozen=True)
+class GateCClarify:
+    """Day 11 Task 13 -- Gate-C returned `clarify`: the request itself is
+    safely ambiguous about which governed evidence-quality rule applies
+    (`GateCRequest.request_kind` could not be resolved by the
+    `EvidenceAdapter`). Distinct from Gate-A's own `GateClarify` (ambiguous
+    *intent*, an earlier stage) and Gate-B's `GateBAuthorizationClarify`
+    (ambiguous *data classification*) -- this is Gate-C's own, narrower
+    "which evidence-quality requirement" ambiguity."""
+
+    question: str
+    reason_codes: tuple[str, ...]
+    policy_version: str
+    source_registry_version: str
+
+
 # The full set of results `ControlPlaneAnswerService.answer()` can return:
 # Day 5's own five (via the early policy short-circuit, or via delegating
 # to `GroundedAnswerService` for the `rag` lane) plus the four Day 9 lane
-# outcomes and the two Day 10 Gate-B outcomes above, neither of which has
-# a Day 5/9 equivalent.
+# outcomes, the two Day 10 Gate-B outcomes, and the three Day 11 Gate-C
+# outcomes above, none of which has an earlier-day equivalent.
 ControlPlaneAnswerResult = (
-    AnswerResult | GateBlocked | GateClarify | ModeBSelected | SafeFastPathAnswer | GateBDenied | GateBAuthorizationClarify
+    AnswerResult
+    | GateBlocked
+    | GateClarify
+    | ModeBSelected
+    | SafeFastPathAnswer
+    | GateBDenied
+    | GateBAuthorizationClarify
+    | GateCRejected
+    | GateCInsufficientEvidence
+    | GateCClarify
 )
 
 
@@ -351,15 +523,28 @@ class ControlPlaneAnswerService:
     when given, `gate_b` (`GateB`, built from it plus `registry`) is
     activated for every `.answer()` call. `None` (the default) leaves
     `gate_b` unset and Gate-B entirely out of the pipeline -- see the
-    module docstring's "Gate-B integration is opt-out, not opt-in" section for why."""
+    module docstring's "Gate-B integration is opt-out, not opt-in" section for why.
+
+    `source_registry`/`gate_c_policy_registry`/`evidence_adapter` (Day 11
+    Task 13, optional, and only together -- see "Gate-C integration is
+    opt-in, not opt-out" below) activate Gate-C (`GateC`, built from the
+    first two) for the `rag` lane only, once Gate-B has already granted
+    `allow`. All three `None` (the default) preserves Day 9/10 behavior
+    for the `rag` lane exactly: retrieval flows straight into
+    `GroundedAnswerService.answer()`, no Gate-C span, no `GateCRejected`/
+    `GateCInsufficientEvidence`/`GateCClarify` outcome ever produced."""
 
     registry: OntologyRegistry
     rag_service: GroundedAnswerService
     control_plane_config: ControlPlaneConfig | None = None
     policy_registry: PolicyRegistry | None = None
+    source_registry: SourceRegistry | None = None
+    gate_c_policy_registry: GateCPolicyRegistry | None = None
+    evidence_adapter: EvidenceAdapter | None = None
     gate_a: GateA = field(init=False)
     lane_selector: LaneSelector = field(init=False)
     gate_b: GateB | None = field(init=False)
+    gate_c: GateC | None = field(init=False)
 
     def __post_init__(self) -> None:
         self.gate_a = GateA(self.registry)
@@ -368,6 +553,29 @@ class ControlPlaneAnswerService:
         self.gate_b = (
             GateB(self.policy_registry, ontology_registry=self.registry) if self.policy_registry is not None else None
         )
+
+        # Day 11 Task 13 -- Gate-C is configured only when all three of its
+        # own fields are supplied together (never a partial configuration
+        # silently treated as "inactive" or "active with a missing piece"),
+        # and only when Gate-B is also active (Gate-C's own first required
+        # input is a real `GateBDecision`; see `GateCIntegrationError`'s
+        # own docstring).
+        gate_c_fields = (self.source_registry, self.gate_c_policy_registry, self.evidence_adapter)
+        gate_c_configured = any(f is not None for f in gate_c_fields)
+        if gate_c_configured:
+            if not all(f is not None for f in gate_c_fields):
+                raise GateCIntegrationError(
+                    "Gate-C integration requires source_registry, gate_c_policy_registry and "
+                    "evidence_adapter to all be supplied together"
+                )
+            if self.gate_b is None:
+                raise GateCIntegrationError(
+                    "Gate-C integration requires policy_registry (Gate-B) to also be active -- "
+                    "Gate-C's first required input is a real GateBDecision"
+                )
+            self.gate_c = GateC(source_registry=self.source_registry, policy_registry=self.gate_c_policy_registry)
+        else:
+            self.gate_c = None
 
     def answer(
         self,
@@ -490,6 +698,15 @@ class ControlPlaneAnswerService:
 
         # 6. Selected/authorized lane behavior.
         if lane_decision.lane is LaneId.RAG:
+            if self.gate_c is not None:
+                # `gate_b_decision` is guaranteed a real, `ALLOW` decision
+                # here: Gate-C is only ever configured together with
+                # Gate-B (`__post_init__`), and `deny`/`clarify` already
+                # returned above in step 5.
+                assert gate_b_decision is not None and gate_b_decision.decision is GateBStatus.ALLOW
+                return self._answer_rag_with_gate_c(
+                    question, resolved_question, cancellation, memory_context, gate_b_decision, lane_decision
+                )
             return self.rag_service.answer(resolved_question, cancellation, memory_context=memory_context)
 
         if lane_decision.lane is LaneId.MODE_B:
@@ -525,6 +742,99 @@ class ControlPlaneAnswerService:
             reason_code=lane_decision.reason_code,
             ontology_version=lane_decision.ontology_version,
         )
+
+    def _answer_rag_with_gate_c(
+        self,
+        question: str,
+        resolved_question: str,
+        cancellation: CancellationToken | None,
+        memory_context: MemoryContext | None,
+        gate_b_decision: GateBDecision,
+        lane_decision: LaneDecision,
+    ) -> ControlPlaneAnswerResult:
+        """Day 11 Task 13's required order for the `rag` lane, picking up
+        exactly where step 6's `rag` branch (in `.answer()`, above) leaves
+        off: retrieval -> Gate-C -> (only on `allow`) Model Gateway -> typed
+        contract validation -> semantic validation -> citation validation
+        (via `GroundedAnswerService._answer_from_evidence()`, reused rather
+        than reimplemented -- "do not let Gate-C replace post-generation
+        citation validation; they solve different problems"). Only ever
+        called once `self.gate_c`/`self.evidence_adapter` are known non-None
+        (`__post_init__`) and `gate_b_decision.decision` is known `ALLOW`
+        (the caller's own assertion, immediately above the one call site)."""
+        assert self.gate_c is not None
+        assert self.evidence_adapter is not None
+
+        # Retrieval -- the identical span/call `GroundedAnswerService.
+        # answer()` would otherwise run internally; done here instead so
+        # Gate-C can see what was actually retrieved before any of it
+        # reaches a prompt.
+        with _tracer.start_as_current_span("retrieval") as span:
+            start = time.monotonic()
+            retrieved = self.rag_service.retriever(resolved_question)
+            latency_ms = (time.monotonic() - start) * 1000
+            span.set_attribute("retrieval.retrieved_count", len(retrieved))
+            span.set_attribute("retrieval.latency_ms", latency_ms)
+
+        package, request_kind = self.evidence_adapter(resolved_question, lane_decision, retrieved)
+
+        # Gate-C (Task 9). Task 14 -- "gate_c" span, sanitized decision-
+        # provenance attributes only (counts/versions/reason codes/a
+        # freshness summary string) -- never raw evidence content, never
+        # `question`/`resolved_question`.
+        with _tracer.start_as_current_span("gate_c") as span:
+            start = time.monotonic()
+            gate_c_decision = self.gate_c.evaluate(
+                gate_b_decision=gate_b_decision, package=package, request=GateCRequest(request_kind=request_kind)
+            )
+            latency_ms = (time.monotonic() - start) * 1000
+            span.set_attribute("gate_c.policy_version", gate_c_decision.policy_version)
+            span.set_attribute("gate_c.source_registry_version", gate_c_decision.source_registry_version)
+            span.set_attribute("gate_c.decision", gate_c_decision.decision.value)
+            span.set_attribute("gate_c.reason_codes", ",".join(gate_c_decision.reason_codes))
+            span.set_attribute("gate_c.validated_evidence_count", len(gate_c_decision.validated_evidence_ids))
+            span.set_attribute("gate_c.rejected_evidence_count", len(gate_c_decision.rejected_evidence_ids))
+            span.set_attribute("gate_c.missing_facet_count", len(gate_c_decision.missing_facets))
+            span.set_attribute("gate_c.conflict_count", len(gate_c_decision.conflict_facets))
+            span.set_attribute("gate_c.freshness_summary", gate_c_decision.freshness_summary)
+            span.set_attribute("gate_c.latency_ms", latency_ms)
+
+        if gate_c_decision.decision is GateCStatus.REJECT:
+            return GateCRejected(
+                question=question,
+                reason_codes=gate_c_decision.reason_codes,
+                rejected_evidence_ids=gate_c_decision.rejected_evidence_ids,
+                policy_version=gate_c_decision.policy_version,
+                source_registry_version=gate_c_decision.source_registry_version,
+            )
+        if gate_c_decision.decision is GateCStatus.INSUFFICIENT_EVIDENCE:
+            return GateCInsufficientEvidence(
+                question=question,
+                reason_codes=gate_c_decision.reason_codes,
+                missing_facets=gate_c_decision.missing_facets,
+                policy_version=gate_c_decision.policy_version,
+                source_registry_version=gate_c_decision.source_registry_version,
+            )
+        if gate_c_decision.decision is GateCStatus.CLARIFY:
+            return GateCClarify(
+                question=question,
+                reason_codes=gate_c_decision.reason_codes,
+                policy_version=gate_c_decision.policy_version,
+                source_registry_version=gate_c_decision.source_registry_version,
+            )
+
+        # GateCStatus.ALLOW -- "the prompt builder must receive only
+        # Gate-C-validated evidence" (Task 13's own rule): match
+        # `validated_evidence_ids` back to the *original* `EvidenceChunk`
+        # objects retrieval actually returned (never reconstructed from
+        # `EvidenceItem` fields), so citation validation below still checks
+        # membership against the real retrieved chunk_ids, and a rejected
+        # chunk's text is never read again.
+        validated_ids = set(gate_c_decision.validated_evidence_ids)
+        validated_chunk_ids = {item.chunk_id for item in package.items if item.evidence_id in validated_ids}
+        filtered_chunks = [chunk for chunk in retrieved if chunk.chunk_id in validated_chunk_ids]
+
+        return self.rag_service._answer_from_evidence(resolved_question, filtered_chunks, cancellation, memory_context)
 
     def _safe_fast_path_answer(self, intent_id: str) -> str:
         """Deterministic, governed response for a `safe_fast_path` intent
