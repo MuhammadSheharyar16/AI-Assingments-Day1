@@ -1324,12 +1324,11 @@ before the Model Gateway: Gate-A/lane selection decide what a request
 *means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
 decides whether the *evidence retrieval actually returned* may be trusted
 enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
-"Retrieval success is not evidence validity"). Tasks 1–10 are implemented
-— the full evidence-quality boundary (envelope, source registry, Gate-C
-policy, provenance, integrity, freshness, completeness, conflicts) plus
-Gate-C's own decision contract and filtering behavior — and the sections
-below will grow as the remaining integration/observability/artifact tasks
-land.
+"Retrieval success is not evidence validity"). Tasks 1–11 are implemented
+— the full evidence-quality boundary, Gate-C's own decision contract and
+filtering behavior, and the no-generation-fall-through proof — and the
+sections below will grow as the remaining integration/observability/
+artifact tasks land.
 
 - `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
   supplied `day11_pack/` (same convention as `data/day09_pack/` /
@@ -1671,19 +1670,41 @@ and conflicts are all built and independently tested.
   cycle (`aico.evidence` already imports specific `aico.control`
   submodules directly, never `aico.control`'s own aggregated `__init__`).
 
+- `tests/test_day11_no_fallthrough.py` (Task 11, Task 16's named file) —
+  Day 11's own integration point (Task 13) does not exist yet, so this
+  proves "do not generate first and validate evidence later" the same way
+  `test_day10_no_fallthrough.py` already proves the analogous property for
+  Gate-B: a real `GateC` produces a real `GateCDecision`, and
+  `_generate_if_allowed()` — the exact discipline a future Task 13 caller
+  must follow — gates one real-shaped `CountingGateway` fake (matching
+  `aico.platform.model_gateway`'s own `chat()` protocol) behind it. Proves
+  all four required scenarios (`allow` reaches generation exactly once;
+  `insufficient_evidence`/`reject`/an unresolved-conflict `reject`, named
+  with its own dedicated scenario even though it is one `reject` outcome
+  under the hood, all make zero calls), plus `clarify` (the same rule,
+  unnamed by Task 11 but implied), Task 10's "rejected evidence must never
+  be passed to generation" checked at the actual prompt boundary (an
+  `allow` reached by filtering out an invalid item — the fake's recorded
+  prompt contains the validated item's content and never the rejected
+  item's), the documented failure mode itself (a deliberately wrong
+  harness that calls the gateway before checking the decision), and an
+  AST/source-inspection ordering proof that the correct harness checks
+  first and the wrong one doesn't.
+
 ```
 uv run pytest -q
 uv run ruff check .
 uv run python -m aico.evals.day07
 ```
 
-267 new tests (`tests/test_day11_evidence_envelope.py`,
+278 new tests (`tests/test_day11_evidence_envelope.py`,
 `tests/test_day11_source_registry.py`, `tests/test_day11_gate_c_policy.py`,
 `tests/test_day11_provenance.py`, `tests/test_day11_freshness.py`,
 `tests/test_day11_completeness.py`, `tests/test_day11_conflicts.py`,
-`tests/test_day11_gate_c.py`), 1752 passing overall (up from 1485 after
-Day 10) — the Day 7 regression gate is unmodified and still passes
-(`GATE: PASS`, `evals/baseline_v1.json` untouched).
+`tests/test_day11_gate_c.py`, `tests/test_day11_no_fallthrough.py`), 1763
+passing overall (up from 1485 after Day 10) — the Day 7 regression gate is
+unmodified and still passes (`GATE: PASS`, `evals/baseline_v1.json`
+untouched).
 
 **Environment note:** this repository's `.venv` was originally copied
 forward from the Day 10 project directory rather than created fresh here.
