@@ -1324,11 +1324,12 @@ before the Model Gateway: Gate-A/lane selection decide what a request
 *means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
 decides whether the *evidence retrieval actually returned* may be trusted
 enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
-"Retrieval success is not evidence validity"). Tasks 1–13 are implemented
+"Retrieval success is not evidence validity"). Tasks 1–14 are implemented
 — the full evidence-quality boundary, Gate-C's own decision contract,
 filtering behavior, the no-generation-fall-through proof, Gate-B scope
-preservation, and RAG-flow integration — and the sections below will grow
-as the remaining observability/artifact tasks land.
+preservation, RAG-flow integration, and decision-provenance observability
+— and the sections below will grow as the remaining artifact/test tasks
+land.
 
 - `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
   supplied `day11_pack/` (same convention as `data/day09_pack/` /
@@ -1776,20 +1777,65 @@ and conflicts are all built and independently tested.
   misconfiguration modes raise `GateCIntegrationError`; and `mode_b` is
   proven entirely unaffected by a Gate-C-configured service.
 
+- `src/aico/control/gate_c.py` extended (Task 14) — `GateC.evaluate()` now
+  traces itself directly, a deliberate exception to the "gate_a/gate_b/
+  disclosure stay trace-free, the orchestrator adds spans" pattern Day
+  9/10 established: `GateC` is itself a multi-stage orchestrator over four
+  other Day 11 validator modules, the same reason `GroundedAnswerService.
+  answer()` traces its own pipeline rather than leaving it to an outer
+  caller. One `"gate_c"` span wraps the whole call; `_decision()` (the
+  single funnel every return path already went through, Task 9) is
+  extended to record every Task 14 field there in one place —
+  `policy_version` / `source_registry_version` / `candidate_evidence_count`
+  / `validated_evidence_count` / `rejected_evidence_count` /
+  `missing_facet_count` / `conflict_count` / `freshness_result` /
+  `decision` / `reason_codes` / a measured `latency_ms` — never raw
+  evidence content, a claim value, or the question text. Nested
+  `"provenance_validation"` (Task 2/3's registry+policy gating alongside
+  Task 4/5), `"freshness_validation"` (Task 6) and `"completeness_
+  validation"` (Task 7, only opened when that stage is actually reached)
+  child spans carry their own sanitized counts. `request_id`/
+  `correlation_id`/`ontology_version`/`gate_b_policy_version` are
+  deliberately never set here — the first two are carried by whatever
+  root span a caller has open (Day 6's mechanism, reused unmodified); the
+  other two already appear on the sibling `"gate_a"`/`"gate_b"` spans in
+  the same trace, since `GateC` has no `OntologyRegistry`/`PolicyRegistry`
+  (Gate-B's) of its own to read them from.
+- `src/aico/rag/control_plane_answer_service.py` — the now-redundant outer
+  `"gate_c"` span wrapper (Task 13's own first cut) is removed;
+  `_answer_rag_with_gate_c()` calls `self.gate_c.evaluate()` directly,
+  which becomes a child of whatever span is already current there — the
+  identical correlation-propagation mechanism, just owned one layer
+  closer to the code that actually produces the metadata.
+- `tests/test_day11_observability.py` — proves the `"gate_c"` span exists
+  with every required field across all four decision outcomes (`allow`/
+  `insufficient_evidence` via missing facets/`clarify`/`reject` including
+  the unresolved-conflict case); that `"provenance_validation"`/
+  `"freshness_validation"` are always its children when stage 3 is
+  reached and absent when Gate-B never allowed; that `"completeness_
+  validation"` is present only when stage 7 actually runs (absent for
+  `reject`/`clarify`/an `insufficient_evidence` reached via a throwaway
+  policy's `minimum_valid_items` floor instead — every real committed
+  rule's is 1, so a hand-built policy is needed to reach that specific
+  early-exit path); trace_id sharing/parent-span nesting under a caller's
+  own span; and that no span attribute anywhere ever contains raw evidence
+  content or a claimed value.
+
 ```
 uv run pytest -q
 uv run ruff check .
 uv run python -m aico.evals.day07
 ```
 
-295 new tests (`tests/test_day11_evidence_envelope.py`,
+309 new tests (`tests/test_day11_evidence_envelope.py`,
 `tests/test_day11_source_registry.py`, `tests/test_day11_gate_c_policy.py`,
 `tests/test_day11_provenance.py`, `tests/test_day11_freshness.py`,
 `tests/test_day11_completeness.py`, `tests/test_day11_conflicts.py`,
 `tests/test_day11_gate_c.py`, `tests/test_day11_no_fallthrough.py`,
-`tests/test_day11_control_plane_integration.py`), 1780 passing overall (up
-from 1485 after Day 10) — the Day 7 regression gate is unmodified and
-still passes (`GATE: PASS`, `evals/baseline_v1.json` untouched).
+`tests/test_day11_control_plane_integration.py`,
+`tests/test_day11_observability.py`), 1794 passing overall (up from 1485
+after Day 10) — the Day 7 regression gate is unmodified and still passes
+(`GATE: PASS`, `evals/baseline_v1.json` untouched).
 
 **Environment note:** this repository's `.venv` was originally copied
 forward from the Day 10 project directory rather than created fresh here.

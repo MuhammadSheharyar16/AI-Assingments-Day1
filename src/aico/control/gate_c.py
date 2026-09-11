@@ -8,6 +8,36 @@ module: Gate-C cannot decide `allow` without first knowing exactly which
 evidence survived every other Day 11 check, so "which items are still
 valid" and "what does that set of survivors justify" are one algorithm,
 not two).
+Day 11 Task 14 -- observability / provenance metadata. Unlike `gate_a.py`/
+`gate_b.py`/`disclosure.py` (pure decision logic, "no I/O, no tracing
+import of their own" -- their own module docstrings), `GateC.evaluate()`
+traces itself directly, the same way `answer_service.py`'s own
+`GroundedAnswerService.answer()` traces its own multi-stage pipeline
+rather than leaving it to an outer orchestrator: Gate-C is itself a
+multi-stage orchestrator over four other Day 11 validator modules, and
+Task 14 explicitly names sub-stage spans ("gate_c" / "provenance_validation"
+/ "freshness_validation" / "completeness_validation") no single outer
+"gate_c" span alone could distinguish. `_decision()` -- the one funnel
+every return path already goes through -- is where every sanitized
+attribute Task 14 names gets set on whatever span is current: `policy_
+version`/`source_registry_version`/`candidate_evidence_count`/`validated_
+evidence_count`/`rejected_evidence_count`/`missing_facet_count`/`conflict_
+count`/`freshness_result`(the sanitized summary string)/`decision`/
+`reason_codes`/`latency_ms`. Never `request_id`/`correlation_id` (this
+module does not import `aico.api`/`aico.observability`, the identical
+boundary `answer_service.py` keeps -- those two IDs are carried the same
+way every span in this codebase already carries them, as attributes on
+whatever root span a caller has open around this call, Day 6 Task 9's own
+mechanism, not reintroduced here); never `ontology_version`/`gate_b_
+policy_version` either (`GateC` has no `OntologyRegistry`/`PolicyRegistry`
+of its own to read them from -- both already appear on the sibling
+`"gate_a"`/`"gate_b"` spans a real caller, `ControlPlaneAnswerService`,
+opens in the same trace); and never raw evidence content, a raw protected
+record, PII, a secret, a full authorization claim, or a generated answer
+-- every attribute this module ever sets is a count, a version string, a
+governed enum value, or a sanitized reason-code string, the identical
+"safe to log" discipline every other span in this codebase already
+follows.
 Day 11 Task 12 -- preserve Gate-B scope (also folded in, not a separate
 check: it is exactly `_check_gate_b_scope()` inside `validate_provenance()`
 (Task 4), reused here as one input among several). Gate-C may further
@@ -125,9 +155,11 @@ of how far evaluation gets.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from enum import Enum
 
+from opentelemetry import trace
 from pydantic import BaseModel, ConfigDict, Field
 
 from aico.control.models import GateBDecision, GateBStatus
@@ -143,6 +175,14 @@ from aico.evidence.provenance import (
     validate_provenance,
 )
 from aico.evidence.source_registry import SourceRegistry
+
+# Task 14 -- same pattern `answer_service.py`/`control_plane_answer_service.py`
+# already use and document: `opentelemetry.trace.get_tracer(__name__)`
+# directly, never importing `aico.observability` here. Works against
+# whatever provider `aico.observability.telemetry.configure_tracing()`
+# installs, or a harmless no-op default when nothing has configured one
+# yet (e.g. a test that imports this module directly).
+_tracer = trace.get_tracer(__name__)
 
 
 class GateCStatus(str, Enum):
@@ -260,6 +300,8 @@ def _decision(
     *,
     policy_version: str,
     source_registry_version: str,
+    started_at: float,
+    candidate_evidence_count: int = 0,
     validated_evidence_ids: tuple[str, ...] = (),
     rejected_evidence_ids: tuple[str, ...] = (),
     reason_codes: tuple[str, ...] = (),
@@ -270,8 +312,13 @@ def _decision(
     """Every path funnels through here so every field is deliberately set
     (or deliberately left at its empty default) in exactly one place --
     the same "no partially populated result by accident of which stage
-    returned" discipline `gate_b.py`'s own `_deny()` helper follows."""
-    return GateCDecision(
+    returned" discipline `gate_b.py`'s own `_deny()` helper follows -- and,
+    Task 14, so every sanitized operational-metadata attribute is recorded
+    on whatever span is current in exactly this one place too, rather than
+    repeated at each of `evaluate()`'s own return points. `started_at`
+    (`time.monotonic()`, taken once at the top of `evaluate()`) is what
+    `latency_ms` is measured against."""
+    result = GateCDecision(
         decision=status,
         validated_evidence_ids=validated_evidence_ids if status is GateCStatus.ALLOW else (),
         rejected_evidence_ids=rejected_evidence_ids,
@@ -282,6 +329,28 @@ def _decision(
         policy_version=policy_version,
         source_registry_version=source_registry_version,
     )
+
+    # Task 14 -- sanitized Gate-C operational metadata, on whatever span is
+    # currently active (the "gate_c" span `evaluate()` itself opens -- see
+    # below; a harmless no-op when nothing configured a real tracer, e.g. a
+    # test calling `evaluate()` directly). Every value here is a count, a
+    # version string, a governed enum value, or a sanitized reason-code
+    # string -- never raw evidence content, a raw protected record, PII, a
+    # secret, a full authorization claim, or a generated answer.
+    span = trace.get_current_span()
+    span.set_attribute("gate_c.policy_version", policy_version)
+    span.set_attribute("gate_c.source_registry_version", source_registry_version)
+    span.set_attribute("gate_c.candidate_evidence_count", candidate_evidence_count)
+    span.set_attribute("gate_c.validated_evidence_count", len(result.validated_evidence_ids))
+    span.set_attribute("gate_c.rejected_evidence_count", len(rejected_evidence_ids))
+    span.set_attribute("gate_c.missing_facet_count", len(missing_facets))
+    span.set_attribute("gate_c.conflict_count", len(conflict_facets))
+    span.set_attribute("gate_c.freshness_result", freshness_summary)
+    span.set_attribute("gate_c.decision", status.value)
+    span.set_attribute("gate_c.reason_codes", ",".join(reason_codes))
+    span.set_attribute("gate_c.latency_ms", (time.monotonic() - started_at) * 1000)
+
+    return result
 
 
 @dataclass
@@ -305,146 +374,193 @@ class GateC:
         """Evaluate one candidate evidence package. Never raises for an
         ordinary input, well-formed or not -- every outcome, including
         every reject reason and the one documented `clarify` case, is a
-        normal, typed `GateCDecision` result, never a fall-through."""
-        request = request or GateCRequest()
-        policy_version = self.policy_registry.policy_version
-        registry_version = self.source_registry.registry_version
+        normal, typed `GateCDecision` result, never a fall-through. Task 14
+        -- runs entirely inside one `"gate_c"` span (every return point
+        funnels through `_decision()`, which records this span's own
+        sanitized attributes); `"provenance_validation"`/
+        `"freshness_validation"`/`"completeness_validation"` are its own
+        nested child spans, opened only for the stages actually reached."""
+        with _tracer.start_as_current_span("gate_c"):
+            started_at = time.monotonic()
+            request = request or GateCRequest()
+            policy_version = self.policy_registry.policy_version
+            registry_version = self.source_registry.registry_version
+            candidate_evidence_count = len(package.items)
 
-        # Stage 0 -- Gate-B must have actually granted ALLOW.
-        if gate_b_decision.decision is not GateBStatus.ALLOW:
-            return _decision(
-                GateCStatus.REJECT,
-                policy_version=policy_version,
-                source_registry_version=registry_version,
-                reason_codes=(GateCReasonCode.GATE_B_NOT_ALLOWED.value,),
-            )
-
-        # Stage 1 -- request_kind must be resolved.
-        if request.request_kind is None:
-            return _decision(
-                GateCStatus.CLARIFY,
-                policy_version=policy_version,
-                source_registry_version=registry_version,
-                reason_codes=(GateCReasonCode.REQUEST_KIND_NOT_RESOLVED.value,),
-            )
-
-        # Stage 2 -- a governed evidence-quality rule must exist.
-        rule = self.policy_registry.find_rule(package.intent_id, request.request_kind)
-        if rule is None:
-            return _decision(
-                GateCStatus.REJECT,
-                policy_version=policy_version,
-                source_registry_version=registry_version,
-                reason_codes=(GateCReasonCode.NO_GOVERNED_EVIDENCE_REQUIREMENT.value,),
-            )
-
-        # Stage 3 -- every candidate item, checked independently against
-        # every Day 11 validator.
-        item_reasons: dict[str, list[str]] = {item.evidence_id: [] for item in package.items}
-
-        for item in package.items:
-            item_reasons[item.evidence_id].extend(
-                _registry_policy_reasons(
-                    item, source_registry=self.source_registry, rule=rule, intent_id=package.intent_id
+            # Stage 0 -- Gate-B must have actually granted ALLOW.
+            if gate_b_decision.decision is not GateBStatus.ALLOW:
+                return _decision(
+                    GateCStatus.REJECT,
+                    policy_version=policy_version,
+                    source_registry_version=registry_version,
+                    started_at=started_at,
+                    candidate_evidence_count=candidate_evidence_count,
+                    reason_codes=(GateCReasonCode.GATE_B_NOT_ALLOWED.value,),
                 )
+
+            # Stage 1 -- request_kind must be resolved.
+            if request.request_kind is None:
+                return _decision(
+                    GateCStatus.CLARIFY,
+                    policy_version=policy_version,
+                    source_registry_version=registry_version,
+                    started_at=started_at,
+                    candidate_evidence_count=candidate_evidence_count,
+                    reason_codes=(GateCReasonCode.REQUEST_KIND_NOT_RESOLVED.value,),
+                )
+
+            # Stage 2 -- a governed evidence-quality rule must exist.
+            rule = self.policy_registry.find_rule(package.intent_id, request.request_kind)
+            if rule is None:
+                return _decision(
+                    GateCStatus.REJECT,
+                    policy_version=policy_version,
+                    source_registry_version=registry_version,
+                    started_at=started_at,
+                    candidate_evidence_count=candidate_evidence_count,
+                    reason_codes=(GateCReasonCode.NO_GOVERNED_EVIDENCE_REQUIREMENT.value,),
+                )
+
+            # Stage 3 -- every candidate item, checked independently
+            # against every Day 11 validator. Task 14 -- "provenance_
+            # validation" covers Task 2/3's own registry+policy gating
+            # (source trust) alongside Task 4/5's validators (the same
+            # "trust/provenance" dimension, one span); "freshness_
+            # validation" covers Task 6 separately.
+            item_reasons: dict[str, list[str]] = {item.evidence_id: [] for item in package.items}
+
+            with _tracer.start_as_current_span("provenance_validation") as span:
+                for item in package.items:
+                    item_reasons[item.evidence_id].extend(
+                        _registry_policy_reasons(
+                            item, source_registry=self.source_registry, rule=rule, intent_id=package.intent_id
+                        )
+                    )
+
+                provenance_report = validate_provenance(
+                    package, source_registry=self.source_registry, gate_b_decision=gate_b_decision
+                )
+                for result in provenance_report.item_results:
+                    item_reasons[result.evidence_id].extend(reason.value for reason in result.reasons)
+
+                integrity_checked = provenance_index is not None
+                if provenance_index is not None:
+                    integrity_report = validate_integrity(package, provenance_index=provenance_index)
+                    for result in integrity_report.item_results:
+                        item_reasons[result.evidence_id].extend(reason.value for reason in result.reasons)
+
+                failed_so_far = sum(1 for reasons in item_reasons.values() if reasons)
+                span.set_attribute("provenance_validation.candidate_count", candidate_evidence_count)
+                span.set_attribute("provenance_validation.failed_count", failed_so_far)
+                span.set_attribute("provenance_validation.integrity_checked", integrity_checked)
+
+            with _tracer.start_as_current_span("freshness_validation") as span:
+                freshness_report = validate_freshness(
+                    package, source_registry=self.source_registry, policy_registry=self.policy_registry
+                )
+                freshness_by_id: dict[str, FreshnessStatus | None] = {}
+                for result in freshness_report.item_results:
+                    item_reasons[result.evidence_id].extend(reason.value for reason in result.reasons)
+                    freshness_by_id[result.evidence_id] = result.status
+
+                freshness_summary = _freshness_summary(
+                    [freshness_by_id.get(item.evidence_id) for item in package.items]
+                )
+                span.set_attribute("freshness_validation.result", freshness_summary)
+
+            validated_evidence_ids = tuple(
+                evidence_id for evidence_id, reasons in item_reasons.items() if not reasons
+            )
+            rejected_evidence_ids = tuple(
+                evidence_id for evidence_id, reasons in item_reasons.items() if reasons
+            )
+            item_reason_codes = tuple(
+                dict.fromkeys(reason for reasons in item_reasons.values() for reason in reasons)
             )
 
-        provenance_report = validate_provenance(package, source_registry=self.source_registry, gate_b_decision=gate_b_decision)
-        for result in provenance_report.item_results:
-            item_reasons[result.evidence_id].extend(reason.value for reason in result.reasons)
+            # Stage 4 -- conflicts, over the validated set only.
+            conflict_report = validate_conflicts(
+                package,
+                valid_evidence_ids=validated_evidence_ids,
+                source_registry=self.source_registry,
+                conflict_policy=rule.conflict_policy,
+            )
+            if conflict_report.has_unresolved_conflict:
+                return _decision(
+                    GateCStatus.REJECT,
+                    policy_version=policy_version,
+                    source_registry_version=registry_version,
+                    started_at=started_at,
+                    candidate_evidence_count=candidate_evidence_count,
+                    validated_evidence_ids=validated_evidence_ids,
+                    rejected_evidence_ids=rejected_evidence_ids,
+                    reason_codes=(*item_reason_codes, GateCReasonCode.UNRESOLVED_CONFLICT.value),
+                    conflict_facets=conflict_report.unresolved_facets,
+                    freshness_summary=freshness_summary,
+                )
 
-        if provenance_index is not None:
-            integrity_report = validate_integrity(package, provenance_index=provenance_index)
-            for result in integrity_report.item_results:
-                item_reasons[result.evidence_id].extend(reason.value for reason in result.reasons)
+            # Stage 5 -- a non-empty candidate set with zero survivors is
+            # broken evidence, not merely incomplete.
+            if package.items and not validated_evidence_ids:
+                return _decision(
+                    GateCStatus.REJECT,
+                    policy_version=policy_version,
+                    source_registry_version=registry_version,
+                    started_at=started_at,
+                    candidate_evidence_count=candidate_evidence_count,
+                    rejected_evidence_ids=rejected_evidence_ids,
+                    reason_codes=(*item_reason_codes, GateCReasonCode.NO_VALID_EVIDENCE.value),
+                    freshness_summary=freshness_summary,
+                )
 
-        freshness_report = validate_freshness(package, source_registry=self.source_registry, policy_registry=self.policy_registry)
-        freshness_by_id: dict[str, FreshnessStatus | None] = {}
-        for result in freshness_report.item_results:
-            item_reasons[result.evidence_id].extend(reason.value for reason in result.reasons)
-            freshness_by_id[result.evidence_id] = result.status
+            # Stage 6 -- minimum evidence requirement (Task 3's own field).
+            if len(validated_evidence_ids) < rule.minimum_valid_items:
+                return _decision(
+                    GateCStatus.INSUFFICIENT_EVIDENCE,
+                    policy_version=policy_version,
+                    source_registry_version=registry_version,
+                    started_at=started_at,
+                    candidate_evidence_count=candidate_evidence_count,
+                    validated_evidence_ids=(),
+                    rejected_evidence_ids=rejected_evidence_ids,
+                    reason_codes=(*item_reason_codes, GateCReasonCode.INSUFFICIENT_VALID_ITEMS.value),
+                    freshness_summary=freshness_summary,
+                )
 
-        validated_evidence_ids = tuple(
-            evidence_id for evidence_id, reasons in item_reasons.items() if not reasons
-        )
-        rejected_evidence_ids = tuple(
-            evidence_id for evidence_id, reasons in item_reasons.items() if reasons
-        )
-        item_reason_codes = tuple(
-            dict.fromkeys(reason for reasons in item_reasons.values() for reason in reasons)
-        )
-        freshness_summary = _freshness_summary(
-            [freshness_by_id.get(item.evidence_id) for item in package.items]
-        )
+            # Stage 7 -- completeness, against the governed rule's own
+            # required_facets (never `package.required_facets` as supplied
+            # by the caller).
+            with _tracer.start_as_current_span("completeness_validation") as span:
+                effective_package = package.model_copy(update={"required_facets": tuple(rule.required_facets)})
+                completeness_result = validate_completeness(
+                    effective_package, valid_evidence_ids=validated_evidence_ids, source_registry=self.source_registry
+                )
+                span.set_attribute("completeness_validation.required_facet_count", len(rule.required_facets))
+                span.set_attribute("completeness_validation.covered_facet_count", len(completeness_result.covered_facets))
+                span.set_attribute("completeness_validation.missing_facet_count", len(completeness_result.missing_facets))
 
-        # Stage 4 -- conflicts, over the validated set only.
-        conflict_report = validate_conflicts(
-            package,
-            valid_evidence_ids=validated_evidence_ids,
-            source_registry=self.source_registry,
-            conflict_policy=rule.conflict_policy,
-        )
-        if conflict_report.has_unresolved_conflict:
+            if completeness_result.status is CompletenessStatus.INSUFFICIENT_EVIDENCE:
+                return _decision(
+                    GateCStatus.INSUFFICIENT_EVIDENCE,
+                    policy_version=policy_version,
+                    source_registry_version=registry_version,
+                    started_at=started_at,
+                    candidate_evidence_count=candidate_evidence_count,
+                    rejected_evidence_ids=rejected_evidence_ids,
+                    reason_codes=(*item_reason_codes, GateCReasonCode.MISSING_REQUIRED_FACETS.value),
+                    missing_facets=completeness_result.missing_facets,
+                    freshness_summary=freshness_summary,
+                )
+
+            # Stage 8 -- allow, using only the validated evidence.
             return _decision(
-                GateCStatus.REJECT,
+                GateCStatus.ALLOW,
                 policy_version=policy_version,
                 source_registry_version=registry_version,
+                started_at=started_at,
+                candidate_evidence_count=candidate_evidence_count,
                 validated_evidence_ids=validated_evidence_ids,
                 rejected_evidence_ids=rejected_evidence_ids,
-                reason_codes=(*item_reason_codes, GateCReasonCode.UNRESOLVED_CONFLICT.value),
-                conflict_facets=conflict_report.unresolved_facets,
+                reason_codes=item_reason_codes,
                 freshness_summary=freshness_summary,
             )
-
-        # Stage 5 -- a non-empty candidate set with zero survivors is
-        # broken evidence, not merely incomplete.
-        if package.items and not validated_evidence_ids:
-            return _decision(
-                GateCStatus.REJECT,
-                policy_version=policy_version,
-                source_registry_version=registry_version,
-                rejected_evidence_ids=rejected_evidence_ids,
-                reason_codes=(*item_reason_codes, GateCReasonCode.NO_VALID_EVIDENCE.value),
-                freshness_summary=freshness_summary,
-            )
-
-        # Stage 6 -- minimum evidence requirement (Task 3's own field).
-        if len(validated_evidence_ids) < rule.minimum_valid_items:
-            return _decision(
-                GateCStatus.INSUFFICIENT_EVIDENCE,
-                policy_version=policy_version,
-                source_registry_version=registry_version,
-                validated_evidence_ids=(),
-                rejected_evidence_ids=rejected_evidence_ids,
-                reason_codes=(*item_reason_codes, GateCReasonCode.INSUFFICIENT_VALID_ITEMS.value),
-                freshness_summary=freshness_summary,
-            )
-
-        # Stage 7 -- completeness, against the governed rule's own
-        # required_facets (never `package.required_facets` as supplied by
-        # the caller).
-        effective_package = package.model_copy(update={"required_facets": tuple(rule.required_facets)})
-        completeness_result = validate_completeness(
-            effective_package, valid_evidence_ids=validated_evidence_ids, source_registry=self.source_registry
-        )
-        if completeness_result.status is CompletenessStatus.INSUFFICIENT_EVIDENCE:
-            return _decision(
-                GateCStatus.INSUFFICIENT_EVIDENCE,
-                policy_version=policy_version,
-                source_registry_version=registry_version,
-                rejected_evidence_ids=rejected_evidence_ids,
-                reason_codes=(*item_reason_codes, GateCReasonCode.MISSING_REQUIRED_FACETS.value),
-                missing_facets=completeness_result.missing_facets,
-                freshness_summary=freshness_summary,
-            )
-
-        # Stage 8 -- allow, using only the validated evidence.
-        return _decision(
-            GateCStatus.ALLOW,
-            policy_version=policy_version,
-            source_registry_version=registry_version,
-            validated_evidence_ids=validated_evidence_ids,
-            rejected_evidence_ids=rejected_evidence_ids,
-            reason_codes=item_reason_codes,
-            freshness_summary=freshness_summary,
-        )

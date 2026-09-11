@@ -176,11 +176,17 @@ section already documents for Gate-A/Gate-B.
        builds the candidate `EvidencePackage` plus the governed
        `request_kind` Gate-C needs (`GateCRequest`) -- the one place this
        pipeline's real chunks become Day 11's governed shape.
-    3. `GateC.evaluate()` (Task 9) -- its own `"gate_c"` span, sanitized
-       decision-provenance attributes only (Task 14: policy/source-
+    3. `GateC.evaluate()` (Task 9) -- opens its own `"gate_c"` span (plus
+       Task 14's nested `"provenance_validation"`/`"freshness_validation"`/
+       `"completeness_validation"` child spans) and records its own
+       sanitized decision-provenance attributes there (policy/source-
        registry versions, the decision itself, reason codes, evidence/
        missing-facet/conflict *counts*, a freshness summary string) --
-       never raw evidence content, never `question`/`resolved_question`.
+       never raw evidence content, never `question`/`resolved_question`;
+       see `gate_c.py`'s own module docstring, "Day 11 Task 14" section.
+       This call becomes a child of whatever span is already current here
+       (correlation context preserved the same way every span in this
+       pipeline already preserves it).
     4. `reject`/`insufficient_evidence`/`clarify` each return their own
        typed result (`GateCRejected`/`GateCInsufficientEvidence`/
        `GateCClarify`, all carrying only Gate-C's own sanitized
@@ -778,26 +784,22 @@ class ControlPlaneAnswerService:
 
         package, request_kind = self.evidence_adapter(resolved_question, lane_decision, retrieved)
 
-        # Gate-C (Task 9). Task 14 -- "gate_c" span, sanitized decision-
-        # provenance attributes only (counts/versions/reason codes/a
-        # freshness summary string) -- never raw evidence content, never
-        # `question`/`resolved_question`.
-        with _tracer.start_as_current_span("gate_c") as span:
-            start = time.monotonic()
-            gate_c_decision = self.gate_c.evaluate(
-                gate_b_decision=gate_b_decision, package=package, request=GateCRequest(request_kind=request_kind)
-            )
-            latency_ms = (time.monotonic() - start) * 1000
-            span.set_attribute("gate_c.policy_version", gate_c_decision.policy_version)
-            span.set_attribute("gate_c.source_registry_version", gate_c_decision.source_registry_version)
-            span.set_attribute("gate_c.decision", gate_c_decision.decision.value)
-            span.set_attribute("gate_c.reason_codes", ",".join(gate_c_decision.reason_codes))
-            span.set_attribute("gate_c.validated_evidence_count", len(gate_c_decision.validated_evidence_ids))
-            span.set_attribute("gate_c.rejected_evidence_count", len(gate_c_decision.rejected_evidence_ids))
-            span.set_attribute("gate_c.missing_facet_count", len(gate_c_decision.missing_facets))
-            span.set_attribute("gate_c.conflict_count", len(gate_c_decision.conflict_facets))
-            span.set_attribute("gate_c.freshness_summary", gate_c_decision.freshness_summary)
-            span.set_attribute("gate_c.latency_ms", latency_ms)
+        # Gate-C (Task 9). Its own `"gate_c"` span (plus the nested
+        # `"provenance_validation"`/`"freshness_validation"`/
+        # `"completeness_validation"` child spans, Task 14) is opened by
+        # `evaluate()` itself, not here -- `GateC` is itself a multi-stage
+        # orchestrator over four other Day 11 validator modules, the same
+        # reason `GroundedAnswerService.answer()` traces its own pipeline
+        # rather than leaving it to this class (see `gate_c.py`'s own
+        # module docstring, "Day 11 Task 14" section, for why this is a
+        # deliberate exception to `gate_a`/`gate_b`/`disclosure` staying
+        # trace-free). This call becomes a child of whatever span is
+        # already current (this method's own caller's span, if any) --
+        # correlation context is preserved the same way every span in
+        # this pipeline already preserves it (Day 6 Task 9's mechanism).
+        gate_c_decision = self.gate_c.evaluate(
+            gate_b_decision=gate_b_decision, package=package, request=GateCRequest(request_kind=request_kind)
+        )
 
         if gate_c_decision.decision is GateCStatus.REJECT:
             return GateCRejected(
