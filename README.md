@@ -1324,7 +1324,7 @@ before the Model Gateway: Gate-A/lane selection decide what a request
 *means*; Gate-B decides whether the *trusted caller* may proceed; Gate-C
 decides whether the *evidence retrieval actually returned* may be trusted
 enough to reach generation at all (`Day 11 Task.pdf`'s standing rule:
-"Retrieval success is not evidence validity"). Only Tasks 1–5 are
+"Retrieval success is not evidence validity"). Only Tasks 1–6 are
 implemented so far — the sections below will grow as later tasks land.
 
 - `data/day11_pack/` — the Day 11 resource pack, copied verbatim from the
@@ -1514,17 +1514,49 @@ implemented so far — the sections below will grow as later tasks land.
   were actually designed for (a closer fit for Task 5's governed-reference
   design than Task 4's own self-consistency-only remapping).
 
+- `src/aico/evidence/freshness.py` (Task 6) — two layers: `evaluate_
+  freshness()`, a pure, deterministic core (`as_of`/`source_updated_at`/
+  `max_age_hours` in, one `FreshnessStatus` out — `age = as_of -
+  source_updated_at`, fresh when `age <= max_age`) shaped to match
+  `gate_c_cases.json`'s own `freshness_cases` fixture exactly (no
+  adaptation needed, unlike Task 4/5's hash fixtures); and `validate_
+  freshness()`, the package-level entry point that resolves each item's
+  own governed threshold through `SourceRegistry` (Task 2) →
+  `GateCPolicyRegistry` (Task 3) and evaluates it against `EvidencePackage
+  .as_of` — Task 1's own reserved injectable reference time, so nothing in
+  this module ever reaches for wall-clock `datetime.now()`. "Exactly at
+  threshold" is still `FRESH` (the rule's own `<=`); a future/invalid
+  source timestamp and a missing one are distinct, named outcomes
+  (`INVALID_TIMESTAMP`/`MISSING_TIMESTAMP`) rather than silently
+  defaulting to fresh or stale. "Retrieval score does not override
+  staleness" is proven structurally — neither function's signature has a
+  rank/score parameter to even thread one through. Returns one
+  `FreshnessReport`, the `FreshnessItemResult`/`FreshnessFailureReason`
+  analog of Task 4's `ProvenanceReport`.
+- `tests/test_day11_freshness.py` (Task 16's named file) — proves
+  `evaluate_freshness()` against every Task 6 "Required cases" bullet
+  (including an AST-based, not docstring-substring, proof that it never
+  calls `.now()`/`.utcnow()`) plus all four real `freshness_cases` fixture
+  values fed straight through it, then `validate_freshness()` end to end
+  against the real committed registries — two items from
+  `SRC-POLICY-A`/`SRC-CONTRACT-A` (30-day/7-day thresholds) in one package
+  reaching independently correct outcomes, a stale item placed first in
+  the list still failing regardless of position, and the defensive
+  unresolved-freshness-policy branch (unreachable through the real,
+  cross-validated committed data, so built by hand).
+
 ```
 uv run pytest -q
 uv run ruff check .
 uv run python -m aico.evals.day07
 ```
 
-167 new tests (`tests/test_day11_evidence_envelope.py`,
+190 new tests (`tests/test_day11_evidence_envelope.py`,
 `tests/test_day11_source_registry.py`, `tests/test_day11_gate_c_policy.py`,
-`tests/test_day11_provenance.py`), 1652 passing overall (up from 1485
-after Day 10) — the Day 7 regression gate is unmodified and still passes
-(`GATE: PASS`, `evals/baseline_v1.json` untouched).
+`tests/test_day11_provenance.py`, `tests/test_day11_freshness.py`), 1675
+passing overall (up from 1485 after Day 10) — the Day 7 regression gate is
+unmodified and still passes (`GATE: PASS`, `evals/baseline_v1.json`
+untouched).
 
 **Environment note:** this repository's `.venv` was originally copied
 forward from the Day 10 project directory rather than created fresh here.

@@ -48,9 +48,19 @@ would miss, and fails closed (never "no opinion, so allow") when no
 governed record exists for an item at all. Its typed result is
 `IntegrityReport`/`IntegrityResult`/`IntegrityFailureReason`.
 
-Later Day 11 tasks add freshness (Task 6), completeness (Task 7) and
-conflict detection (Task 8), all built on the envelope, source registry,
-policy and provenance/integrity defined so far.
+Task 6 adds `validate_freshness()`/`evaluate_freshness()` (`freshness.py`):
+a pure, deterministic core (`evaluate_freshness()`, three primitive
+timestamps/hours in, one `FreshnessStatus` out -- fresh/stale/missing/
+invalid, never wall-clock) plus a package-level entry point
+(`validate_freshness()`) that resolves each item's own governed threshold
+through `SourceRegistry` (Task 2) and `GateCPolicyRegistry` (Task 3) and
+evaluates it against `EvidencePackage.as_of` -- the injectable reference
+time Task 1 already reserved for exactly this. Its typed result is
+`FreshnessReport`/`FreshnessItemResult`/`FreshnessFailureReason`.
+
+Later Day 11 tasks add completeness (Task 7) and conflict detection
+(Task 8), all built on the envelope, source registry, policy, provenance/
+integrity and freshness defined so far.
 """
 
 from aico.evidence.errors import (
@@ -60,6 +70,14 @@ from aico.evidence.errors import (
     GateCPolicyLookupError,
     SourceRegistryLoadError,
     SourceRegistryLookupError,
+)
+from aico.evidence.freshness import (
+    FreshnessFailureReason,
+    FreshnessItemResult,
+    FreshnessReport,
+    FreshnessStatus,
+    evaluate_freshness,
+    validate_freshness,
 )
 from aico.evidence.models import EvidenceItem, EvidencePackage, parse_evidence_item, parse_evidence_package
 from aico.evidence.policy import (
@@ -124,4 +142,10 @@ __all__ = [
     "IntegrityResult",
     "IntegrityReport",
     "validate_integrity",
+    "FreshnessStatus",
+    "evaluate_freshness",
+    "FreshnessFailureReason",
+    "FreshnessItemResult",
+    "FreshnessReport",
+    "validate_freshness",
 ]
