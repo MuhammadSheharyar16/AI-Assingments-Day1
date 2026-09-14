@@ -362,6 +362,59 @@ def test_gate_d_safe_failure_blocks_a_live_secret_pattern_leak():
     assert "bank account" not in raw_body.lower()
 
 
+def test_field_based_disclosure_check_is_a_documented_no_op_on_the_live_rag_path():
+    """Locks in, as a proven fact rather than only a docstring claim, the
+    one architectural boundary `_finalize_with_gate_d()`'s own docstring
+    already names: it always calls `check_final_disclosure(...,
+    protected_fields=())` for a `rag`-lane candidate (no structured,
+    per-field-classified protected record exists for free-text RAG
+    evidence -- inherited unchanged from Day 10's own `disclose()`, never
+    called from `.answer()` for the same reason). Task 6's *field*-based
+    leak check (`DENIED_FIELD_VALUE_LEAKED`/`REDACTABLE_FIELD_VALUE_LEAKED`)
+    is therefore structurally inert on this live path today -- proven
+    unit-level in `test_day12_disclosure.py` against `disclosure_leak_
+    cases.json` (DISC12-001..004), never over a live request, unlike Task
+    7's pattern-based check (`test_gate_d_safe_failure_blocks_a_live_
+    secret_pattern_leak`, above).
+
+    This is a low-risk, inherited gap, not a Day 12 regression: the real
+    committed `data/documents/` corpus contains no literal value for any
+    Gate-B-governed protected field (`contact_email`/`tax_identifier`/
+    `bank_account`/`personal_notes` -- confirmed by grep, no `@`/tax/bank-
+    account text anywhere in the corpus) and `disclose()`'s own consumer
+    (Mode B) is not yet wired to `.answer()` either, so there is currently
+    nothing in this system's live RAG path for that check to have caught
+    regardless. `DeniedFieldShapedLeakGateway` states a bank-account-*shaped*
+    value that deliberately does NOT match Task 7's own narrow synthetic
+    pattern (`SYN-BANK-\\d+`) -- proving the leak survives specifically
+    because no protected-field data was ever supplied, not because the
+    value happened to dodge the pattern scan. If a future day wires a real
+    structured/PII-bearing source into this pipeline, this test must start
+    failing (200, not 422) and should be replaced by a live-leak test
+    matching `test_gate_d_safe_failure_blocks_a_live_secret_pattern_leak`'s
+    own shape."""
+
+    class DeniedFieldShapedLeakGateway(EchoingGateway):
+        def chat(self, request: ChatRequest) -> ChatResult:
+            result = super().chat(request)
+            payload = json.loads(result.content)
+            payload["answer"] += " Bank account on file: 00998877."  # no SYN-BANK- prefix -> Task 7 will not match this
+            return dataclasses.replace(result, content=json.dumps(payload))
+
+    gateway = DeniedFieldShapedLeakGateway()
+    client = _client(gateway)
+
+    resp = client.post("/ask/governed", json={"question": "What are the payment terms?", "data_class": "internal"})
+
+    # Documents today's real behavior: this leak-shaped value is released,
+    # because no ProtectedField data reaches check_final_disclosure() on
+    # this path. Not the desired end state for a PII-bearing corpus --
+    # exactly why this test exists, so that gap stays visible and tested
+    # rather than silently assumed.
+    assert resp.status_code == 200, resp.json()
+    assert "00998877" in resp.json()["answer"]
+
+
 def test_gate_d_reject_via_narrowed_policy_is_a_server_error():
     """No shipped fixture/live scenario reaches Gate-D's own `reject`
     path through the unmodified committed policy (Day 5's own upstream
