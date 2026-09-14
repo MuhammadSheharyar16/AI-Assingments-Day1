@@ -12,18 +12,19 @@ own).
 Day 12 Task 7 -- deterministic secret / protected-value detection, the
 profile-independent half of final disclosure validation (see this
 module's own "Day 12 Task 7" section).
-Day 12 Task 8 -- latency-budget policy (see this module's own "Day 12
-Task 8" section, appended near the end of this file).
+Day 12 Task 8 -- latency-budget policy.
+Day 12 Task 9 -- safe failure behavior (see this module's own "Day 12
+Task 9" section, appended near the end of this file).
 
 Day 12's required structure names no separate module for citation
-reconciliation, final disclosure validation, or latency-budget checking
-(unlike Gate-C's own evidence validators, each given a dedicated file
-under `src/aico/evidence/` because Day 11's tree explicitly lists them) --
-`gate_d.py` itself is where all of it lives, built up one labeled section
-per task the same way `policy_models.py` grew a "Day 12 Task 2" section
-rather than a new file. Later Day 12 tasks (safe failure, the full
-decision contract) add their own labeled sections to this same file as
-they land; only Task 3/4/6/7/8 are implemented so far.
+reconciliation, final disclosure validation, latency-budget checking, or
+safe failure behavior (unlike Gate-C's own evidence validators, each
+given a dedicated file under `src/aico/evidence/` because Day 11's tree
+explicitly lists them) -- `gate_d.py` itself is where all of it lives,
+built up one labeled section per task the same way `policy_models.py`
+grew a "Day 12 Task 2" section rather than a new file. Later Day 12 tasks
+(the full decision contract) add their own labeled sections to this same
+file as they land; only Task 3/4/6/7/8/9 are implemented so far.
 
 ## What Gate-D's final citation check proves
 
@@ -168,8 +169,9 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from enum import Enum
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aico.contracts.models import AnswerStatus
 from aico.control.disclosure import ProtectedField, apply_disclosure
@@ -181,7 +183,9 @@ from aico.control.policy_models import (
     DisclosureProfile,
     GateDDisclosurePolicy,
     LatencyBudgets,
+    SafeFailureSpec,
 )
+from aico.control.quality import QualityReasonCode
 
 
 class GateCEvidenceRecord(BaseModel):
@@ -814,4 +818,123 @@ def check_latency_budget(candidate: FinalResponseCandidate, *, policy: LatencyBu
         model_latency_ms=candidate.model_latency_ms,
         max_total_latency_ms=policy.max_total_latency_ms,
         max_model_latency_ms=policy.max_model_latency_ms,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Day 12 Task 9 -- safe failure behavior.
+# ══════════════════════════════════════════════════════════════════════
+#
+# "When Gate-D cannot release the candidate, return a controlled typed
+# failure" (Task 9). `SafeFailureResponse` is that controlled shape;
+# `build_safe_failure_response()` is the only thing that ever constructs
+# one. Task 9's own "Safe failure must not include" list -- unsafe
+# candidate answer / leaked protected value / raw model response / raw
+# evidence / policy internals / stack trace -- is enforced primarily at
+# the *type* level, not by remembering to scrub each of those at every
+# call site:
+#
+#     - `SafeFailureResponse` has no field capable of carrying any of
+#       them in the first place -- `extra="forbid"` closes off an
+#       accidental sixth field, and the five fields it does declare
+#       (`status`/`error_code`/`message`/`request_id`/`correlation_id`/
+#       `reason_codes`) are each individually safe by construction (see
+#       below). There is structurally no way to hand this type a
+#       candidate answer, an evidence record, or a traceback and have it
+#       accept the assignment.
+#     - `build_safe_failure_response()` does not even *accept* a
+#       `FinalResponseCandidate` -- only the two bare identifier strings
+#       (`request_id`/`correlation_id`) a caller extracts from one. This
+#       is deliberately a stronger guarantee than "the function body
+#       happens not to touch `candidate.candidate_answer`": the answer
+#       text, citations, and evidence ids are never in scope at all, so
+#       no future edit to this function could accidentally start
+#       forwarding them.
+#     - `error_code`/`message` come only from the governed `SafeFailureSpec`
+#       (Task 2, `policy/gate_d_policy.v1.json`'s own `safe_failure`
+#       object) -- fixed, policy-authored text, never anything derived
+#       from the candidate or an exception (working rule: "Safe failure
+#       text itself must be fixed/controlled and must not echo unsafe
+#       generated content"). `status` is independently pinned to the
+#       literal `"safe_failure"` a second time here (mirroring
+#       `SafeFailureSpec.status`'s own pin) so this type alone, without
+#       even consulting the policy object, can never represent anything
+#       but a safe failure.
+#     - `reason_codes` accepts only this module's own governed enum
+#       values (`_KNOWN_REASON_CODE_VALUES`, below -- the union of every
+#       `CitationReasonCode`/`QualityReasonCode`/`DisclosureReasonCode`/
+#       `SecretReasonCode`/`LatencyReasonCode` member) -- "Reason codes
+#       may be safe high-level enums" (Task 9) enforced as a hard
+#       rejection, not a naming convention a caller could still violate
+#       by passing free text (e.g. a raw exception message) instead.
+#
+# `build_safe_failure_response()` never raises for an ordinary input, and
+# performs no I/O, no logging, and no Model Gateway call -- it is a pure
+# assembly of already-governed values (working rule: "Gate-D does not
+# repair authorization, citations, disclosure or latency violations with
+# another model call").
+
+# Every reason code this module's own checks (Tasks 3/5/6/7/8) can ever
+# produce -- the one closed universe `SafeFailureResponse.reason_codes`
+# validates against. Built once, from the enums themselves, so this set
+# can never drift out of sync with what those checks actually emit.
+_KNOWN_REASON_CODE_VALUES: frozenset[str] = frozenset(
+    member.value
+    for enum_cls in (CitationReasonCode, QualityReasonCode, DisclosureReasonCode, SecretReasonCode, LatencyReasonCode)
+    for member in enum_cls
+)
+
+
+class SafeFailureResponse(BaseModel):
+    """The controlled typed failure Gate-D returns when a candidate
+    cannot be released -- Task 9's own "Conceptual result" shape
+    (`status`/`error_code`/`request_id`/`correlation_id`), plus
+    `message` (the governed `SafeFailureSpec.message`) and `reason_codes`
+    (safe, high-level enum values only). See module docstring for why
+    each field is safe by construction. `request_id`/`correlation_id` are
+    still ordinary caller-supplied identifiers, not secret -- carrying
+    them is what lets a caller correlate a safe failure back to its own
+    request (Task 13's observability), the identical non-secret status
+    every other decision/report in this module already gives them."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["safe_failure"] = Field(description="Pinned -- this type can never represent anything else.")
+    error_code: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    correlation_id: str = Field(min_length=1)
+    reason_codes: tuple[str, ...] = Field(default_factory=tuple)
+
+    @field_validator("reason_codes")
+    @classmethod
+    def _validate_reason_codes_are_governed(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        unknown = [code for code in value if code not in _KNOWN_REASON_CODE_VALUES]
+        if unknown:
+            raise ValueError(f"reason_codes must be governed Gate-D reason-code values, got: {unknown}")
+        return value
+
+
+def build_safe_failure_response(
+    *,
+    request_id: str,
+    correlation_id: str,
+    policy: SafeFailureSpec,
+    reason_codes: Sequence[str] = (),
+) -> SafeFailureResponse:
+    """Build the one typed safe-failure result Gate-D ever returns.
+    Deliberately takes only bare identifier strings, never a
+    `FinalResponseCandidate` -- see module docstring. `reason_codes` is
+    typically the concatenation of whichever of this module's own checks
+    (Task 3/5/6/7/8) actually failed, each already reduced to its
+    enum's `.value`; rejected outright (via `SafeFailureResponse`'s own
+    validator) if any entry is not one of this module's governed reason
+    codes."""
+    return SafeFailureResponse(
+        status=policy.status,
+        error_code=policy.code,
+        message=policy.message,
+        request_id=request_id,
+        correlation_id=correlation_id,
+        reason_codes=tuple(reason_codes),
     )
