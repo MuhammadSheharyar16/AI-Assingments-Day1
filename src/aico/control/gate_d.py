@@ -143,7 +143,17 @@ conflicts, Gate-D rejects the candidate" (Task 4) is exactly
 `CITATION_PROVENANCE_MISMATCH` below -- checked only once evidence_id
 membership itself already holds (a citation whose evidence_id is not even
 in the validated set has nothing to compare provenance against; it is
-already `CITATION_NOT_GATE_C_VALIDATED`)."""
+already `CITATION_NOT_GATE_C_VALIDATED`).
+
+Task 4's remaining named field, `citation_id`, plays no role in this
+comparison (Gate-C's own record carries none to compare it against -- it
+is the candidate's own public-facing id, not a piece of Gate-C provenance)
+but is still "retained enough ... to resolve back to the evidence
+supplied to generation" (Task 4's own framing): `CitationCheckResult`
+below carries it through unchanged from the candidate's own
+`FinalCitation.citation_id`, so a report reader can resolve one verdict
+back to its originating public citation without re-walking
+`candidate.candidate_citations` by `evidence_id`."""
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -152,7 +162,7 @@ from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field
 
 from aico.contracts.models import AnswerStatus
-from aico.control.final_response import FinalResponseCandidate
+from aico.control.final_response import FinalCitation, FinalResponseCandidate
 from aico.control.policy_models import CitationPolicy
 
 
@@ -195,11 +205,24 @@ class CitationCheckResult(BaseModel):
     """Citation reconciliation's per-citation verdict -- `evidence_id` this
     result is for, whether it passed both Task 3 checks, and -- when it
     did not -- every reason it failed (mirrors `evidence/provenance.py`'s
-    own `ProvenanceItemResult` shape one layer over)."""
+    own `ProvenanceItemResult` shape one layer over).
+
+    `citation_id` is carried through unchanged from the candidate's own
+    `FinalCitation.citation_id` -- Task 4's own named field, absent from
+    every shipped fixture citation (`final_citation_cases.json`'s own
+    citations never carry one, `final_response.py`'s own docstring already
+    notes why) but threaded through here whenever a real caller does
+    supply one, so a report reader can resolve a verdict back to the
+    candidate's own public citation id without re-walking
+    `candidate.candidate_citations` by `evidence_id`. Plays no role in the
+    reconciliation decision itself -- `evidence_id`/`chunk_id`/`source_id`/
+    `source_version` are what Gate-C's own record is keyed and compared
+    against (see `_check_one_citation`)."""
 
     model_config = ConfigDict(extra="forbid")
 
     evidence_id: str = Field(min_length=1)
+    citation_id: str | None = Field(default=None)
     valid: bool
     reasons: tuple[CitationReasonCode, ...] = Field(default_factory=tuple)
 
@@ -227,41 +250,46 @@ class CitationReconciliationReport(BaseModel):
 
 
 def _check_one_citation(
-    citation_evidence_id: str,
-    citation_chunk_id: str,
-    citation_source_id: str,
-    citation_source_version: str,
+    citation: FinalCitation,
     *,
     validated_by_id: dict[str, GateCEvidenceRecord],
     citations_must_be_gate_c_approved: bool,
 ) -> CitationCheckResult:
     if not citations_must_be_gate_c_approved:
-        return CitationCheckResult(evidence_id=citation_evidence_id, valid=True)
+        return CitationCheckResult(evidence_id=citation.evidence_id, citation_id=citation.citation_id, valid=True)
 
-    validated = validated_by_id.get(citation_evidence_id)
+    validated = validated_by_id.get(citation.evidence_id)
     if validated is None:
         # Covers both Task 3 bullets identically -- a wholly forged
         # evidence_id and one Gate-C actually saw and rejected are the
         # same "not in the validated set" outcome; see module docstring.
         return CitationCheckResult(
-            evidence_id=citation_evidence_id,
+            evidence_id=citation.evidence_id,
+            citation_id=citation.citation_id,
             valid=False,
             reasons=(CitationReasonCode.CITATION_NOT_GATE_C_VALIDATED,),
         )
 
+    # Task 4 -- full provenance identity, not evidence_id membership
+    # alone: `citation_id` (checked for presence/shape by Task 1's
+    # envelope already, never compared here -- it is the candidate's own
+    # public-facing id, Gate-C's record carries none to compare it
+    # against) plays no part in this comparison; `chunk_id`/`source_id`/
+    # `source_version` are.
     provenance_matches = (
-        citation_chunk_id == validated.chunk_id
-        and citation_source_id == validated.source_id
-        and citation_source_version == validated.source_version
+        citation.chunk_id == validated.chunk_id
+        and citation.source_id == validated.source_id
+        and citation.source_version == validated.source_version
     )
     if not provenance_matches:
         return CitationCheckResult(
-            evidence_id=citation_evidence_id,
+            evidence_id=citation.evidence_id,
+            citation_id=citation.citation_id,
             valid=False,
             reasons=(CitationReasonCode.CITATION_PROVENANCE_MISMATCH,),
         )
 
-    return CitationCheckResult(evidence_id=citation_evidence_id, valid=True)
+    return CitationCheckResult(evidence_id=citation.evidence_id, citation_id=citation.citation_id, valid=True)
 
 
 def reconcile_final_citations(
@@ -290,10 +318,7 @@ def reconcile_final_citations(
 
     citation_checks = tuple(
         _check_one_citation(
-            citation.evidence_id,
-            citation.chunk_id,
-            citation.source_id,
-            citation.source_version,
+            citation,
             validated_by_id=validated_by_id,
             citations_must_be_gate_c_approved=policy.citations_must_be_gate_c_approved,
         )

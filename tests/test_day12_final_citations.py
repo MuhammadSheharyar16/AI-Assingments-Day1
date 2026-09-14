@@ -173,6 +173,77 @@ def test_source_version_mismatch_case_reason_is_provenance_mismatch() -> None:
     assert report.reason_codes == (CitationReasonCode.CITATION_PROVENANCE_MISMATCH,)
 
 
+def test_fixture_citations_have_no_citation_id_and_report_carries_none() -> None:
+    """`final_citation_cases.json`'s own citations never carry a
+    `citation_id` -- `CitationCheckResult.citation_id` is `None` for
+    every one of them, never a synthesized placeholder."""
+    case = next(c for c in FINAL_CITATION_CASES if c["id"] == "CIT12-001")
+    candidate = _candidate_from(
+        candidate_status=case["candidate_status"],
+        candidate_citations=case["candidate_citations"],
+        gate_c_validated_evidence_ids=[item["evidence_id"] for item in case["gate_c_validated_evidence"]],
+    )
+    report = reconcile_final_citations(
+        candidate, gate_c_validated_evidence=_evidence_records(case["gate_c_validated_evidence"]), policy=REAL_CITATION_POLICY
+    )
+    assert report.citation_checks[0].citation_id is None
+
+
+def test_supplied_citation_id_is_retained_in_the_report() -> None:
+    """Task 4: "A final citation should retain enough metadata to resolve
+    back to the evidence supplied to generation" -- proven for the one
+    field a fixture never exercises: when a real candidate does supply a
+    `citation_id`, `CitationCheckResult` carries it through unchanged, for
+    a passing citation and a failing one alike."""
+    evidence = [GateCEvidenceRecord(evidence_id="E-101", chunk_id="CH-101", source_id="SRC-POLICY-A", source_version="3")]
+    candidate = _candidate_from(
+        candidate_citations=[
+            {
+                "citation_id": "CIT-PUBLIC-1",
+                "evidence_id": "E-101",
+                "chunk_id": "CH-101",
+                "source_id": "SRC-POLICY-A",
+                "source_version": "3",
+            }
+        ],
+        gate_c_validated_evidence_ids=["E-101"],
+    )
+    report = reconcile_final_citations(candidate, gate_c_validated_evidence=evidence, policy=REAL_CITATION_POLICY)
+    assert report.passed is True
+    assert report.citation_checks[0].citation_id == "CIT-PUBLIC-1"
+
+    forged_candidate = _candidate_from(
+        candidate_citations=[
+            {"citation_id": "CIT-PUBLIC-2", "evidence_id": "E-999", "chunk_id": "CH-999", "source_id": "SRC-FAKE", "source_version": "1"}
+        ],
+        gate_c_validated_evidence_ids=[],
+    )
+    forged_report = reconcile_final_citations(forged_candidate, gate_c_validated_evidence=[], policy=REAL_CITATION_POLICY)
+    assert forged_report.passed is False
+    assert forged_report.citation_checks[0].citation_id == "CIT-PUBLIC-2"
+
+
+def test_citation_id_plays_no_role_in_the_reconciliation_decision() -> None:
+    """`citation_id` is the candidate's own public-facing id -- Gate-C's
+    `GateCEvidenceRecord` carries none to compare it against, so two
+    citations differing only in `citation_id` (identical evidence_id/
+    chunk_id/source_id/source_version) reach the identical verdict."""
+    evidence = [GateCEvidenceRecord(evidence_id="E-101", chunk_id="CH-101", source_id="SRC-POLICY-A", source_version="3")]
+    base_citation = {"evidence_id": "E-101", "chunk_id": "CH-101", "source_id": "SRC-POLICY-A", "source_version": "3"}
+
+    without_id = _candidate_from(candidate_citations=[base_citation], gate_c_validated_evidence_ids=["E-101"])
+    with_id = _candidate_from(
+        candidate_citations=[{**base_citation, "citation_id": "CIT-ANYTHING"}],
+        gate_c_validated_evidence_ids=["E-101"],
+    )
+
+    report_without = reconcile_final_citations(without_id, gate_c_validated_evidence=evidence, policy=REAL_CITATION_POLICY)
+    report_with = reconcile_final_citations(with_id, gate_c_validated_evidence=evidence, policy=REAL_CITATION_POLICY)
+
+    assert report_without.passed == report_with.passed is True
+    assert report_without.reason_codes == report_with.reason_codes == ()
+
+
 # ══════════════════════════════════════════════════════════════════════
 # Section 2 -- specific Task 3/4 behaviors.
 # ══════════════════════════════════════════════════════════════════════
