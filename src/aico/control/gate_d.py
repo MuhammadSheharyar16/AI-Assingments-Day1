@@ -13,8 +13,12 @@ Day 12 Task 7 -- deterministic secret / protected-value detection, the
 profile-independent half of final disclosure validation (see this
 module's own "Day 12 Task 7" section).
 Day 12 Task 8 -- latency-budget policy.
-Day 12 Task 9 -- safe failure behavior (see this module's own "Day 12
-Task 9" section, appended near the end of this file).
+Day 12 Task 9 -- safe failure behavior.
+Day 12 Task 10 -- the Gate-D decision contract itself (see this module's
+own "Day 12 Task 10" section, appended near the end of this file): the
+`GateD` class that orchestrates every one of Tasks 3-9's own checks into
+one typed `GateDDecision`, the same role `GateC.evaluate()` plays for
+Day 11 Tasks 4-8.
 
 Day 12's required structure names no separate module for citation
 reconciliation, final disclosure validation, latency-budget checking, or
@@ -23,8 +27,8 @@ given a dedicated file under `src/aico/evidence/` because Day 11's tree
 explicitly lists them) -- `gate_d.py` itself is where all of it lives,
 built up one labeled section per task the same way `policy_models.py`
 grew a "Day 12 Task 2" section rather than a new file. Later Day 12 tasks
-(the full decision contract) add their own labeled sections to this same
-file as they land; only Task 3/4/6/7/8/9 are implemented so far.
+(observability/tracing, Task 13) add their own labeled section to this
+same file too; only Task 3/4/6/7/8/9/10 are implemented so far.
 
 ## What Gate-D's final citation check proves
 
@@ -168,6 +172,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
@@ -185,7 +190,8 @@ from aico.control.policy_models import (
     LatencyBudgets,
     SafeFailureSpec,
 )
-from aico.control.quality import QualityReasonCode
+from aico.control.policy_registry import GateDPolicyRegistry
+from aico.control.quality import QualityCheckReport, QualityFailureSeverity, QualityReasonCode, check_final_quality
 
 
 class GateCEvidenceRecord(BaseModel):
@@ -938,3 +944,262 @@ def build_safe_failure_response(
         correlation_id=correlation_id,
         reason_codes=tuple(reason_codes),
     )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Day 12 Task 10 -- the Gate-D decision contract.
+# ══════════════════════════════════════════════════════════════════════
+#
+# `GateD.evaluate()` is the one place every Task 3-9 check actually runs
+# together, the same role `GateC.evaluate()` (Day 11 Task 9) plays over
+# Day 11 Tasks 4-8's own validators -- this module's "Provenance"/"Reject
+# vs. safe_failure"/etc. sections above are each already proven
+# independently by their own task's function; this section is only the
+# combination.
+#
+# ## Inputs Gate-D consumes (Task 10's own list)
+#
+#     - Gate-B disclosure context     -> `gate_b_decision: GateBDecision`
+#                                         + `disclosure_profile:
+#                                         DisclosureProfile | None` (the
+#                                         resolved profile
+#                                         `gate_b_decision.
+#                                         disclosure_profile` names, when
+#                                         one does) + `protected_fields:
+#                                         Sequence[ProtectedField]` (the
+#                                         protected candidate data
+#                                         underlying this request -- Task
+#                                         6's own inputs, unchanged).
+#     - Gate-C validated evidence
+#       metadata                     -> `gate_c_validated_evidence:
+#                                         Sequence[GateCEvidenceRecord]`
+#                                         (Task 3's own input, unchanged).
+#     - typed candidate response      -> `candidate: FinalResponseCandidate`
+#                                         (Task 1). Always already
+#                                         well-formed by the time it
+#                                         reaches here -- a malformed
+#                                         payload never becomes one in the
+#                                         first place
+#                                         (`parse_final_response_candidate()`
+#                                         raises `FinalResponseEnvelopeError`
+#                                         upstream of Gate-D entirely, Task
+#                                         11's own integration boundary);
+#                                         `GateD.evaluate()` therefore has
+#                                         no separate "malformed candidate"
+#                                         branch of its own to reject --
+#                                         Task 10's `reject` outcome is
+#                                         reached only through a
+#                                         *well-formed* candidate that
+#                                         still fails quality's own
+#                                         reject-level checks (an
+#                                         already-failed typed contract/
+#                                         semantic validation, an
+#                                         unsupported status, or a
+#                                         status/answer inconsistency).
+#     - timing metadata                -> already part of `candidate`
+#                                         (`elapsed_ms`/`model_latency_ms`,
+#                                         Task 1) -- not a separate
+#                                         parameter.
+#     - Gate-D policy                  -> `self.policy_registry:
+#                                         GateDPolicyRegistry` (Task 2),
+#                                         resolved once at construction,
+#                                         reused for every `evaluate()`
+#                                         call -- the identical "built
+#                                         once against loaded registries,
+#                                         reused per request" pattern
+#                                         `GateC`'s own docstring
+#                                         describes.
+#
+# ## Decision algorithm
+#
+# Every check runs unconditionally, always, regardless of any other
+# check's outcome -- there is no structural reason to short-circuit (each
+# check's own inputs are already fully resolved before `evaluate()` is
+# even called, unlike Gate-C's own Gate-B-ALLOW precondition), and running
+# all of them gives Task 13's observability and Task 14's artifacts the
+# complete picture of every violation a candidate carries at once, not
+# only the first one found:
+#
+#   1. `check_final_quality()` (Task 5) -- its own `severity` already
+#      distinguishes `reject` from `safe_failure` per-reason; see that
+#      module's own docstring.
+#   2. `reconcile_final_citations()` (Task 3/4) -- never produces
+#      `reject`, only pass/fail (`safe_failure`-level whenever it fails).
+#   3. `check_final_disclosure()` (Task 6) + `detect_protected_value_leak()`
+#      (Task 7), combined into one `FinalDisclosureReport` -- Task 10
+#      names a single `disclosure_checks` field; neither sub-check ever
+#      produces `reject` either.
+#   4. `check_latency_budget()` (Task 8) -- never produces `reject`
+#      either; "a hard latency budget is exceeded" is, by this module's
+#      own reading (Task 8's "Rule" section), always a `safe_failure`,
+#      never grounds for `reject` (a slow-but-otherwise-valid candidate is
+#      not an internal-candidate/programming-policy error).
+#
+# Combining: `quality_checks.severity is REJECT` -> overall `reject`,
+# unconditionally (the identical "reject outranks safe_failure" rule
+# `quality.py`'s own `_overall_severity()` already applies within Task 5
+# alone, extended here across all four checks -- only quality's own check
+# can ever produce a `reject`-level reason at all, so this is really the
+# same rule, not a new one). Otherwise: any check failing at all ->
+# overall `safe_failure`. Every check passing -> `allow`.
+#
+# `reason_codes` accumulates every reason every check actually produced
+# (each already a `str` via `.value`), deduplicated in first-seen order --
+# never only the first failure found, matching this module's own
+# per-check reports' identical "every reason, not just one" convention.
+# `validated_citation_ids` and `safe_failure_code` are populated only for
+# their own respective outcome (`allow` / `safe_failure`) -- the identical
+# least-privilege "empty/`None` unless the decision actually resolves to
+# the state that grants it" posture `GateBDecision`/`GateCDecision` already
+# establish for their own analogous fields.
+
+
+class GateDStatus(str, Enum):
+    """The three required Gate-D outcomes (Task 10). Deliberately not
+    extensible at the type level -- a fourth status would need an
+    assignment-level change, never an ad hoc string. See this section's
+    own "Suggested meaning" mapping (Task 10's own words):
+    `ALLOW` -- final response may leave the system.
+    `SAFE_FAILURE` -- caller receives controlled typed failure.
+    `REJECT` -- invalid internal candidate / programming-policy error
+    that should not be exposed as normal answer."""
+
+    ALLOW = "allow"
+    SAFE_FAILURE = "safe_failure"
+    REJECT = "reject"
+
+
+class FinalDisclosureReport(BaseModel):
+    """Task 6's field-based `DisclosureCheckReport` and Task 7's
+    pattern-based `SecretDetectionReport`, combined into the single
+    `disclosure_checks` field Task 10's own field list names -- "equivalent
+    documented enums/shapes are acceptable" (Task 10): this is that
+    documented equivalent, not a loss of either sub-check's own detail
+    (`field_checks`/`secret_checks` below carry each in full)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    passed: bool
+    reason_codes: tuple[str, ...] = Field(default_factory=tuple)
+    field_checks: DisclosureCheckReport
+    secret_checks: SecretDetectionReport
+
+
+class GateDDecision(BaseModel):
+    """Gate-D's typed decision (Task 10's field list: `decision` /
+    `reason_codes` / `validated_citation_ids` / `quality_checks` /
+    `disclosure_checks` / `latency_checks` / `policy_version` /
+    `safe_failure_code`, plus `citation_checks` -- an extension beyond
+    the minimum list, the same way `GateADecision`/`GateBDecision` each
+    add their own extension fields beyond *their* minimum lists: full
+    per-citation decision provenance -- which specific citation was
+    valid/forged/mismatched, not only the flat `validated_citation_ids`
+    summary -- is exactly what Task 14's `final_citation_report.md`
+    needs, and re-deriving it by calling `reconcile_final_citations()` a
+    second time would duplicate work this decision already did once).
+
+    `validated_citation_ids` mirrors `GateCDecision.validated_evidence_ids`'s
+    own least-privilege convention: populated for `ALLOW` only. `citation_
+    checks`/`quality_checks`/`disclosure_checks`/`latency_checks` are
+    always populated regardless of `decision` -- Task 13's observability
+    and Task 14's artifacts both want to see every check's own outcome
+    even on an otherwise-passing or otherwise-failing candidate, the
+    identical "populated regardless of the final decision" convention
+    every sub-report in this module already follows individually."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision: GateDStatus
+    reason_codes: tuple[str, ...] = Field(default_factory=tuple)
+    validated_citation_ids: tuple[str, ...] = Field(default_factory=tuple)
+    citation_checks: CitationReconciliationReport
+    quality_checks: QualityCheckReport
+    disclosure_checks: FinalDisclosureReport
+    latency_checks: LatencyCheckReport
+    policy_version: str = Field(min_length=1)
+    safe_failure_code: str | None = Field(default=None, description="Populated only when decision is SAFE_FAILURE.")
+
+
+@dataclass
+class GateD:
+    """Gate-D: built once against a loaded `GateDPolicyRegistry` (Task
+    2), reused for every request. `evaluate()` is the only public entry
+    point -- see this section's own module-level comment for the
+    combination algorithm it runs."""
+
+    policy_registry: GateDPolicyRegistry
+
+    def evaluate(
+        self,
+        *,
+        candidate: FinalResponseCandidate,
+        gate_c_validated_evidence: Sequence[GateCEvidenceRecord],
+        gate_b_decision: GateBDecision,
+        disclosure_profile: DisclosureProfile | None,
+        protected_fields: Sequence[ProtectedField],
+    ) -> GateDDecision:
+        """Evaluate one already-typed final candidate. Never raises for an
+        ordinary input -- every outcome, `allow`/`safe_failure`/`reject`
+        alike, is a normal, typed `GateDDecision` result. Never mutates
+        any of its inputs, calls the Model Gateway, or consults an LLM
+        for any part of the decision (working rule: "Gate-D does not ask
+        an LLM whether the response is safe to release")."""
+        policy = self.policy_registry
+
+        quality_report = check_final_quality(
+            candidate,
+            policy=policy.quality_policy,
+            allowed_response_statuses=policy.allowed_response_statuses,
+        )
+        citation_report = reconcile_final_citations(
+            candidate,
+            gate_c_validated_evidence=gate_c_validated_evidence,
+            policy=policy.citation_policy,
+        )
+        field_disclosure_report = check_final_disclosure(
+            candidate,
+            gate_b_decision=gate_b_decision,
+            disclosure_profile=disclosure_profile,
+            protected_fields=protected_fields,
+            policy=policy.disclosure_policy,
+        )
+        secret_report = detect_protected_value_leak(candidate, policy=policy.disclosure_policy)
+        disclosure_report = FinalDisclosureReport(
+            passed=field_disclosure_report.passed and secret_report.passed,
+            reason_codes=tuple(
+                dict.fromkeys((*field_disclosure_report.reason_codes, *secret_report.reason_codes))
+            ),
+            field_checks=field_disclosure_report,
+            secret_checks=secret_report,
+        )
+        latency_report = check_latency_budget(candidate, policy=policy.latency_budgets)
+
+        if quality_report.severity is QualityFailureSeverity.REJECT:
+            decision = GateDStatus.REJECT
+        elif not (quality_report.passed and citation_report.passed and disclosure_report.passed and latency_report.passed):
+            decision = GateDStatus.SAFE_FAILURE
+        else:
+            decision = GateDStatus.ALLOW
+
+        reason_codes = tuple(
+            dict.fromkeys(
+                (
+                    *(code.value for code in quality_report.reason_codes),
+                    *(code.value for code in citation_report.reason_codes),
+                    *disclosure_report.reason_codes,
+                    *(code.value for code in latency_report.reason_codes),
+                )
+            )
+        )
+
+        return GateDDecision(
+            decision=decision,
+            reason_codes=reason_codes,
+            validated_citation_ids=citation_report.valid_citation_evidence_ids if decision is GateDStatus.ALLOW else (),
+            citation_checks=citation_report,
+            quality_checks=quality_report,
+            disclosure_checks=disclosure_report,
+            latency_checks=latency_report,
+            policy_version=policy.policy_version,
+            safe_failure_code=policy.safe_failure.code if decision is GateDStatus.SAFE_FAILURE else None,
+        )

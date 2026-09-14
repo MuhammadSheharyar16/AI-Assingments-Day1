@@ -1,18 +1,23 @@
 """
 Day 12 Task 1 -- the typed final-response envelope
 (`src/aico/control/final_response.py`).
+Day 12 Task 10 -- the Gate-D decision contract itself (`GateD`/
+`GateDDecision`, `src/aico/control/gate_d.py`) -- its own section near
+the end of this file.
 
-Gate-D's own decision contract (Task 10) is a later task -- this file
-today proves only the envelope every later Gate-D task builds on: a
-well-formed candidate parses into a typed `FinalResponseCandidate`, and
-every one of Task 1's own named "Required validation" cases (missing
-response status, malformed citation structure, invalid/negative latency
-values, missing control metadata, unknown final status) is rejected with a
-sanitized `FinalResponseEnvelopeError` -- never a raw `pydantic.
-ValidationError`, and never a silently-defaulted/partially-valid envelope.
-Later Day 12 tasks (citation reconciliation, quality, disclosure, latency
-budget, safe failure, the Gate-D decision contract itself) add their own
-sections/tests to this same file as they land.
+The first part of this file proves only the envelope every other Gate-D
+task builds on: a well-formed candidate parses into a typed
+`FinalResponseCandidate`, and every one of Task 1's own named "Required
+validation" cases (missing response status, malformed citation structure,
+invalid/negative latency values, missing control metadata, unknown final
+status) is rejected with a sanitized `FinalResponseEnvelopeError` -- never
+a raw `pydantic.ValidationError`, and never a silently-defaulted/
+partially-valid envelope. The "Day 12 Task 10" section proves the full
+orchestration: every one of Tasks 3-9's own checks, combined by
+`GateD.evaluate()` into one `GateDDecision` -- `allow`/`safe_failure`/
+`reject` from single-check and multi-check failures alike, the "reject
+outranks safe_failure" combination rule, and the least-privilege
+`validated_citation_ids`/`safe_failure_code` population.
 """
 from __future__ import annotations
 
@@ -24,6 +29,7 @@ import pytest
 from pydantic import ValidationError
 
 from aico.contracts.models import AnswerStatus
+from aico.control.disclosure import ProtectedField
 from aico.control.errors import FinalResponseEnvelopeError
 from aico.control.final_response import (
     FinalCitation,
@@ -31,6 +37,18 @@ from aico.control.final_response import (
     ValidationStatus,
     parse_final_response_candidate,
 )
+from aico.control.gate_d import (
+    CitationReasonCode,
+    GateCEvidenceRecord,
+    GateD,
+    GateDDecision,
+    GateDStatus,
+)
+from aico.control.models import GateBDecision, GateBStatus
+from aico.control.ontology import LaneId
+from aico.control.policy_models import DataClassification, PiiCategory
+from aico.control.policy_registry import GateDPolicyRegistry, PolicyRegistry
+from aico.control.quality import QualityReasonCode
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DAY12_FIXTURES = REPO_ROOT / "data" / "day12_pack" / "fixtures"
@@ -296,3 +314,205 @@ def test_final_quality_cases_fixture_shape(case: dict) -> None:
     )
     candidate = parse_final_response_candidate(payload)
     assert candidate.candidate_answer == answer
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Day 12 Task 10 -- the Gate-D decision contract (`GateD`/`GateDDecision`).
+# ══════════════════════════════════════════════════════════════════════
+
+_GATE_B_POLICY = PolicyRegistry.load()
+_GATE_D_POLICY_REGISTRY = GateDPolicyRegistry.load(gate_b_policy=_GATE_B_POLICY)
+_GATE_D = GateD(policy_registry=_GATE_D_POLICY_REGISTRY)
+
+_VALID_CITATION = {"evidence_id": "E-101", "chunk_id": "CH-101", "source_id": "SRC-POLICY-A", "source_version": "3"}
+_VALID_EVIDENCE = (GateCEvidenceRecord.model_validate(_VALID_CITATION),)
+
+
+def _gate_b_decision(profile_id: str = "policy_reader") -> GateBDecision:
+    return GateBDecision(
+        decision=GateBStatus.ALLOW,
+        effective_tenant_scope=("TENANT-A",),
+        effective_data_classes=(DataClassification.PUBLIC, DataClassification.INTERNAL),
+        effective_pii_policy=(PiiCategory.NONE, PiiCategory.CONTACT),
+        disclosure_profile=profile_id,
+        lane=LaneId.RAG,
+        reason_code="test_fixture",
+        policy_version=_GATE_B_POLICY.policy_version,
+    )
+
+
+def _evaluate(candidate: FinalResponseCandidate, **overrides: object) -> GateDDecision:
+    kwargs: dict = {
+        "candidate": candidate,
+        "gate_c_validated_evidence": _VALID_EVIDENCE,
+        "gate_b_decision": _gate_b_decision(),
+        "disclosure_profile": _GATE_B_POLICY.get_disclosure_profile("policy_reader"),
+        "protected_fields": (),
+    }
+    kwargs.update(overrides)
+    return _GATE_D.evaluate(**kwargs)
+
+
+def _valid_candidate(**overrides: object) -> FinalResponseCandidate:
+    defaults: dict = {
+        "candidate_citations": [_VALID_CITATION],
+        "gate_c_validated_evidence_ids": ["E-101"],
+        "gate_b_disclosure_profile": "policy_reader",
+    }
+    defaults.update(overrides)
+    return parse_final_response_candidate(_base_envelope(**defaults))
+
+
+def test_fully_valid_candidate_allows() -> None:
+    decision = _evaluate(_valid_candidate())
+    assert decision.decision is GateDStatus.ALLOW
+    assert decision.reason_codes == ()
+    assert decision.validated_citation_ids == ("E-101",)
+    assert decision.safe_failure_code is None
+    assert decision.quality_checks.passed is True
+    assert decision.citation_checks.passed is True
+    assert decision.disclosure_checks.passed is True
+    assert decision.latency_checks.passed is True
+
+
+def test_forged_citation_alone_is_safe_failure() -> None:
+    candidate = _valid_candidate(
+        candidate_citations=[{"evidence_id": "E-999", "chunk_id": "CH-999", "source_id": "SRC-FAKE", "source_version": "1"}],
+        gate_c_validated_evidence_ids=[],
+    )
+    decision = _evaluate(candidate, gate_c_validated_evidence=())
+    assert decision.decision is GateDStatus.SAFE_FAILURE
+    assert decision.safe_failure_code == _GATE_D_POLICY_REGISTRY.safe_failure.code
+    assert CitationReasonCode.CITATION_NOT_GATE_C_VALIDATED.value in decision.reason_codes
+    assert decision.validated_citation_ids == ()
+
+
+def test_empty_answer_alone_is_safe_failure() -> None:
+    decision = _evaluate(_valid_candidate(candidate_answer=""))
+    assert decision.decision is GateDStatus.SAFE_FAILURE
+    assert decision.quality_checks.passed is False
+
+
+def test_disclosure_leak_alone_is_safe_failure() -> None:
+    candidate = _valid_candidate(candidate_answer="Tax identifier is SYN-ID-123456.")
+    decision = _evaluate(
+        candidate,
+        protected_fields=(
+            ProtectedField(
+                name="tax_identifier",
+                value="SYN-ID-123456",
+                data_class=DataClassification.CONFIDENTIAL,
+                pii_category=PiiCategory.PERSONAL_IDENTIFIER,
+            ),
+        ),
+    )
+    assert decision.decision is GateDStatus.SAFE_FAILURE
+    assert decision.disclosure_checks.passed is False
+
+
+def test_secret_pattern_alone_is_safe_failure() -> None:
+    candidate = _valid_candidate(candidate_answer="Authorization value: Bearer SYNTHETIC_SECRET_TOKEN")
+    decision = _evaluate(candidate)
+    assert decision.decision is GateDStatus.SAFE_FAILURE
+    assert decision.disclosure_checks.secret_checks.passed is False
+
+
+def test_latency_budget_exceeded_alone_is_safe_failure() -> None:
+    over_budget = _GATE_D_POLICY_REGISTRY.latency_budgets.max_total_latency_ms + 1
+    decision = _evaluate(_valid_candidate(elapsed_ms=over_budget))
+    assert decision.decision is GateDStatus.SAFE_FAILURE
+    assert decision.latency_checks.passed is False
+
+
+def test_contract_invalid_alone_is_reject() -> None:
+    decision = _evaluate(_valid_candidate(contract_validation_status="failed"))
+    assert decision.decision is GateDStatus.REJECT
+    assert decision.safe_failure_code is None
+    assert QualityReasonCode.CONTRACT_VALIDATION_FAILED.value in decision.reason_codes
+
+
+def test_semantic_invalid_alone_is_reject() -> None:
+    decision = _evaluate(_valid_candidate(semantic_validation_status="failed"))
+    assert decision.decision is GateDStatus.REJECT
+
+
+def test_reject_outranks_safe_failure_across_categories() -> None:
+    """A candidate failing both a reject-level check (contract) and a
+    safe_failure-level one (a forged citation, an entirely different
+    category) is still reported as `reject` overall."""
+    candidate = _valid_candidate(
+        contract_validation_status="failed",
+        candidate_citations=[{"evidence_id": "E-999", "chunk_id": "CH-999", "source_id": "SRC-FAKE", "source_version": "1"}],
+        gate_c_validated_evidence_ids=[],
+    )
+    decision = _evaluate(candidate, gate_c_validated_evidence=())
+    assert decision.decision is GateDStatus.REJECT
+    assert decision.safe_failure_code is None
+    assert decision.citation_checks.passed is False  # still ran, still reported
+    assert QualityReasonCode.CONTRACT_VALIDATION_FAILED.value in decision.reason_codes
+    assert CitationReasonCode.CITATION_NOT_GATE_C_VALIDATED.value in decision.reason_codes
+
+
+def test_multiple_safe_failure_reasons_all_accumulate() -> None:
+    over_budget = _GATE_D_POLICY_REGISTRY.latency_budgets.max_total_latency_ms + 1
+    candidate = _valid_candidate(candidate_answer="", elapsed_ms=over_budget)
+    decision = _evaluate(candidate)
+    assert decision.decision is GateDStatus.SAFE_FAILURE
+    assert QualityReasonCode.EMPTY_ANSWERED_RESULT.value in decision.reason_codes
+    from aico.control.gate_d import LatencyReasonCode
+
+    assert LatencyReasonCode.TOTAL_LATENCY_BUDGET_EXCEEDED.value in decision.reason_codes
+
+
+def test_validated_citation_ids_empty_unless_allow() -> None:
+    """Least privilege, the identical convention `GateCDecision.
+    validated_evidence_ids` already gives: even a citation that was
+    individually valid is not surfaced once the overall decision is not
+    `allow`."""
+    decision = _evaluate(_valid_candidate(candidate_answer=""))  # citation itself is fine; quality fails
+    assert decision.decision is GateDStatus.SAFE_FAILURE
+    assert decision.citation_checks.passed is True  # the sub-check itself did pass
+    assert decision.validated_citation_ids == ()  # but not surfaced
+
+
+def test_sub_reports_always_populated_regardless_of_decision() -> None:
+    decision = _evaluate(_valid_candidate(contract_validation_status="failed"))
+    assert decision.decision is GateDStatus.REJECT
+    assert decision.citation_checks is not None
+    assert decision.quality_checks is not None
+    assert decision.disclosure_checks is not None
+    assert decision.latency_checks is not None
+
+
+def test_policy_version_matches_the_real_loaded_policy() -> None:
+    decision = _evaluate(_valid_candidate())
+    assert decision.policy_version == _GATE_D_POLICY_REGISTRY.policy_version == "1.0"
+
+
+def test_insufficient_evidence_clean_candidate_allows() -> None:
+    candidate = _valid_candidate(
+        candidate_status="insufficient_evidence",
+        candidate_answer="INSUFFICIENT_EVIDENCE: available evidence does not support the requested fact.",
+        candidate_citations=[],
+        gate_c_validated_evidence_ids=[],
+    )
+    decision = _evaluate(candidate, gate_c_validated_evidence=())
+    assert decision.decision is GateDStatus.ALLOW
+
+
+def test_never_raises_for_an_ordinary_input() -> None:
+    decision = _evaluate(_valid_candidate(candidate_answer=""))
+    assert isinstance(decision, GateDDecision)
+
+
+def test_gate_d_is_reusable_across_multiple_evaluations() -> None:
+    """Built once, reused for every request -- the identical pattern
+    `GateC`'s own docstring describes."""
+    first = _evaluate(_valid_candidate())
+    second = _evaluate(_valid_candidate(candidate_answer=""))
+    assert first.decision is GateDStatus.ALLOW
+    assert second.decision is GateDStatus.SAFE_FAILURE
+
+
+def test_gate_d_policy_registry_type_reused_directly() -> None:
+    assert isinstance(_GATE_D.policy_registry, GateDPolicyRegistry)
