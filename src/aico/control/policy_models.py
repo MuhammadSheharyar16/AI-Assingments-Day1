@@ -1,5 +1,15 @@
 """
 Day 10 Task 1 -- typed Gate-B policy model.
+Day 12 Task 2 -- typed Gate-D policy model (`GateDPolicyDocument` and its
+sub-policies, appended near the end of this file). Kept in this
+generically-named module rather than a new `gate_d_policy_models.py` --
+Day 12's own required structure names no separate file for it (unlike
+Gate-C, which got its own `evidence/policy.py` because it governs a
+different concern, evidence quality, living under `src/aico/evidence/`);
+Gate-D's policy governs the same kind of thing this module already owns,
+the final release/disclosure boundary's own governed configuration, so it
+belongs beside `GateBPolicyDocument`, not in a third file. See that
+class's own docstring for its full "Required validation" mapping.
 
 `gate_b_policy_requirements.md` / `disclosure_rules.md` (`day10_pack/`) are
 the governed spec this module gives shape to: a typed, self-validating
@@ -149,9 +159,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
+from aico.contracts.models import AnswerStatus
 from aico.control.ontology import LaneId, LifecycleStatus
 
 
@@ -472,4 +484,253 @@ class GateBPolicyDocument(BaseModel):
                         f"rule {rule.rule_id!r} references unknown ontology intent {rule.intent_id!r}"
                     )
 
+        return self
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Day 12 Task 2 -- the Gate-D policy.
+# ══════════════════════════════════════════════════════════════════════
+#
+# `gate_d_policy_requirements.md` (`data/day12_pack/`) names six governed
+# concepts: `policy_version` / `allowed_response_statuses` /
+# `citation_policy` / `quality_policy` / `disclosure_policy` /
+# `latency_budgets`, plus one final-release behavior, `safe_failure` --
+# the committed `policy/gate_d_policy.v1.json` (unmodified from
+# `data/day12_pack/fixtures/gate_d_policy_v1.json`, the same
+# "fixture copied in verbatim, never edited to make the implementation
+# pass" convention `policy/gate_c_policy.v1.json` already follows) matches
+# this field list one-for-one. `GateDPolicyDocument` below is that
+# document's typed shape; `GateDPolicyRegistry` (`policy_registry.py`)
+# loads it read-only for Gate-D (Day 12 Task 10).
+#
+# Unlike Gate-B's/Gate-C's own policies, Gate-D's v1 schema is
+# deliberately *flat*: one `citation_policy`/`quality_policy`/
+# `disclosure_policy`/`latency_budgets`/`safe_failure` object apiece,
+# never a *list* of named, independently-versioned sub-rules the way
+# Gate-B's `rules`/Gate-C's `intent_requirements` are. That shape is the
+# committed fixture's, not a simplification made here -- every "Required
+# validation" bullet from `gate_d_policy_requirements.md` /
+# `Day 12 Task.pdf` (Task 2) is still enforced, just against the concrete
+# fields this flatter schema actually has:
+#
+#     - policy version required          -> `GateDPolicyDocument.
+#                                            policy_version` is a
+#                                            required, non-empty field.
+#     - duplicate rule IDs rejected       -> this policy version declares
+#                                            no separate list of named,
+#                                            independently-identified
+#                                            rules (contrast Gate-B's
+#                                            `rules[].rule_id`/Gate-C's
+#                                            `intent_requirements[].
+#                                            rule_id`) -- the one place a
+#                                            duplicate *identifier* could
+#                                            appear here is a repeated
+#                                            entry in
+#                                            `allowed_response_statuses`
+#                                            itself (each entry is, in
+#                                            effect, the id of one
+#                                            governed "this status may be
+#                                            released" rule); rejected by
+#                                            `GateDPolicyDocument`'s own
+#                                            `model_validator` below. A
+#                                            future policy version that
+#                                            introduces named per-category
+#                                            sub-rules would extend this
+#                                            check the same way Gate-C's
+#                                            own duplicate-rule-id check
+#                                            was added once its policy
+#                                            actually grew a `rule_id`
+#                                            field.
+#     - invalid response status rejected  -> `allowed_response_statuses`
+#                                            is typed
+#                                            `tuple[AnswerStatus, ...]` --
+#                                            the identical closed,
+#                                            governed enum
+#                                            `FinalResponseCandidate.
+#                                            candidate_status`
+#                                            (`final_response.py`) already
+#                                            uses; an entry outside
+#                                            `{answered,
+#                                            insufficient_evidence}`
+#                                            cannot even parse.
+#     - invalid/negative budget rejected  -> `LatencyBudgets.
+#                                            max_total_latency_ms`/
+#                                            `max_model_latency_ms` are
+#                                            each `Field(gt=0)`.
+#     - unknown disclosure profile/rule
+#       reference rejected               -> v1's `disclosure_policy` is a
+#                                            fixed set of boolean
+#                                            enforcement flags -- it names
+#                                            no specific `profile_id`
+#                                            itself for this document to
+#                                            cross-check at load time (a
+#                                            *candidate*'s own
+#                                            `gate_b_disclosure_profile`,
+#                                            Task 1, is what later gets
+#                                            checked against a real
+#                                            profile id, at Gate-D
+#                                            *decision* time, not against
+#                                            this static document). What
+#                                            this document's registry
+#                                            *does* cross-reference, the
+#                                            same layering Gate-C's own
+#                                            registry draws against the
+#                                            source/ontology registries it
+#                                            loads alongside its policy,
+#                                            is Gate-B's real governed
+#                                            `disclosure_profiles` list --
+#                                            see `GateDPolicyRegistry.
+#                                            load()`'s `gate_b_policy`
+#                                            parameter and
+#                                            `has_disclosure_profile()`
+#                                            (`policy_registry.py`): Gate-D
+#                                            (Task 6/10) is expected to
+#                                            reject a candidate naming a
+#                                            `gate_b_disclosure_profile`
+#                                            that registry does not
+#                                            recognize as an "unknown
+#                                            disclosure profile reference"
+#                                            exactly this bullet names.
+#     - invalid quality policy rejected   -> `QualityPolicy.
+#                                            max_answer_chars` is
+#                                            `Field(gt=0)`; every other
+#                                            `quality_policy`/
+#                                            `citation_policy` field is a
+#                                            plain, unambiguous `bool`.
+#     - policy is read-only at runtime    -> the identical convention
+#                                            every other governed registry
+#                                            in this codebase already
+#                                            gives -- see
+#                                            `GateDPolicyRegistry`'s own
+#                                            docstring.
+
+
+class CitationPolicy(BaseModel):
+    """Gate-D's final citation-reconciliation policy (Day 12 Task 3):
+    whether an `answered` candidate must carry at least one citation,
+    whether every citation must resolve to Gate-C-approved evidence, and
+    whether a candidate carrying even one invalid citation alongside valid
+    ones must fail closed rather than have the invalid one silently
+    dropped (working rule: "Do not silently delete an invalid citation and
+    return the remaining answer as trusted")."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answered_requires_citation: bool = Field(
+        description="Whether an `answered` candidate must carry at least one citation."
+    )
+    citations_must_be_gate_c_approved: bool = Field(
+        description="Whether every final citation must reconcile with Gate-C's validated_evidence_ids."
+    )
+    reject_mixed_valid_invalid: bool = Field(
+        description="Whether one invalid citation fails the whole candidate, even alongside valid ones."
+    )
+
+
+class QualityPolicy(BaseModel):
+    """Gate-D's final deterministic quality policy (Day 12 Task 5):
+    `max_answer_chars` is the one named/configurable output-size ceiling
+    the assignment requires ("The Gate-D policy defines named/configurable
+    output limits. Do not invent one combined opaque 'quality score'.") --
+    `gt=0`, Task 2's own "invalid quality policy rejected" case for a
+    zero/negative ceiling. The remaining three flags gate whether each of
+    Task 5's other deterministic checks (nonempty `answered` text, an
+    already-passed typed contract, an already-passed semantic validation)
+    is actually enforced for this policy version."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_answer_chars: int = Field(gt=0, description="Maximum candidate_answer length Gate-D will release.")
+    answered_must_be_nonempty: bool = Field(description="Whether an `answered` candidate must be nonempty.")
+    contract_must_pass: bool = Field(description="Whether Gate-D requires contract_validation_status == passed.")
+    semantic_validation_must_pass: bool = Field(
+        description="Whether Gate-D requires semantic_validation_status == passed."
+    )
+
+
+class GateDDisclosurePolicy(BaseModel):
+    """Gate-D's final disclosure-enforcement policy (Day 12 Task 6/7).
+    Named `GateDDisclosurePolicy`, not `DisclosurePolicy`, to avoid any
+    confusion with Gate-B's own `DisclosureProfile` (a *profile*, a named
+    per-field action map) -- this is a flat set of enforcement toggles for
+    Gate-D's own final-text checks, a different governed shape entirely."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enforce_gate_b_profile: bool = Field(
+        description="Whether Gate-D re-validates the final text against the candidate's own Gate-B disclosure profile."
+    )
+    block_secret_patterns: bool = Field(
+        description="Whether Gate-D's deterministic secret/protected-value detector (Task 7) runs."
+    )
+    block_hidden_prompt_markers: bool = Field(
+        description="Whether Gate-D blocks release of hidden/system-prompt marker content."
+    )
+
+
+class LatencyBudgets(BaseModel):
+    """Gate-D's deterministic latency-budget policy (Day 12 Task 8).
+    `threshold_is_inclusive` decides Task 8's own "exactly at threshold"
+    case: `true` (the committed v1 value) means a candidate measured at
+    exactly `max_total_latency_ms`/`max_model_latency_ms` still passes --
+    `latency_budget_cases.json` LAT12-002 (`total_latency_ms=2500`,
+    `model_latency_ms=1400`, both exactly at budget) expects `allow`, not
+    `safe_failure`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_total_latency_ms: int = Field(gt=0, description="Hard ceiling on FinalResponseCandidate.elapsed_ms.")
+    max_model_latency_ms: int = Field(gt=0, description="Hard ceiling on FinalResponseCandidate.model_latency_ms.")
+    threshold_is_inclusive: bool = Field(
+        description="Whether a candidate measured at exactly the ceiling still passes (>=/<=) or must be strictly under (>/<)."
+    )
+
+
+class SafeFailureSpec(BaseModel):
+    """The one controlled, fixed safe-failure response Gate-D returns when
+    a candidate cannot be released (Day 12 Task 9). `status` is pinned to
+    the literal `"safe_failure"` -- the same closed value Task 10's own
+    `GateDDecision.decision` enum will carry for this outcome -- so a
+    policy document could never declare a safe-failure status this
+    codebase's own decision contract does not recognize. `code`/`message`
+    are both non-empty, fixed/controlled text (working rule: "Safe failure
+    text itself must be fixed/controlled and must not echo unsafe
+    generated content") -- never text derived from a candidate answer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["safe_failure"] = Field(description="Pinned to Gate-D's own safe-failure decision value.")
+    code: str = Field(min_length=1, description="Stable, sanitized safe-failure error code (e.g. FINAL_RESPONSE_REJECTED).")
+    message: str = Field(min_length=1, description="Fixed, controlled caller-facing safe-failure message.")
+
+
+class GateDPolicyDocument(BaseModel):
+    """The full versioned, typed Gate-D policy document (Day 12 Task 2's
+    field list). Loaded and exposed read-only by `GateDPolicyRegistry`
+    (`policy_registry.py`); nothing at runtime is permitted to construct
+    or mutate one from a request, a model response, or session memory --
+    the identical guarantee `GateBPolicyDocument`/`GateCPolicyDocument`
+    give their own governed data. See this module's own "Day 12 Task 2"
+    section header above for the full Required-validation-bullet mapping."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    policy_version: str = Field(min_length=1, description="Required governed Gate-D policy version identifier.")
+    status: LifecycleStatus
+    allowed_response_statuses: tuple[AnswerStatus, ...] = Field(
+        min_length=1, description="The closed set of candidate_status values Gate-D may ever release."
+    )
+    citation_policy: CitationPolicy
+    quality_policy: QualityPolicy
+    disclosure_policy: GateDDisclosurePolicy
+    latency_budgets: LatencyBudgets
+    safe_failure: SafeFailureSpec
+
+    @model_validator(mode="after")
+    def _validate_no_duplicate_response_statuses(self) -> GateDPolicyDocument:
+        seen: set[AnswerStatus] = set()
+        for status in self.allowed_response_statuses:
+            if status in seen:
+                raise ValueError(f"duplicate allowed_response_statuses entry: {status.value!r}")
+            seen.add(status)
         return self

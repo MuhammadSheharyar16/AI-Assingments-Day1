@@ -25,7 +25,15 @@ caller's `except` clause ambiguous about which boundary actually failed.
 `FinalResponseEnvelopeError` (Day 12 Task 1) is the identical pattern one
 layer over again, for `final_response.py`'s `FinalResponseCandidate` --
 mirrors `EvidenceEnvelopeError`'s (`evidence/errors.py`) role for Gate-C's
-own typed envelope."""
+own typed envelope.
+
+`GateDPolicyLoadError` (Day 12 Task 2) is the identical pattern one layer
+over again, for `GateDPolicyRegistry` (`policy_registry.py`) and the
+committed `policy/gate_d_policy.v1.json` -- mirrors `PolicyLoadError`'s
+role for Gate-B's own policy. No `GateDPolicyLookupError` companion:
+unlike Gate-B's `rules`/Gate-C's `intent_requirements`, Gate-D's v1 policy
+has no separate collection of independently-identified records to look up
+by id -- see `policy_models.py`'s "Day 12 Task 2" section for why."""
 from __future__ import annotations
 
 
@@ -141,6 +149,19 @@ class FinalResponseEnvelopeError(Exception):
     def __init__(self, message: str, *, field_path: str | None = None):
         self.field_path = field_path
         super().__init__(message)
+
+
+class GateDPolicyLoadError(Exception):
+    """Raised by `GateDPolicyRegistry.load()` (`policy_registry.py`, Day 12
+    Task 2) when the committed `policy/gate_d_policy.v1.json` cannot be
+    read, is not valid JSON, or fails `GateDPolicyDocument`'s typed
+    validation (missing/blank `policy_version`, a duplicate
+    `allowed_response_statuses` entry, an unrecognized response status, a
+    non-positive `max_answer_chars`/latency budget, an invalid `status`
+    enum, or any other malformed shape -- see `policy_models.py`'s "Day 12
+    Task 2" section for the full mapping). Mirrors `PolicyLoadError`'s/
+    `GateCPolicyLoadError`'s fail-loud contract -- there is never a silent
+    fallback to an empty/default/permissive Gate-D policy."""
 
 
 class GateBError(Exception):

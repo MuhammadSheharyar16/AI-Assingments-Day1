@@ -2,6 +2,13 @@
 Day 10 Task 2 -- the Gate-B policy registry: loads the committed Gate-B
 policy document (Task 1's `GateBPolicyDocument`) and exposes it read-only
 for the rest of the control plane.
+Day 12 Task 2 -- `GateDPolicyRegistry`, the identical loader/registry
+pattern one layer over, for `GateDPolicyDocument`
+(`policy_models.py`'s "Day 12 Task 2" section) and the committed
+`policy/gate_d_policy.v1.json`. Appended near the end of this file, kept
+in this generically-named module for the same reason `GateDPolicyDocument`
+itself lives in `policy_models.py` rather than a new file -- see that
+class's own docstring.
 
 Responsibilities (`gate_b_policy_requirements.md`; Day 10 assignment,
 TASK 2):
@@ -64,20 +71,28 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from aico.control.errors import PolicyLoadError, PolicyLookupError
+from aico.contracts.models import AnswerStatus
+from aico.control.errors import GateDPolicyLoadError, PolicyLoadError, PolicyLookupError
 from aico.control.ontology import LaneId
 from aico.control.ontology_registry import OntologyRegistry
 from aico.control.policy_models import (
+    CitationPolicy,
     DisclosureProfile,
     GateBPolicyDocument,
+    GateDDisclosurePolicy,
+    GateDPolicyDocument,
+    LatencyBudgets,
     PermissionRule,
+    QualityPolicy,
     Role,
+    SafeFailureSpec,
 )
 
 # Relative to the process working directory, matching
 # `ontology_registry.py`'s `DEFAULT_REGISTRY_PATH` convention -- `uv run`
 # always runs from the repository root.
 DEFAULT_POLICY_PATH = Path("policy/gate_b_policy.v1.json")
+DEFAULT_GATE_D_POLICY_PATH = Path("policy/gate_d_policy.v1.json")
 
 
 class PolicyRegistry:
@@ -253,3 +268,149 @@ class PolicyRegistry:
         guarantees at most one rule can ever exist per combination, so
         this lookup is always unambiguous."""
         return self._rules_by_combination.get((role_id, intent_id, lane))
+
+
+class GateDPolicyRegistry:
+    """Read-only, typed access to one loaded Gate-D policy document (Day 12
+    Task 2).
+
+    Construct via `GateDPolicyRegistry.load(...)` in production code
+    (loads and validates the committed file, cross-checked against the
+    real Gate-B policy's own governed disclosure profiles); tests may
+    instead build a `GateDPolicyDocument` directly and pass it to the
+    plain constructor -- the constructor itself never touches disk, it
+    only wraps an already-validated document (and, by construction, never
+    runs the Gate-B disclosure-profile cross-reference unless a caller
+    supplies `known_disclosure_profile_ids` explicitly -- see `load()`).
+
+    Read-only at runtime, the identical guarantee `PolicyRegistry`/
+    `GateCPolicyRegistry` already give: no method here ever writes to the
+    document it loaded, and every nested policy object is returned exactly
+    as loaded (a fresh reference into an already-validated, `extra
+    ="forbid"` Pydantic model), never rebuilt from request or model
+    output."""
+
+    def __init__(self, document: GateDPolicyDocument, *, known_disclosure_profile_ids: frozenset[str] = frozenset()):
+        self._document = document
+        # Day 12 Task 2's "unknown disclosure profile/rule reference
+        # rejected" -- see `policy_models.py`'s own mapping for why this
+        # is a registry-level cross-reference rather than a document
+        # field: `disclosure_policy` itself names no specific profile id,
+        # a *candidate*'s own `gate_b_disclosure_profile`
+        # (`final_response.py`, Task 1) does. `has_disclosure_profile()`
+        # below is what Gate-D's own decision logic (Task 6/10) is
+        # expected to check that value against.
+        self._known_disclosure_profile_ids = known_disclosure_profile_ids
+
+    # ── Loading ──────────────────────────────────────────────────────
+
+    @classmethod
+    def load(
+        cls,
+        path: str | Path = DEFAULT_GATE_D_POLICY_PATH,
+        *,
+        gate_b_policy: PolicyRegistry | None = None,
+    ) -> GateDPolicyRegistry:
+        """Load and validate the committed policy file at `path` (default
+        `policy/gate_d_policy.v1.json` -- committed, read-only governed
+        data; see `policy/README.md`). Raises `GateDPolicyLoadError` for
+        anything wrong with the file itself: missing, unreadable, not
+        valid JSON, or failing `GateDPolicyDocument`'s typed validation
+        (see `policy_models.py`'s "Day 12 Task 2" section for the full
+        list). Never falls back to an empty/default/permissive policy.
+
+        `gate_b_policy` defaults to `PolicyRegistry.load()` (the real
+        committed Gate-B policy) -- pass an explicit instance only to test
+        against a different/throwaway policy. Its governed
+        `disclosure_profiles` become this registry's own
+        `has_disclosure_profile()` universe."""
+        if gate_b_policy is None:
+            gate_b_policy = PolicyRegistry.load()
+
+        resolved = Path(path)
+        if not resolved.exists():
+            raise GateDPolicyLoadError(f"Gate-D policy not found: {resolved}")
+        try:
+            raw_text = resolved.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise GateDPolicyLoadError(f"could not read Gate-D policy {resolved}: {exc}") from exc
+
+        try:
+            raw_data = json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            raise GateDPolicyLoadError(f"Gate-D policy {resolved} is not valid JSON: {exc}") from exc
+
+        try:
+            document = GateDPolicyDocument.model_validate(raw_data)
+        except ValidationError as exc:
+            raise GateDPolicyLoadError(f"Gate-D policy {resolved} failed validation: {exc}") from exc
+
+        known_disclosure_profile_ids = frozenset(profile.profile_id for profile in gate_b_policy.disclosure_profiles)
+        return cls(document, known_disclosure_profile_ids=known_disclosure_profile_ids)
+
+    # ── Active version ───────────────────────────────────────────────
+
+    @property
+    def policy_version(self) -> str:
+        """The active governed Gate-D policy version this registry
+        loaded -- included in every Gate-D decision (Task 10's
+        `GateDDecision.policy_version`) and Task 13's observability
+        metadata."""
+        return self._document.policy_version
+
+    # ── Read-only sub-policy lookups ─────────────────────────────────
+    # Each nested policy is a single governed object, not a collection --
+    # Gate-D's v1 schema has no separate id-keyed records to resolve one
+    # at a time (see `policy_models.py`'s "Day 12 Task 2" section), so
+    # these are plain properties, not `get_*`/`has_*` lookups the way
+    # `PolicyRegistry.get_role()`/`GateCPolicyRegistry.get_rule()` are.
+
+    @property
+    def allowed_response_statuses(self) -> tuple[AnswerStatus, ...]:
+        """The closed set of `candidate_status` values Gate-D may ever
+        release, in policy order. A fresh tuple, not a reference into the
+        loaded document's own tuple."""
+        return tuple(self._document.allowed_response_statuses)
+
+    @property
+    def citation_policy(self) -> CitationPolicy:
+        return self._document.citation_policy
+
+    @property
+    def quality_policy(self) -> QualityPolicy:
+        return self._document.quality_policy
+
+    @property
+    def disclosure_policy(self) -> GateDDisclosurePolicy:
+        return self._document.disclosure_policy
+
+    @property
+    def latency_budgets(self) -> LatencyBudgets:
+        return self._document.latency_budgets
+
+    @property
+    def safe_failure(self) -> SafeFailureSpec:
+        return self._document.safe_failure
+
+    # ── Governed membership checks ───────────────────────────────────
+
+    def allows_response_status(self, status: AnswerStatus) -> bool:
+        """Whether this policy version permits releasing a candidate
+        carrying `status` at all -- Task 2's own "invalid response status
+        rejected" case, applied to a specific candidate rather than the
+        policy document itself."""
+        return status in self._document.allowed_response_statuses
+
+    def has_disclosure_profile(self, profile_id: str) -> bool:
+        """Whether `profile_id` names a disclosure profile the real,
+        loaded Gate-B policy actually governs -- Task 2's own "unknown
+        disclosure profile ... reference rejected" case, checked against
+        the same governed universe Gate-B itself resolves
+        `PermissionRule.disclosure_profile` against. Always `False` for a
+        registry built via the plain constructor without
+        `known_disclosure_profile_ids` supplied -- callers exercising this
+        check in isolation must supply that set explicitly, the same
+        "no context, check simply does not run" allowance
+        `GateCPolicyDocument`'s own optional cross-reference context
+        gives."""
+        return profile_id in self._known_disclosure_profile_ids

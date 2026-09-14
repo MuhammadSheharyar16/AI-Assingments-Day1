@@ -55,3 +55,29 @@ for Gate-C (Task 9).
 
 A new policy version is added as a new `gate_c_policy.vN.json` file, never
 by editing a previously committed version in place.
+
+# Gate-D policy
+
+`gate_d_policy.v1.json` is the committed, governed final-response policy
+for Day 12 (`data/day12_pack/fixtures/gate_d_policy_v1.json`, unmodified,
+just renamed to match this directory's `<name>.vN.json` convention). It is
+**read-only at runtime**: nothing in the request path, generation layer,
+or model output may create, mutate, or widen an entry in it
+(`data/day12_pack/gate_d_policy_requirements.md`).
+
+Typed models for this document live in `src/aico/control/policy_models.py`
+(`GateDPolicyDocument` / `CitationPolicy` / `QualityPolicy` /
+`GateDDisclosurePolicy` / `LatencyBudgets` / `SafeFailureSpec`) -- kept
+beside Gate-B's own policy models rather than a new file, since Day 12's
+required structure names none for it. Every field here is validated
+against those types, including a required, non-empty `policy_version`, a
+closed/non-duplicated `allowed_response_statuses` set, and positive
+(never zero/negative) `max_answer_chars`/latency-budget values.
+`src/aico/control/policy_registry.py`'s `GateDPolicyRegistry` loads this
+file through those types -- cross-checking `has_disclosure_profile()`
+against the real committed Gate-B policy's own governed disclosure
+profiles (`policy/gate_b_policy.v1.json`) -- and exposes read-only lookups
+for Gate-D (Task 10).
+
+A new policy version is added as a new `gate_d_policy.vN.json` file, never
+by editing a previously committed version in place.
