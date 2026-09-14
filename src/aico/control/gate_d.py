@@ -19,6 +19,11 @@ own "Day 12 Task 10" section, appended near the end of this file): the
 `GateD` class that orchestrates every one of Tasks 3-9's own checks into
 one typed `GateDDecision`, the same role `GateC.evaluate()` plays for
 Day 11 Tasks 4-8.
+Day 12 Task 13 -- observability / audit metadata, folded into `GateD.
+evaluate()` itself rather than a separate function (see this module's own
+"Task 13" docstring subsection, immediately preceding `GateDStatus`) --
+the identical "the orchestrator traces itself" reasoning `gate_c.py`'s
+own module docstring gives for folding its own Task 14 the same way.
 
 Day 12's required structure names no separate module for citation
 reconciliation, final disclosure validation, latency-budget checking, or
@@ -26,9 +31,8 @@ safe failure behavior (unlike Gate-C's own evidence validators, each
 given a dedicated file under `src/aico/evidence/` because Day 11's tree
 explicitly lists them) -- `gate_d.py` itself is where all of it lives,
 built up one labeled section per task the same way `policy_models.py`
-grew a "Day 12 Task 2" section rather than a new file. Later Day 12 tasks
-(observability/tracing, Task 13) add their own labeled section to this
-same file too; only Task 3/4/6/7/8/9/10 are implemented so far.
+grew a "Day 12 Task 2" section rather than a new file. Tasks 3/4/6/7/8/9/
+10/13 are implemented so far.
 
 ## What Gate-D's final citation check proves
 
@@ -171,11 +175,13 @@ back to its originating public citation without re-walking
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
+from opentelemetry import trace
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aico.contracts.models import AnswerStatus
@@ -946,8 +952,25 @@ def build_safe_failure_response(
     )
 
 
+# Day 12 Task 13 -- same pattern `gate_c.py` already uses and documents:
+# `opentelemetry.trace.get_tracer(__name__)` directly, never importing
+# `aico.observability` here. Declared here, not at module top, since
+# `GateD.evaluate()` (below) is the only thing in this whole module that
+# is ever traced -- every Task 3/5/6/7/8/9 check above stays pure/
+# span-free, the same "no I/O, no tracing import of their own" discipline
+# `disclosure.py`/`redaction.py` already commit to; `GateD.evaluate()`
+# itself is a multi-stage orchestrator over them, the identical reason
+# `GateC.evaluate()` traces itself directly instead of leaving it to an
+# outer caller.
+_tracer = trace.get_tracer(__name__)
+
+
 # ══════════════════════════════════════════════════════════════════════
 # Day 12 Task 10 -- the Gate-D decision contract.
+# Day 12 Task 13 -- observability / audit metadata (folded into
+# `GateD.evaluate()` itself, not a separate function -- see immediately
+# above for why, the identical reasoning `gate_c.py`'s own module
+# docstring gives for folding its Task 14 in the same way).
 # ══════════════════════════════════════════════════════════════════════
 #
 # `GateD.evaluate()` is the one place every Task 3-9 check actually runs
@@ -1052,6 +1075,124 @@ def build_safe_failure_response(
 # least-privilege "empty/`None` unless the decision actually resolves to
 # the state that grants it" posture `GateBDecision`/`GateCDecision` already
 # establish for their own analogous fields.
+#
+# ## Task 13 -- observability / audit metadata
+#
+# `evaluate()` runs entirely inside one `"gate_d"` span (opened once, at
+# the top of the method); `"final_citation_validation"`/
+# `"final_disclosure_validation"`/`"latency_budget_validation"` are its
+# own nested child spans, wrapping the Task 3/6-7/8 calls respectively --
+# Task 13's own four named spans, no more, no fewer (there is
+# deliberately no fifth "final_quality_validation" span: Task 13 names
+# only these four, the identical "only the sub-stages the assignment
+# actually names get their own span" restraint `gate_c.py`'s own Task 14
+# section already applies -- Task 5's own quality check still runs, just
+# without a dedicated child span of its own). The pure check functions
+# above (`check_final_quality`/`reconcile_final_citations`/
+# `check_final_disclosure`/`detect_protected_value_leak`/
+# `check_latency_budget`) stay entirely span-free themselves -- `GateD.
+# evaluate()` is the one orchestration layer that adds tracing around them,
+# the identical split `gate_c.py`'s own Task 14 section documents for its
+# four Day 11 validator modules.
+#
+# Every attribute the `"gate_d"` span itself carries, traced to Task 13's
+# own "Useful fields" list:
+#
+#     - request_id / correlation_id   -> deliberately NOT set here, the
+#                                         identical omission `gate_c.py`'s
+#                                         own Task 14 section documents
+#                                         for the identical reason: Day 6
+#                                         Task 9's ambient-current-span
+#                                         mechanism already carries both on
+#                                         whatever root span a caller
+#                                         (`api/control_plane.py`'s
+#                                         `"api.ask_governed"`) has open
+#                                         around this call -- every span
+#                                         opened here, including `"gate_d"`
+#                                         itself, becomes that span's own
+#                                         child and shares its `trace_id`
+#                                         automatically, without needing
+#                                         either id passed in as a
+#                                         parameter or repeated as an
+#                                         attribute.
+#     - ontology_version /
+#       gate_b_policy_version /
+#       gate_c_policy_version         -> also deliberately NOT set here --
+#                                         `GateD` has no `OntologyRegistry`/
+#                                         Gate-B `PolicyRegistry`/Gate-C
+#                                         `GateCPolicyRegistry` of its own
+#                                         to read them from (the identical
+#                                         reason `gate_c.py` never sets
+#                                         `ontology_version`/`gate_b_
+#                                         policy_version` on its own span
+#                                         either, despite also receiving a
+#                                         real `GateBDecision`) -- all
+#                                         three already appear on the
+#                                         sibling `"gate_a"`/`"gate_b"`/
+#                                         `"gate_c"` spans a real caller
+#                                         opens in the same trace.
+#     - gate_d_policy_version         -> `gate_d.policy_version`,
+#                                         `self.policy_registry.
+#                                         policy_version` -- the one policy
+#                                         version this class genuinely
+#                                         owns.
+#     - candidate_status              -> `gate_d.candidate_status`,
+#                                         `candidate.candidate_status.value`
+#                                         (a governed enum value, never
+#                                         the answer text itself).
+#     - citation_count /
+#       validated_citation_count      -> `gate_d.citation_count` (every
+#                                         citation the candidate carried,
+#                                         valid or not) / `gate_d.
+#                                         validated_citation_count` (how
+#                                         many of those actually
+#                                         reconciled) -- counts only, never
+#                                         the citations themselves.
+#     - quality_result /
+#       disclosure_result /
+#       latency_result                -> `gate_d.quality_result` (`
+#                                         "passed"`, or the failing
+#                                         `QualityFailureSeverity` value --
+#                                         `"safe_failure"`/`"reject"`) /
+#                                         `gate_d.disclosure_result` /
+#                                         `gate_d.latency_result` (`
+#                                         "passed"`/`"failed"` for the
+#                                         latter two, which never carry a
+#                                         reject-level severity of their
+#                                         own) -- a sanitized summary
+#                                         label per sub-check, never the
+#                                         sub-check's own detailed report.
+#     - total_latency_ms /
+#       model_latency_ms              -> `gate_d.total_latency_ms`/
+#                                         `gate_d.model_latency_ms`,
+#                                         `candidate.elapsed_ms`/
+#                                         `candidate.model_latency_ms`
+#                                         unchanged -- real measured
+#                                         numbers, never recomputed here
+#                                         (Task 8's "do not fabricate
+#                                         faster telemetry", extended to
+#                                         telemetry itself).
+#     - decision / reason_code        -> `gate_d.decision` (the governed
+#                                         `GateDStatus` value) /
+#                                         `gate_d.reason_codes` (comma-
+#                                         joined, the identical
+#                                         "`reason_codes`, plural, one
+#                                         joined attribute" naming
+#                                         `gate_c.py`'s own
+#                                         `"gate_c.reason_codes"` attribute
+#                                         already uses for the same
+#                                         shape of value).
+#
+# Task 13's own "Do not log" list -- raw candidate response / raw PII /
+# access token / secret match value / full evidence / hidden prompt -- is
+# structurally unreachable from the attributes above: every one of them is
+# a count, a governed enum value, a policy version string, a measured
+# latency number, or a sanitized reason-code string. Nothing here ever
+# reads `candidate.candidate_answer`, a `ProtectedField.value`, a matched
+# secret substring (`SecretDetectionReport.matched_pattern_names` already
+# carries only pattern *names*, never the matched text -- Task 7's own
+# guarantee, reused here rather than re-earned), or `gate_c_validated_
+# evidence`'s own content (only counts derived from it).
 
 
 class GateDStatus(str, Enum):
@@ -1143,63 +1284,107 @@ class GateD:
         alike, is a normal, typed `GateDDecision` result. Never mutates
         any of its inputs, calls the Model Gateway, or consults an LLM
         for any part of the decision (working rule: "Gate-D does not ask
-        an LLM whether the response is safe to release")."""
-        policy = self.policy_registry
+        an LLM whether the response is safe to release"). Task 13 --
+        runs entirely inside one `"gate_d"` span (this method's own
+        module-level "Task 13" docstring subsection has the full
+        attribute-by-attribute mapping); `"final_citation_validation"`/
+        `"final_disclosure_validation"`/`"latency_budget_validation"` are
+        its own nested child spans, opened only around the calls they
+        each name."""
+        with _tracer.start_as_current_span("gate_d") as span:
+            started_at = time.monotonic()
+            policy = self.policy_registry
 
-        quality_report = check_final_quality(
-            candidate,
-            policy=policy.quality_policy,
-            allowed_response_statuses=policy.allowed_response_statuses,
-        )
-        citation_report = reconcile_final_citations(
-            candidate,
-            gate_c_validated_evidence=gate_c_validated_evidence,
-            policy=policy.citation_policy,
-        )
-        field_disclosure_report = check_final_disclosure(
-            candidate,
-            gate_b_decision=gate_b_decision,
-            disclosure_profile=disclosure_profile,
-            protected_fields=protected_fields,
-            policy=policy.disclosure_policy,
-        )
-        secret_report = detect_protected_value_leak(candidate, policy=policy.disclosure_policy)
-        disclosure_report = FinalDisclosureReport(
-            passed=field_disclosure_report.passed and secret_report.passed,
-            reason_codes=tuple(
-                dict.fromkeys((*field_disclosure_report.reason_codes, *secret_report.reason_codes))
-            ),
-            field_checks=field_disclosure_report,
-            secret_checks=secret_report,
-        )
-        latency_report = check_latency_budget(candidate, policy=policy.latency_budgets)
+            quality_report = check_final_quality(
+                candidate,
+                policy=policy.quality_policy,
+                allowed_response_statuses=policy.allowed_response_statuses,
+            )
 
-        if quality_report.severity is QualityFailureSeverity.REJECT:
-            decision = GateDStatus.REJECT
-        elif not (quality_report.passed and citation_report.passed and disclosure_report.passed and latency_report.passed):
-            decision = GateDStatus.SAFE_FAILURE
-        else:
-            decision = GateDStatus.ALLOW
+            with _tracer.start_as_current_span("final_citation_validation"):
+                citation_report = reconcile_final_citations(
+                    candidate,
+                    gate_c_validated_evidence=gate_c_validated_evidence,
+                    policy=policy.citation_policy,
+                )
 
-        reason_codes = tuple(
-            dict.fromkeys(
-                (
-                    *(code.value for code in quality_report.reason_codes),
-                    *(code.value for code in citation_report.reason_codes),
-                    *disclosure_report.reason_codes,
-                    *(code.value for code in latency_report.reason_codes),
+            with _tracer.start_as_current_span("final_disclosure_validation"):
+                field_disclosure_report = check_final_disclosure(
+                    candidate,
+                    gate_b_decision=gate_b_decision,
+                    disclosure_profile=disclosure_profile,
+                    protected_fields=protected_fields,
+                    policy=policy.disclosure_policy,
+                )
+                secret_report = detect_protected_value_leak(candidate, policy=policy.disclosure_policy)
+                disclosure_report = FinalDisclosureReport(
+                    passed=field_disclosure_report.passed and secret_report.passed,
+                    reason_codes=tuple(
+                        dict.fromkeys((*field_disclosure_report.reason_codes, *secret_report.reason_codes))
+                    ),
+                    field_checks=field_disclosure_report,
+                    secret_checks=secret_report,
+                )
+
+            with _tracer.start_as_current_span("latency_budget_validation"):
+                latency_report = check_latency_budget(candidate, policy=policy.latency_budgets)
+
+            if quality_report.severity is QualityFailureSeverity.REJECT:
+                decision = GateDStatus.REJECT
+            elif not (
+                quality_report.passed and citation_report.passed and disclosure_report.passed and latency_report.passed
+            ):
+                decision = GateDStatus.SAFE_FAILURE
+            else:
+                decision = GateDStatus.ALLOW
+
+            reason_codes = tuple(
+                dict.fromkeys(
+                    (
+                        *(code.value for code in quality_report.reason_codes),
+                        *(code.value for code in citation_report.reason_codes),
+                        *disclosure_report.reason_codes,
+                        *(code.value for code in latency_report.reason_codes),
+                    )
                 )
             )
-        )
 
-        return GateDDecision(
-            decision=decision,
-            reason_codes=reason_codes,
-            validated_citation_ids=citation_report.valid_citation_evidence_ids if decision is GateDStatus.ALLOW else (),
-            citation_checks=citation_report,
-            quality_checks=quality_report,
-            disclosure_checks=disclosure_report,
-            latency_checks=latency_report,
-            policy_version=policy.policy_version,
-            safe_failure_code=policy.safe_failure.code if decision is GateDStatus.SAFE_FAILURE else None,
-        )
+            def _result(passed: bool, severity: QualityFailureSeverity | None = None) -> str:
+                if passed:
+                    return "passed"
+                return severity.value if severity is not None else "failed"
+
+            # Task 13 -- sanitized Gate-D operational metadata, on this
+            # span alone (never `request_id`/`correlation_id`/`ontology_
+            # version`/`gate_b_policy_version`/`gate_c_policy_version` --
+            # see this module's own "Task 13" docstring subsection for
+            # why). Every value here is a count, a governed enum value, a
+            # policy version string, a measured latency number, or a
+            # sanitized reason-code string -- never the candidate answer,
+            # a raw protected value, a secret match, or raw evidence.
+            span.set_attribute("gate_d.policy_version", policy.policy_version)
+            span.set_attribute("gate_d.candidate_status", candidate.candidate_status.value)
+            span.set_attribute("gate_d.citation_count", len(candidate.candidate_citations))
+            span.set_attribute("gate_d.validated_citation_count", len(citation_report.valid_citation_evidence_ids))
+            span.set_attribute("gate_d.quality_result", _result(quality_report.passed, quality_report.severity))
+            span.set_attribute("gate_d.disclosure_result", _result(disclosure_report.passed))
+            span.set_attribute("gate_d.latency_result", _result(latency_report.passed))
+            span.set_attribute("gate_d.total_latency_ms", candidate.elapsed_ms)
+            span.set_attribute("gate_d.model_latency_ms", candidate.model_latency_ms)
+            span.set_attribute("gate_d.decision", decision.value)
+            span.set_attribute("gate_d.reason_codes", ",".join(reason_codes))
+            span.set_attribute("gate_d.latency_ms", (time.monotonic() - started_at) * 1000)
+
+            return GateDDecision(
+                decision=decision,
+                reason_codes=reason_codes,
+                validated_citation_ids=citation_report.valid_citation_evidence_ids
+                if decision is GateDStatus.ALLOW
+                else (),
+                citation_checks=citation_report,
+                quality_checks=quality_report,
+                disclosure_checks=disclosure_report,
+                latency_checks=latency_report,
+                policy_version=policy.policy_version,
+                safe_failure_code=policy.safe_failure.code if decision is GateDStatus.SAFE_FAILURE else None,
+            )
