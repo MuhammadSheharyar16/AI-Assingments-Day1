@@ -6,21 +6,23 @@ why the two are one algorithm, the same "filtering and the decision that
 depends on it are one thing, not two" reasoning `gate_c.py`'s own
 docstring gives for folding Day 11 Task 10 into Task 9).
 Day 12 Task 6 -- final disclosure validation, the field/profile-driven
-half only (see this module's own "Day 12 Task 6" section, appended near
-the end of this file, for why the secret-pattern/hidden-prompt-marker
-half is deliberately left to Task 7's own dedicated section instead of
-folded in here).
+half only (see this module's own "Day 12 Task 6" section for why the
+secret-pattern/hidden-prompt-marker half is a separate function, Task 7's
+own).
+Day 12 Task 7 -- deterministic secret / protected-value detection, the
+profile-independent half of final disclosure validation (see this
+module's own "Day 12 Task 7" section, appended near the end of this
+file).
 
 Day 12's required structure names no separate module for citation
 reconciliation or final disclosure validation (unlike Gate-C's own
 evidence validators, each given a dedicated file under
 `src/aico/evidence/` because Day 11's tree explicitly lists them) --
-`gate_d.py` itself is where both live, built up one labeled section per
-task the same way `policy_models.py` grew a "Day 12 Task 2" section
-rather than a new file. Later Day 12 tasks (the secret/protected-value
-detector, latency budget, safe failure, the full decision contract) add
-their own labeled sections to this same file as they land; only Task
-3/4/6 are implemented so far.
+`gate_d.py` itself is where all of it lives, built up one labeled section
+per task the same way `policy_models.py` grew a "Day 12 Task 2" section
+rather than a new file. Later Day 12 tasks (latency budget, safe failure,
+the full decision contract) add their own labeled sections to this same
+file as they land; only Task 3/4/6/7 are implemented so far.
 
 ## What Gate-D's final citation check proves
 
@@ -162,6 +164,7 @@ back to its originating public citation without re-walking
 `candidate.candidate_citations` by `evidence_id`."""
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from enum import Enum
 
@@ -566,4 +569,128 @@ def check_final_disclosure(
         reason_codes=reason_codes,
         field_checks=tuple(field_checks),
         leaked_field_names=leaked_field_names,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Day 12 Task 7 -- deterministic secret / protected-value detection.
+# ══════════════════════════════════════════════════════════════════════
+#
+# "Use controlled synthetic protected values from the resource pack. The
+# validator must be able to detect explicit leak cases ... This is not a
+# request to build a universal DLP platform. Implement the defined Day 12
+# deterministic policy scope" (Task 7). `detect_protected_value_leak()` is
+# that validator: unlike Task 6's `check_final_disclosure()` (governed by
+# a per-request Gate-B disclosure profile and a caller-supplied set of
+# protected field values), this one is profile-independent and
+# self-contained -- it needs nothing beyond the candidate's own text and
+# `policy.block_secret_patterns`/`policy.block_hidden_prompt_markers`
+# (`GateDDisclosurePolicy`, Task 2). That independence is exactly what
+# `disclosure_leak_cases.json` DISC12-005/DISC12-006 need: both omit
+# `disclosure_profile` entirely (there is no per-field policy to consult
+# at all), yet both must still fail -- only a check with no profile
+# dependency can catch them.
+#
+# Task 7's three named examples (`SYN-BANK-00001234` / `SYN-ID-123456` /
+# `Bearer SYNTHETIC_SECRET_TOKEN`) are read as *pattern classes*, not
+# three literal strings to `==`-compare against -- `_SECRET_PATTERNS`
+# below generalizes each to its structural shape (a `SYN-BANK-`/`SYN-ID-`
+# prefix followed by digits; a `Bearer` token carrying this lab's own
+# `SYNTHETIC_` naming convention) while staying deliberately narrow to
+# that one governed convention -- never a generic "looks like a secret"
+# heuristic (Task 7's own "not a universal DLP platform" instruction,
+# taken literally: this scans for exactly the controlled synthetic
+# families the resource pack defines, nothing broader). The hidden-prompt
+# marker (`block_hidden_prompt_markers`) is a fourth, independent pattern,
+# tracked separately because it is a *different* policy switch (Task 2)
+# from `block_secret_patterns` -- a policy version could enable one
+# without the other.
+#
+# For `SYN-BANK-`/`SYN-ID-` specifically, this check is intentionally
+# *redundant* with Task 6's own field-based `DENIED_FIELD_VALUE_LEAKED`
+# (`disclosure_leak_cases.json` DISC12-003/DISC12-004 trip both checks
+# independently) -- defense in depth, not a bug: two independently-reasoned
+# checks agreeing a value must not appear is strictly safer than one,
+# and Task 10's decision contract treats either failing as sufficient
+# reason to withhold release.
+#
+# "Normal telemetry must not print the matched protected value" -- see
+# `SecretDetectionReport`'s own docstring: `matched_pattern_names` is a
+# fixed, closed set of *pattern identifiers* this module itself names
+# (`"synthetic_bank_account"`, not the digits that actually matched); the
+# raw matched substring is discarded the instant `re.search()` returns,
+# never stored on the report, logged, or returned to a caller.
+
+# The one place each governed synthetic secret pattern is defined --
+# Task 10's decision contract and this module's own tests reuse these by
+# name, never a second, hand-copied regex.
+_SECRET_PATTERNS: dict[str, re.Pattern[str]] = {
+    "synthetic_bank_account": re.compile(r"SYN-BANK-\d+"),
+    "synthetic_tax_identifier": re.compile(r"SYN-ID-\d+"),
+    "synthetic_bearer_token": re.compile(r"Bearer\s+SYNTHETIC_\S+"),
+}
+_HIDDEN_PROMPT_MARKER_NAME = "hidden_prompt_marker"
+_HIDDEN_PROMPT_MARKER_PATTERN = re.compile(r"SYSTEM_INTERNAL_RULE_DO_NOT_EXPOSE")
+
+
+class SecretReasonCode(str, Enum):
+    """The closed set of reasons `detect_protected_value_leak()` ever
+    cites. Gate-D's full decision contract (Task 10) is expected to fold
+    these into its own typed `reason_codes`, never invent a new,
+    undocumented secret-detection failure string."""
+
+    SYNTHETIC_SECRET_PATTERN_DETECTED = "synthetic_secret_pattern_detected"
+    HIDDEN_PROMPT_MARKER_DETECTED = "hidden_prompt_marker_detected"
+
+
+class SecretDetectionReport(BaseModel):
+    """`detect_protected_value_leak()`'s one return value.
+    `matched_pattern_names` names *which governed pattern* matched
+    (`_SECRET_PATTERNS`' own keys, plus `"hidden_prompt_marker"`) --
+    never the matched text itself, never even the field/location it
+    matched at (there is none -- this check has no field concept, unlike
+    `DisclosureCheckReport.leaked_field_names`). Populated regardless of
+    the overall `passed` outcome, the identical "populated regardless of
+    the final decision" convention every other Day 12 report in this
+    module already follows."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    passed: bool
+    reason_codes: tuple[SecretReasonCode, ...] = Field(default_factory=tuple)
+    matched_pattern_names: tuple[str, ...] = Field(default_factory=tuple)
+
+
+def detect_protected_value_leak(
+    candidate: FinalResponseCandidate,
+    *,
+    policy: GateDDisclosurePolicy,
+) -> SecretDetectionReport:
+    """Scan `candidate.candidate_answer` for the governed synthetic
+    secret/hidden-prompt-marker patterns this Day 12 policy scope defines
+    -- see module docstring for exactly which patterns and why. Never
+    raises for an ordinary input -- every outcome is a normal, typed
+    `SecretDetectionReport`. Never mutates `candidate`/`policy`, calls the
+    Model Gateway, or consults any external service -- a deterministic,
+    local regex scan only (working rule: "Gate-D does not ask an LLM
+    whether the response is safe to release"). Never logs, stores, or
+    returns the matched substring itself -- see `SecretDetectionReport`'s
+    own docstring."""
+    matched_pattern_names: list[str] = []
+    reason_codes: list[SecretReasonCode] = []
+
+    if policy.block_secret_patterns:
+        secret_matches = [name for name, pattern in _SECRET_PATTERNS.items() if pattern.search(candidate.candidate_answer)]
+        if secret_matches:
+            matched_pattern_names.extend(secret_matches)
+            reason_codes.append(SecretReasonCode.SYNTHETIC_SECRET_PATTERN_DETECTED)
+
+    if policy.block_hidden_prompt_markers and _HIDDEN_PROMPT_MARKER_PATTERN.search(candidate.candidate_answer):
+        matched_pattern_names.append(_HIDDEN_PROMPT_MARKER_NAME)
+        reason_codes.append(SecretReasonCode.HIDDEN_PROMPT_MARKER_DETECTED)
+
+    return SecretDetectionReport(
+        passed=not reason_codes,
+        reason_codes=tuple(reason_codes),
+        matched_pattern_names=tuple(matched_pattern_names),
     )

@@ -1,25 +1,19 @@
 """
 Day 12 Task 6 -- final disclosure validation, the field/profile-driven
 half (`check_final_disclosure()`, `src/aico/control/gate_d.py`).
+Day 12 Task 7 -- deterministic secret / protected-value detection, the
+profile-independent half (`detect_protected_value_leak()`, same module).
 
-`disclosure_leak_cases.json`'s six cases split cleanly across two
-mechanisms (see `gate_d.py`'s own "Day 12 Task 6" section): DISC12-001
-through DISC12-004 are governed by Gate-B's own real disclosure profile
-(`policy/gate_b_policy.v1.json`), reused wholesale via Day 10's
-`apply_disclosure()` -- these four are this file's Section 1. DISC12-005/
-DISC12-006 (a raw secret-token leak, a raw hidden-prompt-marker leak) are
-Task 7's own dedicated deterministic detector's responsibility -- Section
-1 still proves `check_final_disclosure()` correctly reports `passed=True`
-for both in isolation (nothing in this check's scope to flag), and this
-file will grow a matching section for Task 7's own function once that
-task lands, the same way `test_day12_final_citations.py` grew a Task 4
-section once Task 4 was in scope.
-
-Section 2 proves the remaining Task 6 behaviors directly: an `ALLOW`-
-resolved field is never flagged even though it is "raw PII", the
-`enforce_gate_b_profile`/no-resolved-profile skip cases, and that no raw
-protected value ever appears in the report itself (working rule: "Gate-D
-telemetry must remain sanitized").
+`disclosure_leak_cases.json`'s six cases split cleanly across the two
+mechanisms (see `gate_d.py`'s own "Day 12 Task 6"/"Day 12 Task 7"
+sections): DISC12-001 through DISC12-004 are governed by Gate-B's own real
+disclosure profile (`policy/gate_b_policy.v1.json`), reused wholesale via
+Day 10's `apply_disclosure()`; DISC12-005/DISC12-006 (a raw secret-token
+leak, a raw hidden-prompt-marker leak) carry no `disclosure_profile` at
+all and are caught only by the profile-independent pattern detector.
+Structure: Section 1 replays all six cases end to end, combining both
+functions exactly as Task 10's decision contract will; Section 2 proves
+Task 6's own behaviors directly; Section 3 proves Task 7's.
 """
 from __future__ import annotations
 
@@ -31,7 +25,14 @@ import pytest
 
 from aico.control.disclosure import ProtectedField
 from aico.control.final_response import FinalResponseCandidate, parse_final_response_candidate
-from aico.control.gate_d import DisclosureCheckReport, DisclosureReasonCode, check_final_disclosure
+from aico.control.gate_d import (
+    DisclosureCheckReport,
+    DisclosureReasonCode,
+    SecretDetectionReport,
+    SecretReasonCode,
+    check_final_disclosure,
+    detect_protected_value_leak,
+)
 from aico.control.models import GateBDecision, GateBStatus
 from aico.control.ontology import LaneId
 from aico.control.policy_models import DataClassification, DisclosureAction, PiiCategory
@@ -145,19 +146,38 @@ def _check(case: dict) -> DisclosureCheckReport:
     )
 
 
+def _detect(case: dict) -> SecretDetectionReport:
+    candidate = _candidate_from(candidate_answer=case["candidate_answer"])
+    return detect_protected_value_leak(candidate, policy=REAL_DISCLOSURE_POLICY)
+
+
 # ══════════════════════════════════════════════════════════════════════
-# Section 1 -- fixture replay.
+# Section 1 -- fixture replay, both mechanisms combined.
 # ══════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("case", DISCLOSURE_LEAK_CASES["cases"], ids=lambda case: case["id"])
+def test_disclosure_leak_cases_combined_outcome(case: dict) -> None:
+    """The fixture's own `expected` outcome, reproduced end to end by
+    combining Task 6's field check with Task 7's pattern detector --
+    exactly the combination Task 10's decision contract will make."""
+    field_report = _check(case)
+    secret_report = _detect(case)
+    overall_passed = field_report.passed and secret_report.passed
+    expected_passed = case["expected"] == "allow"
+    assert overall_passed is expected_passed, (case["id"], field_report.reason_codes, secret_report.reason_codes)
 
 
 @pytest.mark.parametrize("case", DISCLOSURE_LEAK_CASES["cases"], ids=lambda case: case["id"])
 def test_disclosure_leak_cases_field_check_outcome(case: dict) -> None:
     """DISC12-001..004 reproduce their own `expected` outcome exactly
-    through this check alone; DISC12-005/006 report `passed=True` here --
-    see module docstring for why that is correct, not a gap."""
+    through the field check alone; DISC12-005/006 report `passed=True`
+    here -- see module docstring for why that is correct, not a gap (Task
+    7's own detector, proven separately in Section 3, is what fails
+    those two)."""
     report = _check(case)
     if case["id"] in ("DISC12-005", "DISC12-006"):
-        assert report.passed is True  # Task 7's own detector is what fails these
+        assert report.passed is True
     else:
         expected_passed = case["expected"] == "allow"
         assert report.passed is expected_passed, (case["id"], report.reason_codes)
@@ -325,4 +345,120 @@ def test_report_never_raises_for_an_ordinary_input() -> None:
         policy=REAL_DISCLOSURE_POLICY,
     )
     assert isinstance(report, DisclosureCheckReport)
+    assert report.passed is True
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Section 3 -- specific Task 7 behaviors.
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_safe_output_case_has_no_secret_matches() -> None:
+    case = next(c for c in DISCLOSURE_LEAK_CASES["cases"] if c["id"] == "DISC12-001")
+    report = _detect(case)
+    assert report == SecretDetectionReport(passed=True)
+
+
+def test_secret_token_leak_case_reason_and_pattern_name() -> None:
+    case = next(c for c in DISCLOSURE_LEAK_CASES["cases"] if c["id"] == "DISC12-005")
+    report = _detect(case)
+    assert report.passed is False
+    assert report.reason_codes == (SecretReasonCode.SYNTHETIC_SECRET_PATTERN_DETECTED,)
+    assert report.matched_pattern_names == ("synthetic_bearer_token",)
+
+
+def test_hidden_prompt_marker_leak_case_reason_and_pattern_name() -> None:
+    case = next(c for c in DISCLOSURE_LEAK_CASES["cases"] if c["id"] == "DISC12-006")
+    report = _detect(case)
+    assert report.passed is False
+    assert report.reason_codes == (SecretReasonCode.HIDDEN_PROMPT_MARKER_DETECTED,)
+    assert report.matched_pattern_names == ("hidden_prompt_marker",)
+
+
+def test_synthetic_bank_account_and_tax_identifier_are_also_caught_here() -> None:
+    """Intentional redundancy with Task 6's own field check (module
+    docstring's "defense in depth" note) -- DISC12-003/DISC12-004's raw
+    values trip this profile-independent pattern detector too, not only
+    the field-based one."""
+    tax_case = next(c for c in DISCLOSURE_LEAK_CASES["cases"] if c["id"] == "DISC12-003")
+    bank_case = next(c for c in DISCLOSURE_LEAK_CASES["cases"] if c["id"] == "DISC12-004")
+
+    tax_report = _detect(tax_case)
+    assert tax_report.passed is False
+    assert tax_report.matched_pattern_names == ("synthetic_tax_identifier",)
+
+    bank_report = _detect(bank_case)
+    assert bank_report.passed is False
+    assert bank_report.matched_pattern_names == ("synthetic_bank_account",)
+
+
+def test_block_secret_patterns_false_skips_secret_scan_only() -> None:
+    """No shipped fixture exercises this flag as `False` -- proven
+    directly, and that it narrowly disables only the secret-pattern half,
+    never the hidden-prompt-marker half (a separate policy switch)."""
+    narrowed_policy = REAL_DISCLOSURE_POLICY.model_copy(update={"block_secret_patterns": False})
+
+    secret_candidate = _candidate_from(candidate_answer="Authorization value: Bearer SYNTHETIC_SECRET_TOKEN")
+    secret_report = detect_protected_value_leak(secret_candidate, policy=narrowed_policy)
+    assert secret_report.passed is True
+
+    marker_candidate = _candidate_from(candidate_answer="Internal instruction: SYSTEM_INTERNAL_RULE_DO_NOT_EXPOSE")
+    marker_report = detect_protected_value_leak(marker_candidate, policy=narrowed_policy)
+    assert marker_report.passed is False
+    assert marker_report.reason_codes == (SecretReasonCode.HIDDEN_PROMPT_MARKER_DETECTED,)
+
+
+def test_block_hidden_prompt_markers_false_skips_marker_scan_only() -> None:
+    narrowed_policy = REAL_DISCLOSURE_POLICY.model_copy(update={"block_hidden_prompt_markers": False})
+
+    marker_candidate = _candidate_from(candidate_answer="Internal instruction: SYSTEM_INTERNAL_RULE_DO_NOT_EXPOSE")
+    marker_report = detect_protected_value_leak(marker_candidate, policy=narrowed_policy)
+    assert marker_report.passed is True
+
+    secret_candidate = _candidate_from(candidate_answer="Authorization value: Bearer SYNTHETIC_SECRET_TOKEN")
+    secret_report = detect_protected_value_leak(secret_candidate, policy=narrowed_policy)
+    assert secret_report.passed is False
+    assert secret_report.reason_codes == (SecretReasonCode.SYNTHETIC_SECRET_PATTERN_DETECTED,)
+
+
+def test_ordinary_bearer_mention_without_synthetic_marker_does_not_leak() -> None:
+    """This is deliberately *not* a universal DLP platform (Task 7's own
+    instruction) -- a plain, unrelated mention of "Bearer" never trips
+    the detector; only this lab's own governed `SYNTHETIC_` bearer-token
+    convention does."""
+    candidate = _candidate_from(candidate_answer="Bearer bonds are a type of debt instrument.")
+    report = detect_protected_value_leak(candidate, policy=REAL_DISCLOSURE_POLICY)
+    assert report.passed is True
+
+
+def test_multiple_secret_patterns_all_reported() -> None:
+    candidate = _candidate_from(
+        candidate_answer="Bank account SYN-BANK-00009999, tax id SYN-ID-000111, token Bearer SYNTHETIC_OTHER_TOKEN."
+    )
+    report = detect_protected_value_leak(candidate, policy=REAL_DISCLOSURE_POLICY)
+    assert report.passed is False
+    assert set(report.matched_pattern_names) == {
+        "synthetic_bank_account",
+        "synthetic_tax_identifier",
+        "synthetic_bearer_token",
+    }
+    assert report.reason_codes == (SecretReasonCode.SYNTHETIC_SECRET_PATTERN_DETECTED,)
+
+
+def test_secret_report_never_contains_the_raw_matched_value() -> None:
+    """Task 7's own instruction: "Normal telemetry must not print the
+    matched protected value." Proven structurally: neither the matched
+    digits/token nor the hidden-prompt marker's own text appear anywhere
+    in the serialized report -- only the fixed pattern identifiers do."""
+    case = next(c for c in DISCLOSURE_LEAK_CASES["cases"] if c["id"] == "DISC12-005")
+    report = _detect(case)
+    serialized = report.model_dump_json()
+    assert "SYNTHETIC_SECRET_TOKEN" not in serialized
+    assert report.matched_pattern_names == ("synthetic_bearer_token",)
+
+
+def test_secret_detection_report_never_raises_for_an_ordinary_input() -> None:
+    candidate = _candidate_from(candidate_answer="")
+    report = detect_protected_value_leak(candidate, policy=REAL_DISCLOSURE_POLICY)
+    assert isinstance(report, SecretDetectionReport)
     assert report.passed is True
