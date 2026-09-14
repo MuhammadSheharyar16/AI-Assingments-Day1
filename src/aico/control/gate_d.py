@@ -5,16 +5,22 @@ Task 3's own check, not a separate function -- see "Provenance" below for
 why the two are one algorithm, the same "filtering and the decision that
 depends on it are one thing, not two" reasoning `gate_c.py`'s own
 docstring gives for folding Day 11 Task 10 into Task 9).
+Day 12 Task 6 -- final disclosure validation, the field/profile-driven
+half only (see this module's own "Day 12 Task 6" section, appended near
+the end of this file, for why the secret-pattern/hidden-prompt-marker
+half is deliberately left to Task 7's own dedicated section instead of
+folded in here).
 
 Day 12's required structure names no separate module for citation
-reconciliation (unlike Gate-C's own evidence validators, each given a
-dedicated file under `src/aico/evidence/` because Day 11's tree explicitly
-lists them) -- `gate_d.py` itself is where this lives, built up one
-labeled section per task the same way `policy_models.py` grew a "Day 12
-Task 2" section rather than a new file. Later Day 12 tasks (quality,
-disclosure, latency budget, safe failure, the full decision contract) add
-their own labeled sections to this same file as they land; only Task 3/4
-are implemented so far.
+reconciliation or final disclosure validation (unlike Gate-C's own
+evidence validators, each given a dedicated file under
+`src/aico/evidence/` because Day 11's tree explicitly lists them) --
+`gate_d.py` itself is where both live, built up one labeled section per
+task the same way `policy_models.py` grew a "Day 12 Task 2" section
+rather than a new file. Later Day 12 tasks (the secret/protected-value
+detector, latency budget, safe failure, the full decision contract) add
+their own labeled sections to this same file as they land; only Task
+3/4/6 are implemented so far.
 
 ## What Gate-D's final citation check proves
 
@@ -162,8 +168,10 @@ from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field
 
 from aico.contracts.models import AnswerStatus
+from aico.control.disclosure import ProtectedField, apply_disclosure
 from aico.control.final_response import FinalCitation, FinalResponseCandidate
-from aico.control.policy_models import CitationPolicy
+from aico.control.models import GateBDecision
+from aico.control.policy_models import CitationPolicy, DisclosureAction, DisclosureProfile, GateDDisclosurePolicy
 
 
 class GateCEvidenceRecord(BaseModel):
@@ -350,4 +358,212 @@ def reconcile_final_citations(
         citation_checks=citation_checks,
         valid_citation_evidence_ids=valid_ids,
         invalid_citation_evidence_ids=invalid_ids,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Day 12 Task 6 -- final disclosure validation (field/profile-driven half).
+# ══════════════════════════════════════════════════════════════════════
+#
+# "A model may accidentally reproduce content that the Day 10 disclosure
+# policy says must not leave the system. Gate-D must validate the actual
+# final candidate. Use deterministic disclosure rules ... Do not use an
+# LLM as the final disclosure authority" (Task 6). `check_final_disclosure()`
+# is that validation: it never asks a model whether `candidate.
+# candidate_answer` is safe -- it resolves, deterministically, what *should*
+# have been disclosed for this request (reusing Day 10's own machinery
+# wholesale, never a second, competing implementation -- structure rule:
+# "Gate-D may reuse Day 5 citation validation and Day 10 disclosure/
+# redaction functions rather than reimplementing them inconsistently"),
+# then checks whether the final generated text still contains a raw
+# protected value that resolution says should never have appeared
+# unredacted.
+#
+# Two of Task 6's four "Required checks" bullets, traced to where they are
+# enforced:
+#
+#     - denied field values do not
+#       appear                          -> `DisclosureReasonCode.
+#                                            DENIED_FIELD_VALUE_LEAKED`,
+#                                            below: a protected field whose
+#                                            resolved `DisclosureAction` is
+#                                            `DENY`, whose raw
+#                                            `ProtectedField.value` still
+#                                            appears verbatim in
+#                                            `candidate.candidate_answer`.
+#     - fields requiring redaction are
+#       not returned unredacted        -> `DisclosureReasonCode.
+#                                            REDACTABLE_FIELD_VALUE_LEAKED`,
+#                                            below: the identical check,
+#                                            for a resolved action of
+#                                            `REDACT` instead of `DENY` --
+#                                            `disclosure_leak_cases.json`
+#                                            DISC12-002's own distinction
+#                                            from DISC12-003/DISC12-004
+#                                            (`policy_reader` resolves
+#                                            `contact_email` to `redact`,
+#                                            `tax_identifier` to `deny`).
+#
+# The remaining two bullets -- "raw PII known to the protected candidate
+# data cannot reappear in output" and "authorization claims, access
+# tokens, secrets and internal policy data cannot appear" /
+# "hidden/system prompt content is not released" -- are deliberately split
+# across two different mechanisms, not both implemented here:
+#
+#     - "raw PII ... cannot reappear"   -> this is the *general principle*
+#                                            the two reason codes above
+#                                            already implement concretely,
+#                                            not a third, separate check:
+#                                            between `DENY`/`REDACT`, every
+#                                            protected field this policy
+#                                            version has not explicitly
+#                                            authorized (`ALLOW`) for this
+#                                            profile is covered. A field
+#                                            genuinely resolved to `ALLOW`
+#                                            (`disclosure_leak_cases.json`
+#                                            DISC12-001's own
+#                                            `supplier_name`/
+#                                            `payment_terms`, both `allow`
+#                                            under `policy_reader`) is, by
+#                                            construction, authorized to
+#                                            appear -- not a leak.
+#     - "authorization claims, access
+#       tokens, secrets ..." /
+#       "hidden/system prompt content"  -> Task 7's own dedicated
+#                                            deterministic detector
+#                                            (`policy.block_secret_patterns`
+#                                            / `policy.
+#                                            block_hidden_prompt_markers`,
+#                                            already typed on
+#                                            `GateDDisclosurePolicy`, Task
+#                                            2) -- these are not
+#                                            per-request *protected field
+#                                            values* Gate-B's disclosure
+#                                            profile has any opinion about
+#                                            at all (`disclosure_leak_
+#                                            cases.json` DISC12-005/
+#                                            DISC12-006 both omit
+#                                            `disclosure_profile`
+#                                            entirely), they are fixed
+#                                            synthetic patterns Task 7
+#                                            scans for unconditionally.
+#                                            `check_final_disclosure()`
+#                                            below correctly reports
+#                                            `passed=True` for both of
+#                                            those two cases in isolation
+#                                            (nothing in scope here to
+#                                            flag) -- Task 7's own function
+#                                            is what actually fails them;
+#                                            Task 10's decision contract
+#                                            combines both reports.
+#
+# `policy.enforce_gate_b_profile=False` skips this check entirely
+# (`passed=True` unconditionally) -- the policy has decided this lane does
+# not re-validate against Gate-B's own profile at the release boundary,
+# the identical "named boolean switch, honored literally" posture
+# `policy.citations_must_be_gate_c_approved` already gets in Task 3.
+# `disclosure_profile=None` (Gate-B resolved none for this request) is
+# likewise not a failure -- `apply_disclosure()` itself already returns an
+# empty view for that case (its own "no fall-through" guarantee, Day 10
+# Task 9), so there is nothing here to check either.
+
+
+class DisclosureReasonCode(str, Enum):
+    """The closed set of reasons `check_final_disclosure()` ever cites.
+    Gate-D's full decision contract (Task 10) is expected to fold these
+    into its own typed `reason_codes`, never invent a new, undocumented
+    disclosure-failure string."""
+
+    DENIED_FIELD_VALUE_LEAKED = "denied_field_value_leaked"
+    REDACTABLE_FIELD_VALUE_LEAKED = "redactable_field_value_leaked"
+
+
+class DisclosureFieldCheckResult(BaseModel):
+    """Disclosure's per-field verdict: `field_name` this result is for,
+    the `DisclosureAction` Day 10's own `apply_disclosure()` resolved for
+    it, whether that field's raw value still leaked into the final text
+    despite that resolution, and -- when it did -- why (mirrors
+    `gate_d.CitationCheckResult`'s shape one section over)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field_name: str = Field(min_length=1)
+    action: DisclosureAction
+    leaked: bool
+    reason: DisclosureReasonCode | None = Field(default=None)
+
+
+class DisclosureCheckReport(BaseModel):
+    """The full candidate-level disclosure result:
+    `check_final_disclosure()`'s one return value. `leaked_field_names`
+    is populated regardless of the overall `passed` outcome -- Task 13's
+    observability and Task 14's `disclosure_latency_report.md` both want
+    to see exactly which fields leaked (by name only, never by value --
+    see `check_final_disclosure()`'s own docstring), the identical
+    "populated regardless of the final decision" convention
+    `CitationReconciliationReport`'s own `invalid_citation_evidence_ids`
+    already follows."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    passed: bool
+    reason_codes: tuple[DisclosureReasonCode, ...] = Field(default_factory=tuple)
+    field_checks: tuple[DisclosureFieldCheckResult, ...] = Field(default_factory=tuple)
+    leaked_field_names: tuple[str, ...] = Field(default_factory=tuple)
+
+
+def check_final_disclosure(
+    candidate: FinalResponseCandidate,
+    *,
+    gate_b_decision: GateBDecision,
+    disclosure_profile: DisclosureProfile | None,
+    protected_fields: Sequence[ProtectedField],
+    policy: GateDDisclosurePolicy,
+) -> DisclosureCheckReport:
+    """Validate `candidate.candidate_answer` against what Day 10's own
+    `apply_disclosure()` resolves *should* have been disclosed for this
+    request -- never a second, hand-rolled resolution of
+    `gate_b_decision`/`disclosure_profile`/`protected_fields` (structure
+    rule: reuse Day 10's disclosure functions, do not reimplement them).
+    Never raises for an ordinary input -- every outcome is a normal, typed
+    `DisclosureCheckReport`. Never mutates `candidate`/`gate_b_decision`/
+    `disclosure_profile`/`protected_fields`/`policy`, and never logs or
+    returns a raw protected value -- only field names and the governed
+    `DisclosureAction` each resolved to (working rule: "Gate-D telemetry
+    must remain sanitized")."""
+    if not policy.enforce_gate_b_profile:
+        return DisclosureCheckReport(passed=True)
+
+    disclosed_view = apply_disclosure(gate_b_decision, disclosure_profile, protected_fields)
+    original_values_by_name = {field.name: field.value for field in protected_fields}
+
+    field_checks: list[DisclosureFieldCheckResult] = []
+    for disclosed_field in disclosed_view.fields:
+        original_value = original_values_by_name[disclosed_field.name]
+        leaked = (
+            disclosed_field.action is not DisclosureAction.ALLOW
+            and bool(original_value)
+            and original_value in candidate.candidate_answer
+        )
+        reason = None
+        if leaked:
+            reason = (
+                DisclosureReasonCode.DENIED_FIELD_VALUE_LEAKED
+                if disclosed_field.action is DisclosureAction.DENY
+                else DisclosureReasonCode.REDACTABLE_FIELD_VALUE_LEAKED
+            )
+        field_checks.append(
+            DisclosureFieldCheckResult(
+                field_name=disclosed_field.name, action=disclosed_field.action, leaked=leaked, reason=reason
+            )
+        )
+
+    leaked_field_names = tuple(check.field_name for check in field_checks if check.leaked)
+    reason_codes = tuple(dict.fromkeys(check.reason for check in field_checks if check.reason is not None))
+
+    return DisclosureCheckReport(
+        passed=not leaked_field_names,
+        reason_codes=reason_codes,
+        field_checks=tuple(field_checks),
+        leaked_field_names=leaked_field_names,
     )
