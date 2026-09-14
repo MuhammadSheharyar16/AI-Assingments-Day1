@@ -153,9 +153,17 @@ def _no_blank_entries(value: tuple[str, ...], *, field_name: str) -> tuple[str, 
 class FinalCitation(BaseModel):
     """One citation on the candidate final answer -- see module docstring
     for the field-by-field rationale, especially why `citation_id` is
-    optional while the other four are not."""
+    optional while the other four are not.
 
-    model_config = ConfigDict(extra="forbid")
+    `frozen=True` (Day 12 Task 12): once a citation has been validated
+    (Task 3/4's `reconcile_final_citations()`), nothing downstream may
+    mutate it before the API response is built -- "do not validate one
+    string and return a later modified string." Field reassignment raises
+    `pydantic.ValidationError` rather than silently succeeding; a
+    different value can only ever be obtained via `model_copy()`, which
+    builds a distinct new object rather than mutating this one."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     citation_id: str | None = Field(
         default=None, description="Optional public citation id, distinct from the evidence it cites."
@@ -184,9 +192,22 @@ class FinalResponseCandidate(BaseModel):
     or a hand-picked subset of these fields instead -- see
     `parse_final_response_candidate()`, the one boundary parser that turns
     an untrusted payload into one of these, or a sanitized
-    `FinalResponseEnvelopeError`."""
+    `FinalResponseEnvelopeError`.
 
-    model_config = ConfigDict(extra="forbid")
+    `frozen=True` (Day 12 Task 12): "after Gate-D allow, do not mutate the
+    answer/citations before returning it" is enforced structurally, not
+    merely by convention -- once built (whether by
+    `parse_final_response_candidate()` or directly), `candidate_answer`/
+    `candidate_citations`/every other field can never be reassigned in
+    place; attempting to raises `pydantic.ValidationError` immediately,
+    the same guarantee `FinalCitation`'s own `frozen=True` gives one field
+    down. `GateD.evaluate()` (Task 10) already never mutates the
+    `FinalResponseCandidate` it is handed (every check in this module is a
+    pure function returning a fresh report); this closes the same door at
+    the type level so no future call site could ever start doing so
+    silently."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     request_id: str = Field(min_length=1, description="Non-empty caller-supplied request id.")
     correlation_id: str = Field(min_length=1, description="Non-empty trace correlation id.")

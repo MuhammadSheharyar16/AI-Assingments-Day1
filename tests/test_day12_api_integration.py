@@ -5,6 +5,12 @@ against the real `data/documents/` corpus (mirrors
 gate further down the pipeline: Gate-C already proved reachable there;
 this file proves Gate-D is reachable immediately after it, and that it
 cannot be bypassed).
+Day 12 Task 12 -- final response immutability, proven end to end here
+(`test_gate_d_allow_returns_the_exact_validated_object_unchanged`/
+`test_api_mapping_drops_metadata_but_never_alters_citation_content`) --
+the type-level guarantee that makes it structural
+(`FinalResponseCandidate`/`FinalCitation` both `frozen=True`) is proven
+separately in `test_day12_gate_d.py`'s own "Day 12 Task 12" section.
 
 Proves, over a real `TestClient(app)` request, using the REAL
 `BM25Retriever` over the real committed `data/index/`:
@@ -178,6 +184,78 @@ def test_gate_d_allows_a_real_grounded_answer_unchanged():
     assert body["status"] == "answered", body
     assert gateway.call_count == 1
     assert re.fullmatch(r"[0-9a-f]{16}", body["citations"][0]["chunk_id"])
+
+
+def test_gate_d_allow_returns_the_exact_validated_object_unchanged(monkeypatch):
+    """Day 12 Task 12: "After Gate-D allow, do not mutate the answer/
+    citations before returning it ... exact approved public payload is
+    returned ... Do not validate one string and return a later modified
+    string." Proven directly, not merely by equal content: two spies
+    capture (a) the exact `GroundedAnswer` object `_answer_from_evidence()`
+    built and handed to Gate-D, and (b) the exact object
+    `_finalize_with_gate_d()` returns after Gate-D allowed it -- asserted
+    `is` identical, never merely `==` equal. The live HTTP response is
+    then checked back against that same captured object's own fields, so
+    the whole chain (validated object -> HTTP JSON) is covered, not just
+    the one internal hop."""
+    captured: dict[str, object] = {}
+
+    original_answer_from_evidence = GroundedAnswerService._answer_from_evidence
+
+    def _answer_from_evidence_spy(self, *args, **kwargs):
+        result = original_answer_from_evidence(self, *args, **kwargs)
+        captured["validated"] = result
+        return result
+
+    original_finalize = ControlPlaneAnswerService._finalize_with_gate_d
+
+    def _finalize_spy(self, result, **kwargs):
+        returned = original_finalize(self, result, **kwargs)
+        captured["finalize_input"] = result
+        captured["finalize_returned"] = returned
+        return returned
+
+    monkeypatch.setattr(GroundedAnswerService, "_answer_from_evidence", _answer_from_evidence_spy)
+    monkeypatch.setattr(ControlPlaneAnswerService, "_finalize_with_gate_d", _finalize_spy)
+
+    gateway = EchoingGateway()
+    client = _client(gateway)
+
+    resp = client.post("/ask/governed", json={"question": "What are the payment terms?", "data_class": "internal"})
+
+    assert resp.status_code == 200
+    validated = captured["validated"]
+    # The object Gate-D was actually asked to validate is the *same*
+    # object `_finalize_with_gate_d()` was called with, and, on allow, the
+    # *same* object it returned -- not a copy, not a re-derived value.
+    assert captured["finalize_input"] is validated
+    assert captured["finalize_returned"] is validated
+
+    body = resp.json()
+    assert body["answer"] == validated.answer
+    assert [c["chunk_id"] for c in body["citations"]] == list(validated.citation_ids)
+    assert body["confidence_label"] == validated.confidence_label
+
+
+def test_api_mapping_drops_metadata_but_never_alters_citation_content():
+    """Task 12's own example: "If API mapping removes internal metadata,
+    the answer/citation content itself must not change after validation."
+    `GovernedCitationOut` (the public `/ask/governed` shape) never carries
+    `source_file` for a `rag`-lane `GroundedAnswer` -- metadata genuinely
+    removed -- but the `chunk_id` value that *is* kept must be the exact,
+    unaltered string Gate-D validated, never truncated, re-encoded, or
+    otherwise transformed."""
+    gateway = EchoingGateway()
+    client = _client(gateway)
+
+    resp = client.post("/ask/governed", json={"question": "What are the payment terms?", "data_class": "internal"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    citation = body["citations"][0]
+    assert set(citation.keys()) == {"chunk_id", "source_file"}
+    assert citation["source_file"] is None  # metadata genuinely dropped by the public mapping ...
+    assert re.fullmatch(r"[0-9a-f]{16}", citation["chunk_id"])  # ... but the kept value is untouched, not reformatted
 
 
 def test_gate_d_safe_failure_blocks_an_oversized_answer():

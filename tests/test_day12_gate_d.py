@@ -516,3 +516,42 @@ def test_gate_d_is_reusable_across_multiple_evaluations() -> None:
 
 def test_gate_d_policy_registry_type_reused_directly() -> None:
     assert isinstance(_GATE_D.policy_registry, GateDPolicyRegistry)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Day 12 Task 12 -- final response immutability.
+# ══════════════════════════════════════════════════════════════════════
+# "After Gate-D allow, do not mutate the answer/citations before
+# returning it." The end-to-end proof (the live API returning the exact
+# validated `GroundedAnswer` object unchanged) lives in
+# `test_day12_api_integration.py`, alongside the rest of this service's
+# integration tests; these prove the type-level guarantee that makes that
+# behavior structural rather than merely conventional --
+# `FinalResponseCandidate`/`FinalCitation` (Task 1) are `frozen=True`, so
+# no call site, present or future, could mutate a validated candidate's
+# `candidate_answer`/`candidate_citations` even by accident.
+
+
+def test_final_response_candidate_is_frozen() -> None:
+    candidate = _valid_candidate()
+    with pytest.raises(ValidationError):
+        candidate.candidate_answer = "a different answer"
+    with pytest.raises(ValidationError):
+        candidate.candidate_citations = ()
+
+
+def test_final_citation_is_frozen() -> None:
+    citation = FinalCitation(evidence_id="E-101", chunk_id="CH-101", source_id="SRC-POLICY-A", source_version="3")
+    with pytest.raises(ValidationError):
+        citation.source_version = "9"
+
+
+def test_model_copy_produces_a_distinct_object_never_mutates_in_place() -> None:
+    """The only way to get a "changed" candidate is `model_copy()`,
+    which builds a new, independent object -- the original the caller
+    already validated/returned is never touched."""
+    original = _valid_candidate()
+    copy = original.model_copy(update={"candidate_answer": "different"})
+    assert original.candidate_answer != copy.candidate_answer
+    assert original.candidate_answer == "Synthetic Supplier Alpha uses net 30 payment terms."
+    assert copy is not original
