@@ -492,6 +492,28 @@ def reconcile_final_citations(
 # likewise not a failure -- `apply_disclosure()` itself already returns an
 # empty view for that case (its own "no fall-through" guarantee, Day 10
 # Task 9), so there is nothing here to check either.
+#
+# ## Unknown disclosure profile reference (Task 2's own cross-check)
+#
+# `gate_d_policy_requirements.md`'s "unknown disclosure profile/rule
+# reference rejected" is a *candidate*-level check, not a static-document
+# one (Task 2's own `GateDPolicyDocument` names no specific profile id
+# itself to validate at load time -- see `policy_models.py`'s "Day 12 Task
+# 2" section). `check_final_disclosure()` below is where it is actually
+# enforced: `candidate.gate_b_disclosure_profile` (Task 1's own envelope
+# field) is cross-checked against `known_disclosure_profile_ids` -- the
+# same governed universe `GateDPolicyRegistry.has_disclosure_profile()`
+# already exposes, forwarded in by `GateD.evaluate()` (Task 10) from its
+# own loaded registry. A candidate naming a profile id that registry does
+# not recognize is `UNKNOWN_DISCLOSURE_PROFILE_REFERENCE` -- a malformed/
+# incoherent envelope Gate-D must never trust implicitly, exactly the same
+# "a claim the candidate makes is not proof" posture this module's own
+# citation reconciliation (Task 3) already takes toward a forged
+# `evidence_id`. `known_disclosure_profile_ids=None` (the default) means
+# "no context supplied, this cross-check simply does not run" -- the
+# identical allowance `has_disclosure_profile()`'s own docstring already
+# gives, so every existing direct caller of this function (this module's
+# own test file included) keeps working unchanged.
 
 
 class DisclosureReasonCode(str, Enum):
@@ -502,6 +524,7 @@ class DisclosureReasonCode(str, Enum):
 
     DENIED_FIELD_VALUE_LEAKED = "denied_field_value_leaked"
     REDACTABLE_FIELD_VALUE_LEAKED = "redactable_field_value_leaked"
+    UNKNOWN_DISCLOSURE_PROFILE_REFERENCE = "unknown_disclosure_profile_reference"
 
 
 class DisclosureFieldCheckResult(BaseModel):
@@ -545,6 +568,7 @@ def check_final_disclosure(
     disclosure_profile: DisclosureProfile | None,
     protected_fields: Sequence[ProtectedField],
     policy: GateDDisclosurePolicy,
+    known_disclosure_profile_ids: frozenset[str] | None = None,
 ) -> DisclosureCheckReport:
     """Validate `candidate.candidate_answer` against what Day 10's own
     `apply_disclosure()` resolves *should* have been disclosed for this
@@ -556,9 +580,27 @@ def check_final_disclosure(
     `disclosure_profile`/`protected_fields`/`policy`, and never logs or
     returns a raw protected value -- only field names and the governed
     `DisclosureAction` each resolved to (working rule: "Gate-D telemetry
-    must remain sanitized")."""
+    must remain sanitized").
+
+    `known_disclosure_profile_ids` is Task 2's own governed universe
+    (`GateDPolicyRegistry.known_disclosure_profile_ids`) -- when supplied,
+    `candidate.gate_b_disclosure_profile` naming anything outside it is
+    `UNKNOWN_DISCLOSURE_PROFILE_REFERENCE` (see module docstring's "Unknown
+    disclosure profile reference" section). `None` (the default) means no
+    registry context was supplied -- this one cross-check simply does not
+    run, the identical allowance `has_disclosure_profile()` already gives,
+    so a caller exercising the field-leak checks in isolation (this
+    module's own test file included) is unaffected."""
     if not policy.enforce_gate_b_profile:
         return DisclosureCheckReport(passed=True)
+
+    unknown_profile_reasons: tuple[DisclosureReasonCode, ...] = ()
+    if (
+        candidate.gate_b_disclosure_profile is not None
+        and known_disclosure_profile_ids is not None
+        and candidate.gate_b_disclosure_profile not in known_disclosure_profile_ids
+    ):
+        unknown_profile_reasons = (DisclosureReasonCode.UNKNOWN_DISCLOSURE_PROFILE_REFERENCE,)
 
     disclosed_view = apply_disclosure(gate_b_decision, disclosure_profile, protected_fields)
     original_values_by_name = {field.name: field.value for field in protected_fields}
@@ -585,10 +627,12 @@ def check_final_disclosure(
         )
 
     leaked_field_names = tuple(check.field_name for check in field_checks if check.leaked)
-    reason_codes = tuple(dict.fromkeys(check.reason for check in field_checks if check.reason is not None))
+    reason_codes = tuple(
+        dict.fromkeys((*unknown_profile_reasons, *(check.reason for check in field_checks if check.reason is not None)))
+    )
 
     return DisclosureCheckReport(
-        passed=not leaked_field_names,
+        passed=not leaked_field_names and not unknown_profile_reasons,
         reason_codes=reason_codes,
         field_checks=tuple(field_checks),
         leaked_field_names=leaked_field_names,
@@ -1315,6 +1359,7 @@ class GateD:
                     disclosure_profile=disclosure_profile,
                     protected_fields=protected_fields,
                     policy=policy.disclosure_policy,
+                    known_disclosure_profile_ids=policy.known_disclosure_profile_ids,
                 )
                 secret_report = detect_protected_value_leak(candidate, policy=policy.disclosure_policy)
                 disclosure_report = FinalDisclosureReport(

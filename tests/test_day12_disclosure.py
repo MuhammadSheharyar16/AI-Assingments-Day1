@@ -349,6 +349,94 @@ def test_report_never_raises_for_an_ordinary_input() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Section 2b -- Task 2's own "unknown disclosure profile reference
+# rejected" cross-check, applied at the candidate level.
+# ══════════════════════════════════════════════════════════════════════
+
+_KNOWN_PROFILE_IDS = _GATE_D_POLICY.known_disclosure_profile_ids
+
+
+def test_unknown_disclosure_profile_reference_is_rejected() -> None:
+    """A candidate naming a `gate_b_disclosure_profile` this registry does
+    not govern -- fixture-independent, never in
+    `disclosure_leak_cases.json` -- fails closed with its own dedicated
+    reason code, exactly the same "a claim the candidate makes is not
+    proof" posture Task 3's citation reconciliation already takes toward a
+    forged `evidence_id`."""
+    candidate = _candidate_from(
+        candidate_answer="Synthetic Supplier Alpha uses net 30 payment terms.",
+        gate_b_disclosure_profile="no_such_profile",
+    )
+    report = check_final_disclosure(
+        candidate,
+        gate_b_decision=_gate_b_decision_for_profile("policy_reader"),
+        disclosure_profile=None,  # exactly what a caller resolves for an unrecognized profile id
+        protected_fields=PROTECTED_FIELDS,
+        policy=REAL_DISCLOSURE_POLICY,
+        known_disclosure_profile_ids=_KNOWN_PROFILE_IDS,
+    )
+    assert report.passed is False
+    assert report.reason_codes == (DisclosureReasonCode.UNKNOWN_DISCLOSURE_PROFILE_REFERENCE,)
+
+
+def test_known_disclosure_profile_reference_is_unaffected_by_the_cross_check() -> None:
+    """The new cross-check never fires a false positive against a real,
+    governed profile id -- DISC12-001's own safe case, re-run with
+    `known_disclosure_profile_ids` now supplied."""
+    case = next(c for c in DISCLOSURE_LEAK_CASES["cases"] if c["id"] == "DISC12-001")
+    candidate = _candidate_from(
+        candidate_answer=case["candidate_answer"], gate_b_disclosure_profile=case["disclosure_profile"]
+    )
+    report = check_final_disclosure(
+        candidate,
+        gate_b_decision=_gate_b_decision_for_profile(case["disclosure_profile"]),
+        disclosure_profile=_GATE_B_POLICY.get_disclosure_profile(case["disclosure_profile"]),
+        protected_fields=PROTECTED_FIELDS,
+        policy=REAL_DISCLOSURE_POLICY,
+        known_disclosure_profile_ids=_KNOWN_PROFILE_IDS,
+    )
+    assert report.passed is True
+    assert DisclosureReasonCode.UNKNOWN_DISCLOSURE_PROFILE_REFERENCE not in report.reason_codes
+
+
+def test_no_disclosure_profile_named_is_unaffected_by_the_cross_check() -> None:
+    """A candidate naming no profile at all (`None`) is not itself an
+    "unknown reference" -- DISC12-005/006's own shape (no
+    `disclosure_profile` field) must keep passing this particular check
+    even once `known_disclosure_profile_ids` is supplied; Task 7's own
+    detector is what fails those two, unaffected by this change."""
+    candidate = _candidate_from(candidate_answer="Authorization value: Bearer SYNTHETIC_SECRET_TOKEN")
+    report = check_final_disclosure(
+        candidate,
+        gate_b_decision=_gate_b_decision_for_profile("policy_reader"),
+        disclosure_profile=None,
+        protected_fields=PROTECTED_FIELDS,
+        policy=REAL_DISCLOSURE_POLICY,
+        known_disclosure_profile_ids=_KNOWN_PROFILE_IDS,
+    )
+    assert report.passed is True
+
+
+def test_unknown_disclosure_profile_reference_skipped_without_registry_context() -> None:
+    """`known_disclosure_profile_ids=None` (the default -- no registry
+    context supplied) means this one cross-check simply does not run, the
+    identical allowance `GateDPolicyRegistry.has_disclosure_profile()`
+    already documents -- a caller exercising the field-leak checks in
+    isolation (this file's every other test) is unaffected by this
+    change."""
+    candidate = _candidate_from(gate_b_disclosure_profile="no_such_profile")
+    report = check_final_disclosure(
+        candidate,
+        gate_b_decision=_gate_b_decision_for_profile("policy_reader"),
+        disclosure_profile=None,
+        protected_fields=PROTECTED_FIELDS,
+        policy=REAL_DISCLOSURE_POLICY,
+    )
+    assert report.passed is True
+    assert report.reason_codes == ()
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Section 3 -- specific Task 7 behaviors.
 # ══════════════════════════════════════════════════════════════════════
 

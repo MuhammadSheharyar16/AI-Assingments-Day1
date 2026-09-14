@@ -412,6 +412,30 @@ def test_has_disclosure_profile_false_without_supplied_context() -> None:
     assert registry.has_disclosure_profile("policy_reader") is False
 
 
+def test_known_disclosure_profile_ids_matches_has_disclosure_profile(gate_d_policy: GateDPolicyRegistry) -> None:
+    """`known_disclosure_profile_ids` -- the property `GateD.evaluate()`
+    (Task 10) forwards into `check_final_disclosure()`'s own candidate-
+    level cross-check -- is exactly the same governed universe
+    `has_disclosure_profile()` already checks membership against, never a
+    second, independently-drifting set."""
+    known = gate_d_policy.known_disclosure_profile_ids
+    assert isinstance(known, frozenset)
+    for profile_id in ("policy_reader", "structured_reader", "compliance_view"):
+        assert profile_id in known
+        assert gate_d_policy.has_disclosure_profile(profile_id) is True
+    assert "no_such_profile" not in known
+    assert gate_d_policy.has_disclosure_profile("no_such_profile") is False
+
+
+def test_known_disclosure_profile_ids_empty_without_supplied_context() -> None:
+    """Mirrors `test_has_disclosure_profile_false_without_supplied_context`
+    one layer over: a registry built via the plain constructor exposes an
+    empty set, not a silent fall-through to "every id recognized"."""
+    document = GateDPolicyDocument.model_validate(_minimal_valid_policy())
+    registry = GateDPolicyRegistry(document)
+    assert registry.known_disclosure_profile_ids == frozenset()
+
+
 def test_load_with_explicit_throwaway_gate_b_policy_narrows_known_profiles(gate_b_policy: PolicyRegistry) -> None:
     """`gate_b_policy` is an explicit parameter precisely so a caller can
     test against a different/throwaway Gate-B policy -- proven by loading

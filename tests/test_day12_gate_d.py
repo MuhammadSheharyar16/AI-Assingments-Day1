@@ -417,6 +417,27 @@ def test_secret_pattern_alone_is_safe_failure() -> None:
     assert decision.disclosure_checks.secret_checks.passed is False
 
 
+def test_unknown_disclosure_profile_reference_alone_is_safe_failure() -> None:
+    """Task 2's own "unknown disclosure profile/rule reference rejected"
+    case, proven through the full decision contract, end to end -- a
+    candidate whose own `gate_b_disclosure_profile` names an id this
+    registry's real, committed Gate-B policy does not govern (never a
+    fixture case; fixture-independent by construction) is a
+    `safe_failure`, not a silently-trusted `allow`, even though every
+    other check on this otherwise well-formed candidate passes."""
+    candidate = _valid_candidate(gate_b_disclosure_profile="no_such_profile")
+    decision = _evaluate(candidate, disclosure_profile=None)
+    assert decision.decision is GateDStatus.SAFE_FAILURE
+    assert decision.safe_failure_code == _GATE_D_POLICY_REGISTRY.safe_failure.code
+    assert "unknown_disclosure_profile_reference" in decision.reason_codes
+    assert decision.disclosure_checks.passed is False
+    # Every other check on this otherwise well-formed candidate still
+    # independently passes -- this one reference is what fails it.
+    assert decision.quality_checks.passed is True
+    assert decision.citation_checks.passed is True
+    assert decision.latency_checks.passed is True
+
+
 def test_latency_budget_exceeded_alone_is_safe_failure() -> None:
     over_budget = _GATE_D_POLICY_REGISTRY.latency_budgets.max_total_latency_ms + 1
     decision = _evaluate(_valid_candidate(elapsed_ms=over_budget))

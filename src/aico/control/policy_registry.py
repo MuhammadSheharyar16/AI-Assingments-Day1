@@ -414,3 +414,15 @@ class GateDPolicyRegistry:
         `GateCPolicyDocument`'s own optional cross-reference context
         gives."""
         return profile_id in self._known_disclosure_profile_ids
+
+    @property
+    def known_disclosure_profile_ids(self) -> frozenset[str]:
+        """The same governed universe `has_disclosure_profile()` checks
+        membership against, exposed directly so `GateD.evaluate()`
+        (`gate_d.py`, Task 10) can forward it into
+        `check_final_disclosure()` (Task 6) -- that function's own
+        candidate-level "unknown disclosure profile reference rejected"
+        cross-check (Task 2's requirement, applied to one candidate rather
+        than the static policy document). A fresh `frozenset`, not a
+        reference into this registry's own private set."""
+        return frozenset(self._known_disclosure_profile_ids)
