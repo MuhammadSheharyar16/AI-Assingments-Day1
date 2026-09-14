@@ -1,0 +1,328 @@
+"""
+Day 12 Task 3 -- final citation reconciliation.
+Day 12 Task 4 -- evidence/citation provenance preservation (folded into
+Task 3's own check, not a separate function -- see "Provenance" below for
+why the two are one algorithm, the same "filtering and the decision that
+depends on it are one thing, not two" reasoning `gate_c.py`'s own
+docstring gives for folding Day 11 Task 10 into Task 9).
+
+Day 12's required structure names no separate module for citation
+reconciliation (unlike Gate-C's own evidence validators, each given a
+dedicated file under `src/aico/evidence/` because Day 11's tree explicitly
+lists them) -- `gate_d.py` itself is where this lives, built up one
+labeled section per task the same way `policy_models.py` grew a "Day 12
+Task 2" section rather than a new file. Later Day 12 tasks (quality,
+disclosure, latency budget, safe failure, the full decision contract) add
+their own labeled sections to this same file as they land; only Task 3/4
+are implemented so far.
+
+## What Gate-D's final citation check proves
+
+`final_response_rules.md` (`data/day12_pack/`): "`final_citations ⊆
+Gate-C validated evidence`. A single forged or rejected-evidence citation
+fails the candidate." Concretely: `reconcile_final_citations()` takes one
+typed `FinalResponseCandidate` (Task 1) and the actual `GateCEvidenceRecord`s
+Gate-C validated for this request (Task 10's own "Gate-C validated evidence
+metadata" input -- a *separate* parameter from the candidate, never folded
+into `FinalResponseCandidate` itself: Task 1's envelope carries only the
+bare `gate_c_validated_evidence_ids`, cheap enough for observability/audit
+use; the full provenance records this function needs to actually
+reconcile against are supplied directly, the identical split Gate-C itself
+draws between "the request/intent metadata" and "the candidate evidence
+package" as two separate `evaluate()` parameters), plus the governed
+`CitationPolicy` (Task 2).
+
+Every Task 3 "Required behavior" bullet, traced to where it is enforced:
+
+    - valid final citations pass        -> a citation whose evidence_id
+                                            resolves to a
+                                            `GateCEvidenceRecord` AND
+                                            agrees with it on chunk_id/
+                                            source_id/source_version is
+                                            `valid=True` in its own
+                                            `CitationCheckResult`.
+    - citation to Gate-C-rejected item
+      fails                            -> that item's evidence_id is
+                                            simply absent from
+                                            `gate_c_validated_evidence`
+                                            (Gate-C never reports a
+                                            rejected id as validated) --
+                                            indistinguishable, by design,
+                                            from a wholly forged id; both
+                                            resolve to the identical
+                                            `CITATION_NOT_GATE_C_VALIDATED`
+                                            reason. `final_citation_ids ⊆
+                                            gate_c_validated_evidence_ids`
+                                            (the assignment's own
+                                            "Conceptually" line) is a
+                                            single membership test -- it
+                                            does not, and structurally
+                                            cannot, distinguish *why* an
+                                            id is outside the validated
+                                            set, only that it is.
+    - forged citation fails             -> same check, same reason code --
+                                            see immediately above.
+    - mixed valid + invalid citation
+      fails                            -> ANY invalid citation fails the
+                                            whole candidate,
+                                            unconditionally (see
+                                            "Never silently drop" below);
+                                            `reject_mixed_valid_invalid`
+                                            additionally appends the
+                                            overarching
+                                            `MIXED_VALID_INVALID_CITATIONS`
+                                            reason when the policy says to
+                                            name that specific shape of
+                                            failure.
+    - answered status requiring
+      citations cannot pass with zero
+      citations                        -> `policy.answered_requires_
+                                            citation` + `candidate_status
+                                            is ANSWERED` + empty
+                                            `candidate_citations` ->
+                                            `MISSING_REQUIRED_CITATION`.
+    - insufficient-evidence status must
+      not contain fabricated factual
+      citations                        -> no status-based exemption
+                                            anywhere in this module: every
+                                            citation a candidate carries,
+                                            `insufficient_evidence`
+                                            included, goes through the
+                                            identical Gate-C-membership/
+                                            provenance check above. A
+                                            "clean" `insufficient_evidence`
+                                            candidate (`final_quality_
+                                            cases.json` QUAL12-006) simply
+                                            carries zero citations to begin
+                                            with -- there is no separate
+                                            "zero citations required" rule
+                                            for this status the way
+                                            `answered_requires_citation`
+                                            is for `answered`.
+
+## Never silently drop an invalid citation
+
+Working rule: "Do not silently delete an invalid citation and return the
+remaining answer as trusted." This is read as an absolute system
+invariant, not something `reject_mixed_valid_invalid=False` could ever
+switch off -- `reconcile_final_citations()` has no code path that removes
+an invalid citation from consideration and reports `passed=True` using
+only the survivors. `reject_mixed_valid_invalid` governs only whether the
+*additional*, overarching `MIXED_VALID_INVALID_CITATIONS` reason is named
+alongside the per-citation reasons a mix already carries -- never whether
+the candidate fails. (Gate-C's own analogous flag, `conflict_policy`,
+governs *how* a conflict is resolved; nothing in this codebase's Gate-C or
+Gate-D ever exposes a policy switch for "resolve invalid evidence by
+quietly using only what's left.")
+
+## `citations_must_be_gate_c_approved`
+
+The one real behavioral switch this function reads: `False` skips the
+Gate-C-membership/provenance check entirely (every citation is trivially
+`valid=True` from this function's own perspective) -- a policy version
+that has decided this lane does not require Gate-C reconciliation at all.
+`gate_d_policy_v1.json`'s committed value is `true`; no shipped fixture
+exercises `false`, so this module's own test file adds a dedicated case
+proving the switch is genuinely honored, not merely declared.
+
+## Provenance (Task 4)
+
+`final_citation_ids ⊆ gate_c_validated_evidence_ids` alone (evidence_id
+membership only) would let `final_citation_cases.json` CIT12-005
+("source_version_mismatch") through: its citation's `evidence_id` really
+is in the validated set, it merely disagrees with that set's own record
+about which `source_version` it was retrieved at. `GateCEvidenceRecord`
+(below) is what makes the *full* provenance identity available for this
+comparison -- `chunk_id`/`source_id`/`source_version`, not just
+`evidence_id` -- reusing the same four provenance-identity fields
+`final_response.py`'s own `FinalCitation` already validates the shape of,
+kept as a distinct type (not a second `FinalCitation` reference) because
+it represents a different thing: what Gate-C actually validated, never
+what a candidate merely *claims*. "If source/version provenance
+conflicts, Gate-D rejects the candidate" (Task 4) is exactly
+`CITATION_PROVENANCE_MISMATCH` below -- checked only once evidence_id
+membership itself already holds (a citation whose evidence_id is not even
+in the validated set has nothing to compare provenance against; it is
+already `CITATION_NOT_GATE_C_VALIDATED`)."""
+from __future__ import annotations
+
+from collections.abc import Sequence
+from enum import Enum
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from aico.contracts.models import AnswerStatus
+from aico.control.final_response import FinalResponseCandidate
+from aico.control.policy_models import CitationPolicy
+
+
+class GateCEvidenceRecord(BaseModel):
+    """The provenance identity of one Gate-C-validated evidence item, as
+    supplied directly to Gate-D -- Task 10's own "Gate-C validated
+    evidence metadata" input, kept separate from
+    `FinalResponseCandidate.gate_c_validated_evidence_ids` (see module
+    docstring). Deliberately just the four provenance-identity fields
+    citation reconciliation needs (Task 3/4), not the full
+    `aico.evidence.models.EvidenceItem` -- whose remaining fields
+    (content, tenant scope, freshness timestamps, ...) Gate-C has already
+    checked and this reconciliation has no further use for. A real
+    deployment builds one of these per `GateCDecision.validated_evidence_ids`
+    entry (Task 11's wiring, from the `EvidenceItem` retrieval actually
+    returned); `final_citation_cases.json`'s own `gate_c_validated_evidence`
+    fixture entries already ship exactly this shape."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: str = Field(min_length=1)
+    chunk_id: str = Field(min_length=1)
+    source_id: str = Field(min_length=1)
+    source_version: str = Field(min_length=1)
+
+
+class CitationReasonCode(str, Enum):
+    """The closed set of reasons `reconcile_final_citations()` ever cites.
+    Gate-D's full decision contract (Task 10) is expected to fold these
+    into its own typed `reason_codes`, never invent a new, undocumented
+    citation-reconciliation failure string."""
+
+    MISSING_REQUIRED_CITATION = "missing_required_citation"
+    CITATION_NOT_GATE_C_VALIDATED = "citation_not_gate_c_validated"
+    CITATION_PROVENANCE_MISMATCH = "citation_provenance_mismatch"
+    MIXED_VALID_INVALID_CITATIONS = "mixed_valid_invalid_citations"
+
+
+class CitationCheckResult(BaseModel):
+    """Citation reconciliation's per-citation verdict -- `evidence_id` this
+    result is for, whether it passed both Task 3 checks, and -- when it
+    did not -- every reason it failed (mirrors `evidence/provenance.py`'s
+    own `ProvenanceItemResult` shape one layer over)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: str = Field(min_length=1)
+    valid: bool
+    reasons: tuple[CitationReasonCode, ...] = Field(default_factory=tuple)
+
+
+class CitationReconciliationReport(BaseModel):
+    """The full candidate-level reconciliation result:
+    `reconcile_final_citations()`'s one return value, the shape Gate-D's
+    decision contract (Task 10) is expected to consume rather than
+    re-running the per-citation checks itself. `valid_citation_evidence_ids`/
+    `invalid_citation_evidence_ids` are populated from the per-citation
+    verdicts regardless of the overall `passed` outcome -- Task 13's
+    observability and Task 14's `final_citation_report.md` both want to
+    see which citations individually reconciled even on an otherwise
+    failing candidate, the identical "populated regardless of the final
+    decision" convention `GateCDecision.rejected_evidence_ids` already
+    follows."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    passed: bool
+    reason_codes: tuple[CitationReasonCode, ...] = Field(default_factory=tuple)
+    citation_checks: tuple[CitationCheckResult, ...] = Field(default_factory=tuple)
+    valid_citation_evidence_ids: tuple[str, ...] = Field(default_factory=tuple)
+    invalid_citation_evidence_ids: tuple[str, ...] = Field(default_factory=tuple)
+
+
+def _check_one_citation(
+    citation_evidence_id: str,
+    citation_chunk_id: str,
+    citation_source_id: str,
+    citation_source_version: str,
+    *,
+    validated_by_id: dict[str, GateCEvidenceRecord],
+    citations_must_be_gate_c_approved: bool,
+) -> CitationCheckResult:
+    if not citations_must_be_gate_c_approved:
+        return CitationCheckResult(evidence_id=citation_evidence_id, valid=True)
+
+    validated = validated_by_id.get(citation_evidence_id)
+    if validated is None:
+        # Covers both Task 3 bullets identically -- a wholly forged
+        # evidence_id and one Gate-C actually saw and rejected are the
+        # same "not in the validated set" outcome; see module docstring.
+        return CitationCheckResult(
+            evidence_id=citation_evidence_id,
+            valid=False,
+            reasons=(CitationReasonCode.CITATION_NOT_GATE_C_VALIDATED,),
+        )
+
+    provenance_matches = (
+        citation_chunk_id == validated.chunk_id
+        and citation_source_id == validated.source_id
+        and citation_source_version == validated.source_version
+    )
+    if not provenance_matches:
+        return CitationCheckResult(
+            evidence_id=citation_evidence_id,
+            valid=False,
+            reasons=(CitationReasonCode.CITATION_PROVENANCE_MISMATCH,),
+        )
+
+    return CitationCheckResult(evidence_id=citation_evidence_id, valid=True)
+
+
+def reconcile_final_citations(
+    candidate: FinalResponseCandidate,
+    *,
+    gate_c_validated_evidence: Sequence[GateCEvidenceRecord],
+    policy: CitationPolicy,
+) -> CitationReconciliationReport:
+    """Reconcile `candidate.candidate_citations` against the evidence
+    Gate-C actually validated for this request. Never raises for an
+    ordinary input, well-formed or not -- every outcome is a normal, typed
+    `CitationReconciliationReport`, the identical "typed result, not an
+    exception, for an expected pass/fail outcome" convention every other
+    Day 11/12 validator in this codebase already follows. Never mutates
+    `candidate`/`gate_c_validated_evidence`/`policy`."""
+    validated_by_id = {record.evidence_id: record for record in gate_c_validated_evidence}
+
+    reason_codes: list[CitationReasonCode] = []
+
+    if (
+        policy.answered_requires_citation
+        and candidate.candidate_status is AnswerStatus.ANSWERED
+        and not candidate.candidate_citations
+    ):
+        reason_codes.append(CitationReasonCode.MISSING_REQUIRED_CITATION)
+
+    citation_checks = tuple(
+        _check_one_citation(
+            citation.evidence_id,
+            citation.chunk_id,
+            citation.source_id,
+            citation.source_version,
+            validated_by_id=validated_by_id,
+            citations_must_be_gate_c_approved=policy.citations_must_be_gate_c_approved,
+        )
+        for citation in candidate.candidate_citations
+    )
+
+    valid_ids = tuple(check.evidence_id for check in citation_checks if check.valid)
+    invalid_ids = tuple(check.evidence_id for check in citation_checks if not check.valid)
+
+    if invalid_ids:
+        if valid_ids and policy.reject_mixed_valid_invalid:
+            reason_codes.append(CitationReasonCode.MIXED_VALID_INVALID_CITATIONS)
+        # Every per-citation failure reason also belongs at the
+        # candidate level, deduplicated and in first-seen order, so a
+        # caller reading `CitationReconciliationReport.reason_codes` alone
+        # never has to re-walk `citation_checks` to learn *why* --
+        # deliberately preserved even though `invalid_ids` alone already
+        # decides `passed` below.
+        for check in citation_checks:
+            for reason in check.reasons:
+                if reason not in reason_codes:
+                    reason_codes.append(reason)
+
+    passed = not reason_codes
+
+    return CitationReconciliationReport(
+        passed=passed,
+        reason_codes=tuple(reason_codes),
+        citation_checks=citation_checks,
+        valid_citation_evidence_ids=valid_ids,
+        invalid_citation_evidence_ids=invalid_ids,
+    )
