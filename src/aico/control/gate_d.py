@@ -11,18 +11,19 @@ secret-pattern/hidden-prompt-marker half is a separate function, Task 7's
 own).
 Day 12 Task 7 -- deterministic secret / protected-value detection, the
 profile-independent half of final disclosure validation (see this
-module's own "Day 12 Task 7" section, appended near the end of this
-file).
+module's own "Day 12 Task 7" section).
+Day 12 Task 8 -- latency-budget policy (see this module's own "Day 12
+Task 8" section, appended near the end of this file).
 
 Day 12's required structure names no separate module for citation
-reconciliation or final disclosure validation (unlike Gate-C's own
-evidence validators, each given a dedicated file under
-`src/aico/evidence/` because Day 11's tree explicitly lists them) --
+reconciliation, final disclosure validation, or latency-budget checking
+(unlike Gate-C's own evidence validators, each given a dedicated file
+under `src/aico/evidence/` because Day 11's tree explicitly lists them) --
 `gate_d.py` itself is where all of it lives, built up one labeled section
 per task the same way `policy_models.py` grew a "Day 12 Task 2" section
-rather than a new file. Later Day 12 tasks (latency budget, safe failure,
-the full decision contract) add their own labeled sections to this same
-file as they land; only Task 3/4/6/7 are implemented so far.
+rather than a new file. Later Day 12 tasks (safe failure, the full
+decision contract) add their own labeled sections to this same file as
+they land; only Task 3/4/6/7/8 are implemented so far.
 
 ## What Gate-D's final citation check proves
 
@@ -174,7 +175,13 @@ from aico.contracts.models import AnswerStatus
 from aico.control.disclosure import ProtectedField, apply_disclosure
 from aico.control.final_response import FinalCitation, FinalResponseCandidate
 from aico.control.models import GateBDecision
-from aico.control.policy_models import CitationPolicy, DisclosureAction, DisclosureProfile, GateDDisclosurePolicy
+from aico.control.policy_models import (
+    CitationPolicy,
+    DisclosureAction,
+    DisclosureProfile,
+    GateDDisclosurePolicy,
+    LatencyBudgets,
+)
 
 
 class GateCEvidenceRecord(BaseModel):
@@ -693,4 +700,118 @@ def detect_protected_value_leak(
         passed=not reason_codes,
         reason_codes=tuple(reason_codes),
         matched_pattern_names=tuple(matched_pattern_names),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Day 12 Task 8 -- latency-budget policy.
+# ══════════════════════════════════════════════════════════════════════
+#
+# Task 8's own two required timing checks -- "invalid negative timing" /
+# "missing required timing" -- are *not* implemented here: Task 1's
+# envelope already rejects both by construction (`FinalResponseCandidate.
+# elapsed_ms`/`model_latency_ms` are `Field(ge=0)`, required, no
+# default), and `latency_budget_cases.json` LAT12-005
+# ("invalid_negative_timing") itself expects `reject` -- Task 10's
+# documented meaning for "invalid internal candidate ... that should not
+# be exposed as normal answer" -- exactly the outcome a malformed
+# envelope (one that can never even become a `FinalResponseCandidate`)
+# already produces upstream of this function ever running. `check_latency
+# _budget()` below is therefore only ever called with an already-valid,
+# non-negative `elapsed_ms`/`model_latency_ms` -- the identical division
+# of labor `check_final_quality()`'s own docstring draws for "unknown
+# final status" (a Task 1 shape guarantee, not re-checked at Task 5).
+#
+# The remaining four required cases -- within budget, model budget
+# exceeded, total budget exceeded, exactly at threshold -- are all
+# `check_latency_budget()`'s own job, governed entirely by
+# `LatencyBudgets` (Task 2): `threshold_is_inclusive` decides whether a
+# candidate measured at *exactly* `max_total_latency_ms`/
+# `max_model_latency_ms` passes (`true`, the committed v1 value --
+# `latency_budget_cases.json` LAT12-002) or must be strictly under
+# (`false` -- no shipped fixture exercises this direction, so this
+# module's own test file adds a dedicated case).
+#
+# ## "if policy says the budget is hard"
+#
+# The working rule ("A successful model call does not override an
+# exceeded hard latency budget") and Task 8's own "Rule" both qualify
+# this with "if policy says the budget is hard" -- read literally against
+# what `LatencyBudgets` (Task 2) actually governs: this policy version
+# declares no separate soft/hard distinction at all, only the two budget
+# values themselves. A policy that declares a budget at all, with no
+# accompanying "this one is merely advisory" field, is declaring a hard
+# one -- there is no code path in `check_latency_budget()` that could
+# ever treat an exceeded budget as anything but a release-blocking
+# failure; a future policy version wanting genuinely *soft* (advisory,
+# non-blocking) budgets would need its own new, explicit field, not a
+# silent default here.
+#
+# "Do not fabricate faster telemetry": `check_latency_budget()` reads
+# `candidate.elapsed_ms`/`candidate.model_latency_ms` exactly as the
+# envelope carries them -- no rounding, no recomputation, no adjustment
+# in either direction. "Optionally support stage budgets if documented":
+# `gate_d_policy_v1.json` documents none beyond the total/model pair, so
+# none are implemented -- a future policy version that adds one extends
+# `LatencyBudgets` (Task 2) and this function together, the same way any
+# other governed field addition in this codebase is made.
+
+
+class LatencyReasonCode(str, Enum):
+    """The closed set of reasons `check_latency_budget()` ever cites.
+    Gate-D's full decision contract (Task 10) is expected to fold these
+    into its own typed `reason_codes`, never invent a new, undocumented
+    latency-failure string."""
+
+    TOTAL_LATENCY_BUDGET_EXCEEDED = "total_latency_budget_exceeded"
+    MODEL_LATENCY_BUDGET_EXCEEDED = "model_latency_budget_exceeded"
+
+
+class LatencyCheckReport(BaseModel):
+    """`check_latency_budget()`'s one return value. Carries the measured
+    values and the budget they were checked against alongside the
+    verdict -- Task 13's observability wants `total_latency_ms`/
+    `model_latency_ms` on every decision regardless of outcome, and
+    repeating them here means a caller never has to re-read them off the
+    original `candidate` to build that telemetry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    passed: bool
+    reason_codes: tuple[LatencyReasonCode, ...] = Field(default_factory=tuple)
+    total_latency_ms: int = Field(ge=0)
+    model_latency_ms: int = Field(ge=0)
+    max_total_latency_ms: int = Field(gt=0)
+    max_model_latency_ms: int = Field(gt=0)
+
+
+def check_latency_budget(candidate: FinalResponseCandidate, *, policy: LatencyBudgets) -> LatencyCheckReport:
+    """Check `candidate.elapsed_ms`/`candidate.model_latency_ms` against
+    `policy`'s governed budgets -- see module docstring for why negative/
+    missing timing is out of scope here (a Task 1 envelope guarantee) and
+    for the "hard budget" / "no fabricated telemetry" reading. Never
+    raises for an ordinary input -- every outcome is a normal, typed
+    `LatencyCheckReport`. Never mutates `candidate`/`policy`, and performs
+    no I/O -- a pure function of its typed inputs, exactly like this
+    module's other Day 12 checks."""
+    if policy.threshold_is_inclusive:
+        total_exceeded = candidate.elapsed_ms > policy.max_total_latency_ms
+        model_exceeded = candidate.model_latency_ms > policy.max_model_latency_ms
+    else:
+        total_exceeded = candidate.elapsed_ms >= policy.max_total_latency_ms
+        model_exceeded = candidate.model_latency_ms >= policy.max_model_latency_ms
+
+    reason_codes: list[LatencyReasonCode] = []
+    if total_exceeded:
+        reason_codes.append(LatencyReasonCode.TOTAL_LATENCY_BUDGET_EXCEEDED)
+    if model_exceeded:
+        reason_codes.append(LatencyReasonCode.MODEL_LATENCY_BUDGET_EXCEEDED)
+
+    return LatencyCheckReport(
+        passed=not reason_codes,
+        reason_codes=tuple(reason_codes),
+        total_latency_ms=candidate.elapsed_ms,
+        model_latency_ms=candidate.model_latency_ms,
+        max_total_latency_ms=policy.max_total_latency_ms,
+        max_model_latency_ms=policy.max_model_latency_ms,
     )
