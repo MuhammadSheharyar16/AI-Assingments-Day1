@@ -140,6 +140,48 @@ class OversizedAnswerGateway:
         )
 
 
+@dataclass
+class SecretLeakGateway:
+    """Same real-chunk citation `EchoingGateway` uses -- citation
+    validation and Day 5's own support/groundedness check both still
+    genuinely pass -- but the generated answer also states a synthetic
+    protected value (`SYN-BANK-00001234`, Task 7's own named example)
+    nowhere present in the cited evidence. Deliberately answers a
+    *different* real question than `EchoingGateway`/`OversizedAnswerGateway`
+    (one whose top-ranked real chunk carries enough of its own content
+    words that appending a short, unrelated leaked value still clears
+    `support_validator.py`'s lexical-overlap floor -- the payment-terms
+    question's own top chunk is too short/title-like for that): this
+    proves a real secret-pattern leak survives Day 4/5's typed-contract
+    and semantic/groundedness validation (both genuinely pass here) and
+    is caught only at the Gate-D release boundary, through the actual
+    live pipeline -- not a hand-built `FinalResponseCandidate`."""
+
+    call_count: int = field(default=0, init=False)
+
+    def chat(self, request: ChatRequest) -> ChatResult:
+        self.call_count += 1
+        chunk_id, source_file, chunk_text = _extract_evidence_block(request)
+        first_sentence = chunk_text.strip().split(". ")[0].strip().rstrip(".") + "."
+        leaking_answer = f"{first_sentence} Bank account on file: SYN-BANK-00001234."
+        content = json.dumps(
+            {
+                "schema_version": "1.0",
+                "status": "answered",
+                "answer": leaking_answer,
+                "citations": [{"chunk_id": chunk_id, "source_file": source_file}],
+                "confidence_label": "high",
+            }
+        )
+        return ChatResult(
+            content=content,
+            metadata=CallMetadata(
+                operation="chat", model_alias="fake-chat-alias", latency_ms=1.0, retry_count=0,
+                token_usage=None, budget_status="within_budget",
+            ),
+        )
+
+
 def _config_with_gate_d(enabled: bool):
     """The real committed `config/control-plane.yaml`, with only
     `gate_d.enabled` explicitly set -- every other governed value
@@ -277,6 +319,47 @@ def test_gate_d_safe_failure_blocks_an_oversized_answer():
     assert gateway.call_count == 1  # the model *was* called -- Gate-D still rejected its output
     raw_body = resp.text
     assert "payment" not in raw_body.lower() and "net 30" not in raw_body.lower()
+
+
+def test_gate_d_safe_failure_blocks_a_live_secret_pattern_leak():
+    """Closes the one Day 12 gap the validation report named: Task 6/7's
+    disclosure/secret checks were previously proven only via direct unit
+    calls to `check_final_disclosure()`/`detect_protected_value_leak()`
+    against the fixture data, never over a real, live `/ask/governed`
+    request. `SecretLeakGateway` makes a genuinely grounded answer (real
+    citation, real cited text, Day 4 contract and Day 5 semantic/
+    groundedness validation both genuinely pass -- proven below by the
+    control case) that also states a synthetic bank-account value no
+    cited evidence contains -- exactly Task 7's own named example
+    (`SYN-BANK-00001234`). Gate-D's `detect_protected_value_leak()` is the
+    *only* thing standing between this candidate and a normal 200
+    response: a 422 `ErrorResponse` (Day 6's typed failure contract, Task
+    11), never the leaked value anywhere in the body, is what proves it.
+
+    The control case -- the identical citation/first-sentence answer with
+    the leaked sentence removed -- is asserted first, so a future corpus/
+    retrieval change that broke this test could never be mistaken for
+    Gate-D itself failing to catch the leak."""
+    question = "What are the standard payment terms from the date of a valid invoice?"
+
+    control_gateway = EchoingGateway()
+    control_resp = _client(control_gateway).post("/ask/governed", json={"question": question, "data_class": "internal"})
+    assert control_resp.status_code == 200, control_resp.json()  # same citation/grounding, no leak -> genuinely allowed
+    app.dependency_overrides.clear()
+
+    gateway = SecretLeakGateway()
+    client = _client(gateway)
+
+    resp = client.post("/ask/governed", json={"question": question, "data_class": "internal"})
+
+    assert resp.status_code == 422
+    body = resp.json()
+    assert set(body.keys()) == {"error_code", "message", "request_id", "correlation_id"}  # Day 6's ErrorResponse shape
+    assert body["error_code"] == "FINAL_RESPONSE_REJECTED"  # the real, policy-driven code (Task 9)
+    assert gateway.call_count == 1  # the model *was* called and *did* leak -- Gate-D still rejected its output
+    raw_body = resp.text
+    assert "SYN-BANK-00001234" not in raw_body  # the matched protected value itself never reaches the caller
+    assert "bank account" not in raw_body.lower()
 
 
 def test_gate_d_reject_via_narrowed_policy_is_a_server_error():

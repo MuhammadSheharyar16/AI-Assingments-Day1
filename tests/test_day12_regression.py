@@ -53,7 +53,11 @@ existence-only tests"):
       test_day12_disclosure.py::test_denied_tax_identifier_case_reason,
       ::test_denied_bank_account_case_reason
     Secret/token leak                               -> Rejected
-      test_day12_disclosure.py::test_secret_token_leak_case_reason_and_pattern_name
+      test_day12_disclosure.py::test_secret_token_leak_case_reason_and_pattern_name;
+      test_day12_api_integration.py::test_gate_d_safe_failure_blocks_a_live_secret_pattern_leak
+      (the same leak, proven over a real, live /ask/governed request, not
+      only a direct check_final_disclosure()/detect_protected_value_leak()
+      call against fixture data)
     Within latency budget                             -> Passes
       test_day12_latency_budget.py::test_within_budget_case_names_no_failure_reason
     Model budget exceeded                               -> Safe failure
