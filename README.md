@@ -1,4 +1,4 @@
-# AICO — Retrieval Engineering (Day 1: Lexical Baseline · Day 2: Embeddings & Hybrid · Day 3: Model Gateway · Day 4: Structured Contracts · Day 5: Grounded Answering · Day 6: API Surface & Observability · Day 7: Evaluation & Regression Gate · Day 8: Session State & Memory · Day 9: Ontology Registry, Gate-A & Lane Selection · Day 10: Gate-B Permissions, Tenant Isolation & Safe Disclosure)
+# AICO — Retrieval Engineering (Day 1: Lexical Baseline · Day 2: Embeddings & Hybrid · Day 3: Model Gateway · Day 4: Structured Contracts · Day 5: Grounded Answering · Day 6: API Surface & Observability · Day 7: Evaluation & Regression Gate · Day 8: Session State & Memory · Day 9: Ontology Registry, Gate-A & Lane Selection · Day 10: Gate-B Permissions, Tenant Isolation & Safe Disclosure · Day 11: Gate-C Evidence Trust, Provenance & Completeness · Day 12: Gate-D Final Response Validation)
 
 Day 1 is a from-scratch chunker and BM25 lexical search baseline. Day 2 adds
 semantic retrieval on top of it: a real embedding provider behind one
@@ -1993,6 +1993,161 @@ generated script now points at this project's own path. Not a code issue
 and not expected to recur — noted here only because it briefly made
 `uv run pytest -q` fail in a way that looked like a real import bug.
 
+## Day 12 — Gate-D Final Response Validation
+
+Adds the final deterministic response gate: Gate-C decided whether
+*evidence* may reach generation; Gate-D decides whether the *generated
+response* may leave the system (`Day 12 Task.pdf`'s standing rule: "A
+valid model response is still untrusted until the final deterministic
+controls approve it"). All 15 tasks are implemented — the typed
+final-response envelope, the Gate-D policy, final citation reconciliation
++ provenance, deterministic quality/disclosure/secret-pattern/latency
+checks, safe-failure behavior, the full decision contract, live API
+integration, response immutability, observability, the three required
+artifacts, and the required-coverage regression audit.
+
+- `data/day12_pack/` — the Day 12 resource pack, copied verbatim from the
+  supplied `day12_pack/` (same convention as `data/day09-11_pack/`):
+  `gate_d_policy_requirements.md`, `final_response_rules.md`, and
+  `fixtures/` (`gate_d_policy_v1.json`, `final_citation_cases.json`,
+  `disclosure_leak_cases.json`, `latency_budget_cases.json`,
+  `final_quality_cases.json`) — fixed synthetic inputs; `policy/gate_d_
+  policy.v1.json` is this pack's own `gate_d_policy_v1.json`,
+  byte-identical (proven by its own test).
+- `control/final_response.py` (Task 1) — typed, `frozen=True`
+  `FinalResponseCandidate`/`FinalCitation` (Pydantic, `extra="forbid"`):
+  missing response status, malformed citation structure, invalid/negative
+  latency, missing control metadata, and an unknown final status are all
+  rejected at parse time via `parse_final_response_candidate()`, never a
+  raw dict reaching Gate-D. `candidate_status` reuses Day 4's own
+  `AnswerStatus` enum rather than a second vocabulary.
+- `policy_models.py` / `policy_registry.py` (Task 2, extended rather than
+  a new file — Gate-D's policy governs the same kind of thing Gate-B's
+  already does) — `GateDPolicyDocument` (`citation_policy`/
+  `quality_policy`/`disclosure_policy`/`latency_budgets`/`safe_failure`,
+  each its own typed sub-model) and `GateDPolicyRegistry`, cross-checking
+  `has_disclosure_profile()` against the real Gate-B policy's own
+  governed profiles.
+- `gate_d.py` (Tasks 3-10, 13; `1,390` lines, built up one labeled
+  section per task) —
+  - **Task 3/4** `reconcile_final_citations()`: `final_citation_ids ⊆
+    gate_c_validated_evidence_ids` by full provenance identity
+    (`evidence_id`/`chunk_id`/`source_id`/`source_version`, via the
+    separate `GateCEvidenceRecord` type Task 10 names as its own "Gate-C
+    validated evidence metadata" input), never evidence-id membership
+    alone — a forged citation and a citation reintroducing evidence
+    Gate-C actually rejected resolve to the identical
+    `citation_not_gate_c_validated` reason, by design (the envelope
+    carries no separate rejected-ids list). Never silently drops an
+    invalid citation and returns the rest as trusted.
+  - **Task 5** (`quality.py`) `check_final_quality()`: contract/semantic-
+    already-passed flags, answer-length ceiling, no-empty-answered,
+    no-unsupported-status, plus a defense-in-depth re-check of Day 4's
+    own `INSUFFICIENT_EVIDENCE`-prefix rule. Distinguishes `reject`
+    (contract/semantic failure — an internal-candidate error that should
+    never have reached Gate-D) from `safe_failure` (an ordinary
+    release-policy violation) — the fixture makes this concrete
+    (`QUAL12-003`/`004` expect `reject`; everything else, `safe_failure`).
+  - **Task 6/7** `check_final_disclosure()` + `detect_protected_value_
+    leak()`: the former reuses Day 10's `apply_disclosure()` wholesale
+    (never reimplemented) to catch a denied/redact-governed field value
+    reappearing in the final text; the latter is profile-independent —
+    narrow, governed regex patterns (`SYN-BANK-`/`SYN-ID-`/`Bearer
+    SYNTHETIC_` prefixes, a hidden-prompt marker) for the two cases the
+    field check structurally cannot reach (no `disclosure_profile` at
+    all). Deliberately redundant with the field check for the synthetic-
+    ID cases — defense in depth, not a bug. No LLM is ever consulted.
+  - **Task 8** `check_latency_budget()`: `threshold_is_inclusive` decides
+    whether exactly-at-budget passes; negative/missing timing is already
+    rejected at the Task 1 envelope boundary (`reject`, not this
+    function's job) — `latency_budget_cases.json`'s own `LAT12-005`
+    confirms that split.
+  - **Task 9** `SafeFailureResponse`/`build_safe_failure_response()`: the
+    "must not include" list (candidate answer, protected value, raw
+    evidence, policy internals, stack trace) is enforced at the type
+    level — the builder does not even accept a `FinalResponseCandidate`
+    parameter, and `reason_codes` is validated against the closed union
+    of every governed reason-code enum this module defines, rejecting
+    free text outright.
+  - **Task 10** `GateD.evaluate()`: runs every Task 3/5/6/7/8 check
+    unconditionally (no short-circuiting) and combines them —
+    `reject` whenever quality's own severity says so (the only source of
+    reject-level reasons), `safe_failure` if anything else failed,
+    `allow` otherwise.
+  - **Task 13**: `evaluate()` traces itself in one `"gate_d"` span plus
+    `"final_citation_validation"`/`"final_disclosure_validation"`/
+    `"latency_budget_validation"` child spans (always present — Gate-D
+    never short-circuits), carrying only counts/governed-enum
+    values/policy versions/measured latencies; `request_id`/
+    `correlation_id`/`ontology_version`/`gate_b_policy_version`/
+    `gate_c_policy_version` are deliberately not set (already on sibling
+    spans in the same trace, the identical omission `gate_c.py` documents
+    for itself).
+- `aico/rag/control_plane_answer_service.py` (Task 11) — `_answer_rag_
+  with_gate_c()` now measures real wall-clock timing around generation,
+  builds a `FinalResponseCandidate` from the already-validated
+  `GroundedAnswer`/`InsufficientEvidence` plus Gate-C's own validated
+  evidence records, and calls the new `_finalize_with_gate_d()`. `allow`
+  returns the original object completely unchanged (Task 12); `safe_
+  failure`/`reject` raise typed `GateDSafeFailureError` (422)/
+  `GateDRejectedError` (500) — genuine `ApiError` subclasses, so the
+  existing Day 6 `register_error_handlers`/`ErrorResponse` machinery
+  handles them with no new response shape. Opt-in the same way Gate-C is
+  (`gate_d_policy_registry`, requiring Gate-C also active —
+  `GateDIntegrationError` otherwise), `config/control-plane.yaml`'s new
+  `gate_d` section defaulting to `enabled: true`.
+  - **Real bug found and fixed along the way**: `api/request_
+    cancellation.py`'s `run_cancellable()` ran the blocking pipeline call
+    inside an `anyio` task group, which wraps *any* raised exception in a
+    `BaseExceptionGroup` — invisible until Gate-D became the first thing
+    in this whole pipeline to actually raise from inside that path (every
+    earlier stage only ever returned a typed failure). Fixed by
+    unwrapping a single-exception group before it leaves the function, so
+    `GateDSafeFailureError`/`GateDRejectedError` reach FastAPI as
+    themselves.
+- **Task 12** (immutability) — `FinalResponseCandidate`/`FinalCitation`
+  are `frozen=True`; `test_day12_api_integration.py` proves it end to end
+  with two `monkeypatch` spies asserting `is`-identity (not just `==`)
+  from the object Gate-D validated through to what the HTTP layer
+  returns, plus a dedicated test that the public API mapping drops
+  `source_file` (real metadata removal) while leaving the `chunk_id`
+  value it keeps byte-for-byte unaltered.
+
+```
+uv run pytest -q
+uv run python -m aico.evals.day07
+uv run python scripts/day12_generate_gate_d_artifacts.py
+```
+
+2064 tests pass overall (up from 1798 after Day 11) across ten
+`tests/test_day12_*.py` files (envelope/policy validation incl. every
+"Required validation" rejection, citation reconciliation + provenance
+against the real fixture, quality/disclosure/secret/latency checks each
+replaying their own real fixture plus every policy-switch case no
+fixture exercises, safe-failure type-level guarantees, the full decision
+contract incl. reject-outranks-safe_failure, a live `/ask/governed`
+integration suite over the real corpus (allow/safe_failure/reject/
+disabled-toggle/misconfiguration), decision-provenance/observability
+spans, and a dedicated regression file re-running Day 7's evaluation CLI
+plus the Day 8/9/10/11 regression suites in-process). The Day 7
+regression gate and Day 8-11 tests are unmodified and still pass —
+`evals/baseline_v1.json` is untouched by any Day 12 change.
+
+`scripts/day12_generate_gate_d_artifacts.py` regenerates
+`artifacts/day12/gate_d_decisions.md`, `final_citation_report.md` and
+`disclosure_latency_report.md` from real `GateD.evaluate()`/
+`reconcile_final_citations()`/`check_final_disclosure()`/
+`detect_protected_value_leak()`/`check_latency_budget()`/
+`build_safe_failure_response()` calls against the real committed policy —
+swept for leaked synthetic protected values/candidate text after
+generation, none found.
+
+**Environment note:** the identical stale-`.venv`-launcher issue Day 11's
+own note above describes recurred here (this repository's `.venv` had
+been copied forward again, so `pytest.exe` briefly resolved `aico` from
+`AI-Assignments-Day11\.venv\...\src`); fixed the same way, by deleting
+`.venv` and running `uv sync --frozen` fresh.
+
 ## Key design decisions
 
 **Day 1**
@@ -2065,7 +2220,7 @@ and not expected to recur — noted here only because it briefly made
 
 ## Folder structure
 
-Verified against `git ls-files` on 2026-09-11 — every path below exists in
+Verified against `git ls-files` on 2026-09-14 — every path below exists in
 the repo as shown; nothing here is aspirational.
 
 ```
@@ -2089,7 +2244,10 @@ aico-ai-engineer-lab/
     control-plane.yaml              Day 9 Task 12 — registry path, enabled lanes, clarification policy,
                                      model-assisted-interpretation setting (off); Day 10 Task 13 —
                                      gate_b.enabled/policy_path (on by default, see Day 10 section above);
-                                     no ontology/policy data of its own, no secrets
+                                     Day 11 Task 13 — gate_c.enabled/source_registry_path/gate_c_policy_path
+                                     (on by default); Day 12 Task 11 — gate_d.enabled/gate_d_policy_path (on
+                                     by default, requires gate_c also active); no ontology/policy data of
+                                     its own, no secrets
   ontology/
     registry.v1.json                Day 9 Task 1/2 — committed, read-only governed Mode-A registry (byte-identical
                                      to data/day09_pack/fixtures/ontology_registry_v1.json)
@@ -2099,7 +2257,9 @@ aico-ai-engineer-lab/
                                      (byte-identical to data/day10_pack/fixtures/gate_b_policy_v1.json)
     gate_c_policy.v1.json           Day 11 Task 3 — committed, read-only governed Gate-C evidence-quality
                                      policy (byte-identical to data/day11_pack/fixtures/evidence_policy_v1.json)
-    README.md                       Day 10/11 — what each policy is, why it's read-only, how a v2 would be added
+    gate_d_policy.v1.json           Day 12 Task 2 — committed, read-only governed Gate-D final-response
+                                     policy (byte-identical to data/day12_pack/fixtures/gate_d_policy_v1.json)
+    README.md                       Day 10/11/12 — what each policy is, why it's read-only, how a v2 would be added
   evidence/
     source_registry.v1.json         Day 11 Task 2 — committed, read-only governed source registry
                                      (byte-identical to data/day11_pack/fixtures/source_registry_v1.json)
@@ -2141,6 +2301,12 @@ aico-ai-engineer-lab/
                                                 validate_completeness()/evaluate_conflict() calls against the
                                                 real committed source registry/Gate-C policy, plus a real
                                                 instrumented CountingGateway fake for Model Gateway call counts
+    day12_generate_gate_d_artifacts.py         Day 12 Task 14 — regenerates artifacts/day12/*.md from real
+                                                GateD.evaluate()/reconcile_final_citations()/check_final_
+                                                disclosure()/detect_protected_value_leak()/check_latency_
+                                                budget()/build_safe_failure_response() calls against the real
+                                                committed Gate-D policy; swept for leaked synthetic protected
+                                                values/candidate text after generation
   src/aico/
     api/                             Day 6 — the typed FastAPI service (Tasks 1-6, 10)
       app.py                         Task 1 — FastAPI app, POST /ask, middleware/router wiring
@@ -2149,12 +2315,19 @@ aico-ai-engineer-lab/
       correlation.py                 Task 3 — request/correlation ID middleware + contextvars
       errors.py                      Task 4 — shared ErrorResponse envelope + exception handlers
       request_protection.py          Task 4 — Content-Type/size-limit ASGI middleware
-      request_cancellation.py        Task 5 — client-disconnect-to-CancellationToken plumbing
+      request_cancellation.py        Task 5 — client-disconnect-to-CancellationToken plumbing; Day 12
+                                      fix — run_cancellable() now unwraps the single-exception
+                                      BaseExceptionGroup anyio's task group wraps a raised exception in,
+                                      so GateDSafeFailureError/GateDRejectedError reach FastAPI as
+                                      themselves (a real, previously-latent bug: nothing before Gate-D
+                                      ever raised from inside this path)
       health.py                      Task 6 — liveness/readiness/dependency-health endpoints + policy
       instrumentation.py             Task 8 — MetricsGateway/MetricsRetriever wrappers
       dependencies.py                Task 10 — every DI provider (answer service, gateway, retriever,
                                       policy evaluator, both dependency-health checks, Day 9's ontology
-                                      registry/control-plane config, Day 10's policy registry)
+                                      registry/control-plane config, Day 10's policy registry); Day 12
+                                      Task 11 — get_gate_d_policy_registry(), wired into
+                                      get_control_plane_answer_service() the same opt-in way Gate-C is
       control_plane.py               Day 9 Task 9 — POST /ask/governed: the live HTTP boundary over
                                       ControlPlaneAnswerService; Day 10 Task 13 — forwards trusted
                                       identity into it unconditionally, activating Gate-B whenever
@@ -2204,7 +2377,15 @@ aico-ai-engineer-lab/
                                      slotted in between retrieval and the Model Gateway inside the rag branch,
                                      opt-in only (requires source_registry/gate_c_policy_registry/
                                      evidence_adapter all supplied together); the prompt builder receives only
-                                     Gate-C-validated evidence, Day 5 citation validation still runs unmodified
+                                     Gate-C-validated evidence, Day 5 citation validation still runs unmodified.
+                                     Day 12 Task 11 — _finalize_with_gate_d(), called after Model-Gateway
+                                     generation: builds a FinalResponseCandidate from the already-validated
+                                     GroundedAnswer/InsufficientEvidence + Gate-C's own evidence records, calls
+                                     GateD.evaluate(); allow returns the original object unchanged (Task 12),
+                                     safe_failure/reject raise GateDSafeFailureError(422)/GateDRejectedError(500)
+                                     (real ApiError subclasses — the existing Day 6 error-handler machinery
+                                     renders them, no new response shape); opt-in the same way Gate-C is
+                                     (requires Gate-C also active — GateDIntegrationError otherwise)
     security/                       Day 5 — input-side defense (Tasks 5-6)
       __init__.py
       normalization.py              Day 5 Task 5 — bounded, deterministic obfuscation normalization
@@ -2248,8 +2429,9 @@ aico-ai-engineer-lab/
                                      ModelGatewaySummarizer (real, via the Day 3 gateway only)
       errors.py                     Task 2 — typed SessionError family (SessionNotFoundError, ...),
                                      cross-owner and nonexistent-session denials carry an identical reason
-    control/                        Day 9/10 — the Mode-A control-plane + Gate-B authorization/
-                                     disclosure boundary (Day 9 Tasks 1-3, 5, 12; Day 10 Tasks 1-9, 13)
+    control/                        Day 9/10/12 — the Mode-A control-plane + Gate-B authorization/
+                                     disclosure boundary + Gate-D final-response boundary (Day 9 Tasks
+                                     1-3, 5, 12; Day 10 Tasks 1-9, 13; Day 12 Tasks 1-10, 13)
       ontology.py                   Day 9 Task 1 — typed OntologyDocument/Domain/Concept/Intent/LaneId,
                                      self-validating (duplicate ids, dangling relationship/lane refs, enum/status)
       ontology_registry.py          Day 9 Task 2 — loads + validates ontology/registry.v1.json, read-only
@@ -2263,24 +2445,34 @@ aico-ai-engineer-lab/
       policy_models.py              Day 10 Task 1 — typed, self-validating GateBPolicyDocument/Role/
                                      PermissionRule/DisclosureProfile, plus the shared pure decision
                                      primitives is_data_classification_permitted/is_pii_category_permitted/
-                                     resolve_disclosure_action
+                                     resolve_disclosure_action; Day 12 Task 2 — GateDPolicyDocument +
+                                     CitationPolicy/QualityPolicy/GateDDisclosurePolicy/LatencyBudgets/
+                                     SafeFailureSpec appended (kept beside Gate-B's own policy, not a new
+                                     file — Day 12's required structure names none for it)
       policy_registry.py            Day 10 Task 2 — loads + cross-validates policy/gate_b_policy.v1.json
-                                     against the real OntologyRegistry, read-only lookups, O(1) find_rule
+                                     against the real OntologyRegistry, read-only lookups, O(1) find_rule;
+                                     Day 12 Task 2 — GateDPolicyRegistry, cross-checking
+                                     has_disclosure_profile() against the real Gate-B policy
       gate_b.py                     Day 10 Task 3-7/10/12 — GateB.authorize(): ordered fail-closed
                                      stages, effective scope as intersection only, the one safe clarify
                                      case, no memory/model-widening parameter anywhere in its signature
       disclosure.py                 Day 10 Task 9 — apply_disclosure(): GateBDecision + typed candidate
-                                     fields -> SafeDisclosureView, no fall-through, no source mutation
+                                     fields -> SafeDisclosureView, no fall-through, no source mutation;
+                                     reused wholesale (never reimplemented) by Day 12 Task 6's
+                                     check_final_disclosure() in gate_d.py
       redaction.py                  Day 10 Task 9 — pure, deterministic mask_value() (email/phone/
                                      identifier shapes), never a model call
       models.py                     Day 9/10 Task 3/5 — shared GateADecision/LaneDecision/GateBDecision
                                      typed result shapes
-      config.py                     Day 9/10 Task 12/13 — validated config/control-plane.yaml loading
-                                     (registry path, enabled lanes, clarification policy,
-                                     model-assisted-interpretation, gate_b activation toggle)
+      config.py                     Day 9/10/11/12 Task 12/13/13/11 — validated config/control-plane.yaml
+                                     loading (registry path, enabled lanes, clarification policy,
+                                     model-assisted-interpretation, gate_b/gate_c/gate_d activation toggles
+                                     — each optional-section, absent-means-disabled, the identical pattern
+                                     GateDActivationConfig follows for gate_c's own)
       errors.py                     Tasks 2/5/12 (Day 9) + 2/3 (Day 10) — OntologyLoadError/
                                      OntologyLookupError/LaneSelectionError/ControlPlaneConfigurationError/
-                                     PolicyLoadError/PolicyLookupError/GateBError
+                                     PolicyLoadError/PolicyLookupError/GateBError; Day 12 Task 1/2/9 —
+                                     FinalResponseEnvelopeError/GateDPolicyLoadError
       gate_c.py                     Day 11 Task 9/10/12/14 — GateC.evaluate(): the deterministic evidence-
                                      trust/quality boundary, fail-closed at every stage (Gate-B allow check ->
                                      request_kind resolved -> governed rule resolved -> per-item registry+
@@ -2290,6 +2482,28 @@ aico-ai-engineer-lab/
                                      "preserve Gate-B scope" folded in, not separate modules; owns its own
                                      gate_c/provenance_validation/freshness_validation/completeness_validation
                                      OTel spans (Task 14), sanitized attributes only
+      final_response.py             Day 12 Task 1 — typed, frozen=True FinalResponseCandidate/FinalCitation
+                                     (extra="forbid"); parse_final_response_candidate() boundary parser,
+                                     never a raw dict reaching Gate-D; candidate_status reuses Day 4's own
+                                     AnswerStatus rather than a second vocabulary
+      quality.py                    Day 12 Task 5 — check_final_quality(): contract/semantic-already-passed,
+                                     answer-length ceiling, no-empty-answered, no-unsupported-status, a
+                                     defense-in-depth re-check of Day 4's own INSUFFICIENT_EVIDENCE-prefix
+                                     rule; decides reject (internal-candidate error) vs. safe_failure
+                                     (ordinary release-policy violation) per reason, no opaque quality score
+      gate_d.py                     Day 12 Tasks 3/4/6/7/8/9/10/13 (built up one labeled section per task —
+                                     Day 12's required structure names no separate module for any of these,
+                                     unlike Gate-C's own dedicated evidence/ files) — reconcile_final_
+                                     citations() (final_citation_ids subset-of Gate-C-validated evidence by
+                                     full provenance identity, never id membership alone); check_final_
+                                     disclosure() (reuses apply_disclosure() wholesale) + detect_protected_
+                                     value_leak() (profile-independent governed secret/hidden-prompt-marker
+                                     patterns); check_latency_budget(); SafeFailureResponse/build_safe_
+                                     failure_response() (type-level "must not include" guarantee, governed-
+                                     reason-code-only validation); GateD.evaluate() — the full decision
+                                     contract (allow/safe_failure/reject), tracing itself in gate_d/final_
+                                     citation_validation/final_disclosure_validation/latency_budget_
+                                     validation OTel spans (Task 13), sanitized attributes only
     evidence/                       Day 11 — the evidence-quality boundary (Tasks 1-8)
       models.py                     Task 1 — typed EvidenceItem/EvidencePackage envelope, extra="forbid",
                                      AwareDatetime timestamps, parse_evidence_item/parse_evidence_package
@@ -2386,6 +2600,21 @@ aico-ai-engineer-lab/
         gate_c_cases.json           5 decision cases (GC-001..005) + freshness_cases (FRESH-001..004)
         conflict_cases.json         3 cases (CONFLICT-001..003): supporting/contradictory/precedence
         completeness_cases.json     4 cases (COMP-001..004): complete/missing/duplicate/invalid-excluded
+    day12_pack/                     Day 12 — supplied resource pack (fixed synthetic inputs, never edited
+                                     to make the implementation pass)
+      README.md
+      gate_d_policy_requirements.md   Task 2's required policy validation bullets
+      final_response_rules.md         Task 3/5/6/8's required citation/quality/disclosure/latency rules
+      fixtures/
+        gate_d_policy_v1.json       the governed v1 policy (copied verbatim to policy/gate_d_policy.v1.json)
+        final_citation_cases.json   5 cases (CIT12-001..005): valid/forged/Gate-C-rejected-reintroduced/
+                                     mixed/source-version-mismatch
+        disclosure_leak_cases.json  6 cases (DISC12-001..006) + protected_values: safe/redact-leak/
+                                     deny-leak/secret-token-leak/hidden-prompt-marker-leak
+        latency_budget_cases.json   5 cases (LAT12-001..005): within/exact-threshold/model-exceeded/
+                                     total-exceeded/invalid-negative-timing
+        final_quality_cases.json    7 cases (QUAL12-001..007): valid/empty/contract-invalid/semantic-
+                                     invalid/missing-citation/insufficient-evidence-clean/oversized
     index/                         build output (gitignored) - python -m aico.retrieval.ingest
     vectors/                       build output (gitignored) - python -m aico.retrieval.embed
     sessions/                      Day 8 — local SqliteSessionStore data (gitignored; every test uses
@@ -2456,6 +2685,16 @@ aico-ai-engineer-lab/
                                      source-version-mismatch / Gate-B-scope-mismatch cases, no raw content
       freshness_completeness_report.md  governed thresholds, fresh/edge/stale cases, required/covered/
                                      missing facets, conflict cases, one combined final GateC.evaluate() decision
+    day12/                          Day 12 Task 14 — generated by day12_generate_gate_d_artifacts.py
+      gate_d_decisions.md           fully valid response / invalid citation / quality failure / disclosure
+                                     leak / latency budget failure / (bonus) reject cases, each a real
+                                     GateD.evaluate() result with per-sub-check pass/fail shown
+      final_citation_report.md      Gate-C approved evidence IDs vs. final citation IDs for valid
+                                     reconciliation / forged / Gate-C-rejected-reintroduced cases, no raw
+                                     evidence content
+      disclosure_latency_report.md  allowed/redact-leak/deny-leak/secret-pattern-leak cases, governed
+                                     model/total latency thresholds, an exactly-at-threshold result, one
+                                     SafeFailureResponse's sanitized shape, no raw protected value anywhere
   tests/
     __init__.py
     conftest.py                     Day 8 Task 4 — shared fixtures (get_session_store override so
@@ -2473,9 +2712,9 @@ aico-ai-engineer-lab/
         api_cases.json                    synthetic Content-Type/size/validation/correlation cases
         identity_claim_cases.json         synthetic trusted-principal claims cases (allow/reject)
         dependency_health_cases.json      synthetic dependency-outage combinations
-      (Day 8/9/10/11 tests read their fixtures directly from data/day08_pack/fixtures/,
-      data/day09_pack/fixtures/, data/day10_pack/fixtures/ and data/day11_pack/fixtures/ —
-      no separate tests/fixtures/day08|day09|day10|day11/ copy is kept)
+      (Day 8/9/10/11/12 tests read their fixtures directly from data/day08_pack/fixtures/,
+      data/day09_pack/fixtures/, data/day10_pack/fixtures/, data/day11_pack/fixtures/ and
+      data/day12_pack/fixtures/ — no separate tests/fixtures/day08|09|10|11|12/ copy is kept)
     test_chunker.py                 (11)
     test_bm25.py                    (6)
     test_ingest.py                  (4)
@@ -2644,9 +2883,51 @@ aico-ai-engineer-lab/
     test_day11_regression.py        Day 11 Task 16 — the required-coverage audit (docstring table mapping
                                      every row to its proving test) plus the real Day 7 evaluation CLI and
                                      the Day 8/9/10 regression suites re-run in-process (4)
+    test_day12_gate_d.py            Day 12 Task 1/10/12 — the frozen FinalResponseCandidate/FinalCitation
+                                     envelope, every required rejection, the fixture-driven shape proof, the
+                                     full GateD.evaluate() decision contract (allow/safe_failure/reject,
+                                     reject-outranks-safe_failure across categories, least-privilege field
+                                     population), the frozen-type immutability proof (63)
+    test_day12_gate_d_policy.py     Day 12 Task 2 — GateDPolicyDocument/GateDPolicyRegistry, every required
+                                     rejection, loading + read-only accessors against the real committed
+                                     policy, has_disclosure_profile() cross-checked against the real Gate-B
+                                     policy (52)
+    test_day12_final_citations.py   Day 12 Task 3/4 — reconcile_final_citations() replaying every real
+                                     final_citation_cases.json case, forged vs. Gate-C-rejected-reintroduced
+                                     (identical reason, by design), mixed/insufficient-evidence/provenance-
+                                     mismatch cases, both policy switches, citation_id retained-but-inert (26)
+    test_day12_final_quality.py     Day 12 Task 5 — check_final_quality() replaying every real
+                                     final_quality_cases.json case (combined with Task 3's own citation check
+                                     for the one case that needs both), reject-vs-safe_failure severity split,
+                                     every policy switch, threshold edges, no opaque score field (29)
+    test_day12_disclosure.py        Day 12 Task 6/7 — check_final_disclosure() + detect_protected_value_leak()
+                                     replaying all 6 real disclosure_leak_cases.json cases combined, allowed/
+                                     redact/deny/secret-pattern/hidden-prompt-marker cases individually, every
+                                     policy switch, sanitized-telemetry proof (33)
+    test_day12_latency_budget.py    Day 12 Task 8 — check_latency_budget() replaying every real
+                                     latency_budget_cases.json case, the envelope-level negative/missing-
+                                     timing rejection, threshold_is_inclusive both directions, no-fabricated-
+                                     telemetry proof (19)
+    test_day12_safe_failure.py      Day 12 Task 9 — SafeFailureResponse/build_safe_failure_response(): the
+                                     "must not include" list enforced at the type level (no candidate
+                                     parameter on the builder, governed-reason-code-only validation rejecting
+                                     free text/stack traces/policy internals outright) (18)
+    test_day12_api_integration.py   Day 12 Task 11/12 — live /ask/governed over the real corpus: Gate-D allow
+                                     unchanged, safe_failure (oversized answer, 422)/reject (narrowed policy,
+                                     500) as real Day 6 ErrorResponses with the answer text absent, the
+                                     gate_d.enabled toggle both ways, GateDIntegrationError, plus the
+                                     monkeypatch object-identity immutability proof (7)
+    test_day12_observability.py     Day 12 Task 13 — gate_d/final_citation_validation/final_disclosure_
+                                     validation/latency_budget_validation spans (always present, unlike
+                                     Gate-C's conditional ones), required fields per decision outcome, the
+                                     deliberately-omitted fields genuinely absent, trace_id inherited from a
+                                     parent span, no raw answer/protected-value/evidence in any attribute (11)
+    test_day12_regression.py        Day 12 Task 15 — the required-coverage audit (docstring table mapping
+                                     every row to its proving test) plus the real Day 7 evaluation CLI and
+                                     the Day 8/9/10/11 regression suites re-run in-process (5)
 ```
 
-1798 tests pass in total (`uv run pytest -q`, verified 2026-09-11, count
+2064 tests pass in total (`uv run pytest -q`, verified 2026-09-14, count
 includes parametrized cases as pytest reports them — the per-file counts
 in the tree above are the same pytest-collected counts, and do sum to
 this number): 555 for `tests/test_{chunker,bm25,ingest,day01_eval,
@@ -2658,11 +2939,12 @@ and `test_day05_answer_support.py`, post-review hardening), 212 for
 `test_day07_*.py`, 236 for `test_day08_*.py`, 229 for `test_day09_*.py`
 (includes the 2 gate_b activation-toggle cases in
 `test_day09_control_plane_config.py`, Day 10 Task 13), 253 for
-`test_day10_*.py`, and 313 new for `test_day11_*.py` (Day 11, see the
-per-file breakdown above). Every pre-Day-11 test still passes unchanged
-(re-proven directly, not just assumed, in `test_day11_regression.py`),
-and `uv run python -m aico.evals.day07` remains green with
-`evals/baseline_v1.json` unchanged by any Day 8/9/10/11 commit.
+`test_day10_*.py`, 316 for `test_day11_*.py` (Day 11), and 263 new for
+`test_day12_*.py` (Day 12, see the per-file breakdown above). Every
+pre-Day-12 test still passes unchanged (re-proven directly, not just
+assumed, in `test_day12_regression.py`), and
+`uv run python -m aico.evals.day07` remains green with
+`evals/baseline_v1.json` unchanged by any Day 8-12 commit.
 
 Note: the task brief's "Required structure" names `requirements.txt`; this
 repo uses `pyproject.toml` + `uv.lock` (via `uv`) instead, which is the
@@ -2673,6 +2955,16 @@ above. Everything else in the brief's required tree (`src/aico/rag/`,
 `support_validator.py` and `test_day05_answer_support.py` are additive,
 post-review hardening beyond the brief's required tree, not a replacement
 for anything in it.
+
+Day 12's own required tree (`src/aico/control/gate_d.py`/`final_response.py`/
+`quality.py`, `policy/gate_d_policy.v1.json`, `artifacts/day12/*.md`, and
+the seven named `test_day12_*.py` files) matches exactly;
+`test_day12_gate_d_policy.py`, `test_day12_api_integration.py` and
+`test_day12_observability.py` split coverage out of the minimum named set
+the identical way `test_day11_gate_c_policy.py`/
+`test_day11_control_plane_integration.py`/`test_day11_observability.py`
+already do for Day 11 — documented additions, never a silent rename of a
+required file.
 
 Day 6's own required tree (`src/aico/api/`, `src/aico/observability/`,
 `test_day06_api.py` / `test_day06_identity.py` / `test_day06_cancellation.py`
