@@ -1,0 +1,45 @@
+{
+  "version": "1.0",
+  "policy": {
+    "max_total_latency_ms": 2500,
+    "max_model_latency_ms": 1400,
+    "threshold_is_inclusive": true
+  },
+  "cases": [
+    {
+      "id": "LAT12-001",
+      "name": "within_budget",
+      "total_latency_ms": 2100,
+      "model_latency_ms": 1200,
+      "expected": "allow"
+    },
+    {
+      "id": "LAT12-002",
+      "name": "exact_threshold",
+      "total_latency_ms": 2500,
+      "model_latency_ms": 1400,
+      "expected": "allow"
+    },
+    {
+      "id": "LAT12-003",
+      "name": "model_budget_exceeded",
+      "total_latency_ms": 2300,
+      "model_latency_ms": 1401,
+      "expected": "safe_failure"
+    },
+    {
+      "id": "LAT12-004",
+      "name": "total_budget_exceeded",
+      "total_latency_ms": 2501,
+      "model_latency_ms": 1300,
+      "expected": "safe_failure"
+    },
+    {
+      "id": "LAT12-005",
+      "name": "invalid_negative_timing",
+      "total_latency_ms": -1,
+      "model_latency_ms": 100,
+      "expected": "reject"
+    }
+  ]
+}

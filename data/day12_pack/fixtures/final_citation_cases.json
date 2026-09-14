@@ -1,0 +1,124 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "CIT12-001",
+      "name": "valid_single_citation",
+      "gate_c_validated_evidence": [
+        {
+          "evidence_id": "E-101",
+          "chunk_id": "CH-101",
+          "source_id": "SRC-POLICY-A",
+          "source_version": "3"
+        }
+      ],
+      "candidate_citations": [
+        {
+          "evidence_id": "E-101",
+          "chunk_id": "CH-101",
+          "source_id": "SRC-POLICY-A",
+          "source_version": "3"
+        }
+      ],
+      "candidate_status": "answered",
+      "expected": "allow"
+    },
+    {
+      "id": "CIT12-002",
+      "name": "forged_citation",
+      "gate_c_validated_evidence": [
+        {
+          "evidence_id": "E-101",
+          "chunk_id": "CH-101",
+          "source_id": "SRC-POLICY-A",
+          "source_version": "3"
+        }
+      ],
+      "candidate_citations": [
+        {
+          "evidence_id": "E-999",
+          "chunk_id": "CH-999",
+          "source_id": "SRC-FAKE",
+          "source_version": "1"
+        }
+      ],
+      "candidate_status": "answered",
+      "expected": "safe_failure"
+    },
+    {
+      "id": "CIT12-003",
+      "name": "gate_c_rejected_item_reintroduced",
+      "gate_c_validated_evidence": [
+        {
+          "evidence_id": "E-101",
+          "chunk_id": "CH-101",
+          "source_id": "SRC-POLICY-A",
+          "source_version": "3"
+        }
+      ],
+      "gate_c_rejected_evidence_ids": [
+        "E-202"
+      ],
+      "candidate_citations": [
+        {
+          "evidence_id": "E-202",
+          "chunk_id": "CH-202",
+          "source_id": "SRC-ARCHIVE-A",
+          "source_version": "8"
+        }
+      ],
+      "candidate_status": "answered",
+      "expected": "safe_failure"
+    },
+    {
+      "id": "CIT12-004",
+      "name": "mixed_valid_invalid",
+      "gate_c_validated_evidence": [
+        {
+          "evidence_id": "E-101",
+          "chunk_id": "CH-101",
+          "source_id": "SRC-POLICY-A",
+          "source_version": "3"
+        }
+      ],
+      "candidate_citations": [
+        {
+          "evidence_id": "E-101",
+          "chunk_id": "CH-101",
+          "source_id": "SRC-POLICY-A",
+          "source_version": "3"
+        },
+        {
+          "evidence_id": "E-999",
+          "chunk_id": "CH-999",
+          "source_id": "SRC-FAKE",
+          "source_version": "1"
+        }
+      ],
+      "candidate_status": "answered",
+      "expected": "safe_failure"
+    },
+    {
+      "id": "CIT12-005",
+      "name": "source_version_mismatch",
+      "gate_c_validated_evidence": [
+        {
+          "evidence_id": "E-101",
+          "chunk_id": "CH-101",
+          "source_id": "SRC-POLICY-A",
+          "source_version": "3"
+        }
+      ],
+      "candidate_citations": [
+        {
+          "evidence_id": "E-101",
+          "chunk_id": "CH-101",
+          "source_id": "SRC-POLICY-A",
+          "source_version": "2"
+        }
+      ],
+      "candidate_status": "answered",
+      "expected": "safe_failure"
+    }
+  ]
+}

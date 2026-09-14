@@ -1,0 +1,75 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "QUAL12-001",
+      "name": "valid_answer",
+      "candidate_status": "answered",
+      "candidate_answer": "Synthetic Supplier Alpha uses net 30 payment terms.",
+      "citation_count": 1,
+      "contract_valid": true,
+      "semantic_valid": true,
+      "expected": "allow"
+    },
+    {
+      "id": "QUAL12-002",
+      "name": "empty_answer",
+      "candidate_status": "answered",
+      "candidate_answer": "",
+      "citation_count": 1,
+      "contract_valid": true,
+      "semantic_valid": true,
+      "expected": "safe_failure"
+    },
+    {
+      "id": "QUAL12-003",
+      "name": "contract_invalid",
+      "candidate_status": "answered",
+      "candidate_answer": "Some answer.",
+      "citation_count": 1,
+      "contract_valid": false,
+      "semantic_valid": true,
+      "expected": "reject"
+    },
+    {
+      "id": "QUAL12-004",
+      "name": "semantic_invalid",
+      "candidate_status": "answered",
+      "candidate_answer": "Some answer.",
+      "citation_count": 1,
+      "contract_valid": true,
+      "semantic_valid": false,
+      "expected": "reject"
+    },
+    {
+      "id": "QUAL12-005",
+      "name": "answered_without_citation",
+      "candidate_status": "answered",
+      "candidate_answer": "Synthetic Supplier Alpha uses net 30 payment terms.",
+      "citation_count": 0,
+      "contract_valid": true,
+      "semantic_valid": true,
+      "expected": "safe_failure"
+    },
+    {
+      "id": "QUAL12-006",
+      "name": "insufficient_evidence_clean",
+      "candidate_status": "insufficient_evidence",
+      "candidate_answer": "INSUFFICIENT_EVIDENCE: available evidence does not support the requested fact.",
+      "citation_count": 0,
+      "contract_valid": true,
+      "semantic_valid": true,
+      "expected": "allow"
+    },
+    {
+      "id": "QUAL12-007",
+      "name": "oversized_answer",
+      "candidate_status": "answered",
+      "candidate_answer_length": 1601,
+      "citation_count": 1,
+      "contract_valid": true,
+      "semantic_valid": true,
+      "expected": "safe_failure"
+    }
+  ]
+}

@@ -20,7 +20,12 @@ Kept as a distinct pair from `OntologyLoadError`/`OntologyLookupError`
 rather than reusing them -- "the ontology registry failed to load" and
 "the Gate-B policy failed to load" are different governed resources with
 different committed files; conflating their exception types would make a
-caller's `except` clause ambiguous about which boundary actually failed."""
+caller's `except` clause ambiguous about which boundary actually failed.
+
+`FinalResponseEnvelopeError` (Day 12 Task 1) is the identical pattern one
+layer over again, for `final_response.py`'s `FinalResponseCandidate` --
+mirrors `EvidenceEnvelopeError`'s (`evidence/errors.py`) role for Gate-C's
+own typed envelope."""
 from __future__ import annotations
 
 
@@ -106,6 +111,36 @@ class PolicyLookupError(PolicyRegistryError):
         self.kind = kind
         self.identifier = identifier
         super().__init__(f"unknown {kind}: {identifier!r}")
+
+
+class FinalResponseEnvelopeError(Exception):
+    """Raised by `parse_final_response_candidate()`
+    (`final_response.py`, Day 12 Task 1) when a raw candidate final-response
+    payload -- the actual candidate the Model Gateway/contract/semantic
+    layers produced, never a hand-picked subset of it (working rule: "Do
+    not pass raw unchecked dictionaries into Gate-D") -- fails
+    `FinalResponseCandidate`'s typed validation: missing response status,
+    malformed citation structure, invalid/negative latency or timing
+    values, missing control metadata (e.g. `contract_validation_status`/
+    `semantic_validation_status`), or an unknown final status. Carries one
+    sanitized message plus, when Pydantic located it, the offending field's
+    path -- a caller reasons about "the final-response envelope failed to
+    validate", never about Pydantic's own `ValidationError` shape, the
+    identical boundary `EvidenceEnvelopeError` draws for Gate-C's own
+    envelope. Never raised with the raw candidate answer text in the
+    message -- only field names/paths and Pydantic's own structural error
+    text, per the working rule against echoing unsafe/raw content into
+    telemetry.
+
+    There is never a silent fallback to a partially-validated envelope or
+    an unchecked dict standing in for one -- a payload that fails this
+    validation simply does not become a `FinalResponseCandidate`, and
+    nothing downstream (Gate-D included) is permitted to construct one by
+    hand from raw data instead."""
+
+    def __init__(self, message: str, *, field_path: str | None = None):
+        self.field_path = field_path
+        super().__init__(message)
 
 
 class GateBError(Exception):

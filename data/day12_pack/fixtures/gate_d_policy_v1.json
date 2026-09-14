@@ -1,0 +1,34 @@
+{
+  "policy_version": "1.0",
+  "status": "active",
+  "allowed_response_statuses": [
+    "answered",
+    "insufficient_evidence"
+  ],
+  "citation_policy": {
+    "answered_requires_citation": true,
+    "citations_must_be_gate_c_approved": true,
+    "reject_mixed_valid_invalid": true
+  },
+  "quality_policy": {
+    "max_answer_chars": 1600,
+    "answered_must_be_nonempty": true,
+    "contract_must_pass": true,
+    "semantic_validation_must_pass": true
+  },
+  "disclosure_policy": {
+    "enforce_gate_b_profile": true,
+    "block_secret_patterns": true,
+    "block_hidden_prompt_markers": true
+  },
+  "latency_budgets": {
+    "max_total_latency_ms": 2500,
+    "max_model_latency_ms": 1400,
+    "threshold_is_inclusive": true
+  },
+  "safe_failure": {
+    "status": "safe_failure",
+    "code": "FINAL_RESPONSE_REJECTED",
+    "message": "The response could not be safely returned."
+  }
+}
