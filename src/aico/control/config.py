@@ -130,6 +130,34 @@ class GateCActivationConfig:
 
 
 @dataclass(frozen=True)
+class GateDActivationConfig:
+    """Day 12 Task 11 -- whether the live `/ask/governed` route also
+    activates Gate-D (final citation/quality/disclosure/latency
+    validation, `aico.control.gate_d.GateD`), on top of an already-active
+    Gate-C. Deliberately OPTIONAL at the section level, the identical
+    "absent -> disabled" allowance `GateCActivationConfig` gives -- `gate_d`
+    absent from a config file defaults to `enabled=False`
+    (`gate_d_policy_path` then unused), so every control-plane config
+    written before this section existed keeps behaving exactly as it did
+    (no Gate-D check, the `rag` lane's `GroundedAnswer`/
+    `InsufficientEvidence` returned exactly as `_answer_from_evidence()`
+    produced it). The committed `config/control-plane.yaml` sets
+    `enabled: true` -- Gate-D is the final release boundary (Day 12
+    working rule: "A valid model response is still untrusted until the
+    final deterministic controls approve it"), so shipping with it off by
+    default would be the identical "ships ungoverned until an operator
+    remembers to flip a flag" failure mode Day 10/11 already closed for
+    Gate-B/Gate-C. `get_control_plane_answer_service` additionally only
+    wires Gate-D in when `gate_c.enabled` (and transitively `gate_b.
+    enabled`) is also true (Gate-D's own citation reconciliation needs a
+    real `GateCDecision`/candidate `EvidencePackage` to reconcile against;
+    see `GateDIntegrationError`)."""
+
+    enabled: bool
+    gate_d_policy_path: Path
+
+
+@dataclass(frozen=True)
 class ControlPlaneConfig:
     """The fully validated, typed contents of `config/control-plane.yaml`."""
 
@@ -140,6 +168,7 @@ class ControlPlaneConfig:
     model_assisted_interpretation: ModelAssistedInterpretationConfig
     gate_b: GateBActivationConfig
     gate_c: GateCActivationConfig
+    gate_d: GateDActivationConfig
 
 
 def _build_config(raw: dict, *, source: Path) -> ControlPlaneConfig:
@@ -216,6 +245,18 @@ def _build_config(raw: dict, *, source: Path) -> ControlPlaneConfig:
             gate_c_policy_path=Path("policy/real_corpus_gate_c_policy.v1.json"),
         )
 
+    # `gate_d` -- optional section, the identical "absent -> disabled"
+    # allowance `gate_c` gets above (see `GateDActivationConfig`'s own
+    # docstring).
+    gate_d_raw = raw.get("gate_d")
+    if isinstance(gate_d_raw, dict):
+        gate_d = GateDActivationConfig(
+            enabled=_require_bool(gate_d_raw, "enabled", "gate_d"),
+            gate_d_policy_path=Path(str(_require(gate_d_raw, "gate_d_policy_path", "gate_d"))),
+        )
+    else:
+        gate_d = GateDActivationConfig(enabled=False, gate_d_policy_path=Path("policy/gate_d_policy.v1.json"))
+
     return ControlPlaneConfig(
         version=version,
         registry_path=registry_path,
@@ -224,6 +265,7 @@ def _build_config(raw: dict, *, source: Path) -> ControlPlaneConfig:
         model_assisted_interpretation=model_assisted_interpretation,
         gate_b=gate_b,
         gate_c=gate_c,
+        gate_d=gate_d,
     )
 
 

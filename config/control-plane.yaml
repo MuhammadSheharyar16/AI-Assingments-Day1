@@ -124,3 +124,28 @@ gate_c:
   # shipped them.
   source_registry_path: evidence/real_corpus_source_registry.v1.json
   gate_c_policy_path: policy/real_corpus_gate_c_policy.v1.json
+
+gate_d:
+  # Day 12 Task 11 -- deployment-level toggle for whether the live
+  # `/ask/governed` route also activates Gate-D (final citation/quality/
+  # disclosure/latency validation, `aico.control.gate_d.GateD`), on top
+  # of an already-active Gate-C, before a `rag`-lane answer is returned.
+  #
+  # `true` here: Gate-D is the final release boundary ("a valid model
+  # response is still untrusted until the final deterministic controls
+  # approve it") -- shipping with it off by default would be the same
+  # fail-open shape Day 10/11 already closed for Gate-B/Gate-C. This
+  # section is optional at the schema level (`GateDActivationConfig`) --
+  # a config file that omits it entirely defaults to disabled, so nothing
+  # written before this section existed changes behavior.
+  #
+  # `get_control_plane_answer_service` additionally only wires Gate-D in
+  # when `gate_c.enabled` (and transitively `gate_b.enabled`) is also
+  # true -- Gate-D's own citation reconciliation needs a real
+  # `GateCDecision`/candidate `EvidencePackage` to reconcile final
+  # citations against.
+  enabled: true
+  # Path to the committed, read-only Gate-D policy (Day 12 Task 2) --
+  # relative to the process working directory, same convention as
+  # `gate_b.policy_path`/`gate_c.gate_c_policy_path` above.
+  gate_d_policy_path: policy/gate_d_policy.v1.json

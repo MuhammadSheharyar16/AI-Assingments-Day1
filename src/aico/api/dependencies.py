@@ -91,7 +91,7 @@ from fastapi import Depends
 from aico.api.instrumentation import MetricsGateway, MetricsRetriever, MetricsSessionStore
 from aico.control.config import ControlPlaneConfig, load_control_plane_config
 from aico.control.ontology_registry import OntologyRegistry
-from aico.control.policy_registry import PolicyRegistry
+from aico.control.policy_registry import GateDPolicyRegistry, PolicyRegistry
 from aico.evidence.policy import GateCPolicyRegistry
 from aico.evidence.provenance import GovernedProvenanceIndex
 from aico.evidence.source_registry import SourceRegistry
@@ -317,6 +317,28 @@ def get_gate_c_policy_registry() -> GateCPolicyRegistry:
 
 
 @lru_cache(maxsize=1)
+def _default_gate_d_policy_registry() -> GateDPolicyRegistry:
+    control_plane_config = get_control_plane_config()
+    return GateDPolicyRegistry.load(control_plane_config.gate_d.gate_d_policy_path, gate_b_policy=get_policy_registry())
+
+
+def get_gate_d_policy_registry() -> GateDPolicyRegistry:
+    """Default provider: the real committed Gate-D policy (Day 12 Task 2,
+    `policy/gate_d_policy.v1.json`, path taken from `control_plane_config.
+    gate_d.gate_d_policy_path`), cross-checked against the real committed
+    Gate-B policy (`get_policy_registry()`) -- loaded and validated
+    exactly once via `_default_gate_d_policy_registry`'s cache, the
+    identical pattern `get_gate_c_policy_registry` already uses. Always
+    resolvable regardless of `gate_d.enabled` (loading the committed
+    policy is cheap and always valid); `get_control_plane_answer_service`
+    below is what actually decides whether the loaded registry is *wired
+    in* or left unused. Tests override this to build against a throwaway
+    policy without touching the committed file."""
+
+    return _default_gate_d_policy_registry()
+
+
+@lru_cache(maxsize=1)
 def _default_provenance_index() -> GovernedProvenanceIndex:
     return _default_real_corpus_evidence_adapter().provenance_index()
 
@@ -343,6 +365,7 @@ def get_control_plane_answer_service(
     gate_c_policy_registry: GateCPolicyRegistry = Depends(get_gate_c_policy_registry),
     evidence_adapter: EvidenceAdapter = Depends(get_evidence_adapter),
     provenance_index: GovernedProvenanceIndex = Depends(get_provenance_index),
+    gate_d_policy_registry: GateDPolicyRegistry = Depends(get_gate_d_policy_registry),
 ) -> ControlPlaneAnswerService:
     """Default provider: `ControlPlaneAnswerService` (Day 9 Task 9; Day 10
     Task 13), assembled from the real ontology registry and control-plane
@@ -380,9 +403,24 @@ def get_control_plane_answer_service(
     half of this condition is not merely defensive, it is required for a
     valid construction. The one committed opt-out is the identical Day 9
     synthetic identity space named above - it already leaves `gate_b`
-    inactive, which structurally leaves Gate-C inactive with it."""
+    inactive, which structurally leaves Gate-C inactive with it.
+
+    Gate-D (`gate_d_policy_registry=` -- Day 12 Task 11) is activated only
+    when `control_plane_config.gate_d.enabled` AND Gate-C is itself active
+    are both true - `true`/`true` (transitively `true` for `gate_b` too)
+    is the committed default (see `config/control-plane.yaml`'s own
+    `gate_d` section and `GateDActivationConfig`'s docstring). Gate-D is
+    never wired in without Gate-C also active
+    (`ControlPlaneAnswerService.__post_init__` would raise
+    `GateDIntegrationError` for that combination - Gate-D's own final
+    citation reconciliation needs a real `GateCDecision`/candidate
+    `EvidencePackage` to reconcile against), so the `gate_c_active` half
+    of this condition is not merely defensive, it is required for a valid
+    construction. The identical Day 9 synthetic identity opt-out named
+    above leaves Gate-D inactive too, transitively."""
 
     gate_c_active = control_plane_config.gate_c.enabled and control_plane_config.gate_b.enabled
+    gate_d_active = control_plane_config.gate_d.enabled and gate_c_active
 
     return ControlPlaneAnswerService(
         registry=registry,
@@ -393,4 +431,5 @@ def get_control_plane_answer_service(
         gate_c_policy_registry=gate_c_policy_registry if gate_c_active else None,
         evidence_adapter=evidence_adapter if gate_c_active else None,
         provenance_index=provenance_index if gate_c_active else None,
+        gate_d_policy_registry=gate_d_policy_registry if gate_d_active else None,
     )

@@ -279,30 +279,49 @@ actually covers the corpus it gates.
 from __future__ import annotations
 
 import time
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from opentelemetry import trace
 
+from aico.api.errors import ApiError
 from aico.api.identity import TrustedIdentity
+from aico.contracts.models import AnswerStatus
 from aico.control.config import ControlPlaneConfig
 from aico.control.disclosure import ProtectedField, SafeDisclosureView, apply_disclosure
+from aico.control.final_response import FinalCitation, FinalResponseCandidate, ValidationStatus
 from aico.control.gate_a import GateA
 from aico.control.gate_b import GateB, GateBRequest
-from aico.control.gate_c import GateC, GateCRequest, GateCStatus
+from aico.control.gate_c import GateC, GateCDecision, GateCRequest, GateCStatus
+from aico.control.gate_d import (
+    GateCEvidenceRecord,
+    GateD,
+    GateDStatus,
+    SafeFailureResponse,
+    build_safe_failure_response,
+)
 from aico.control.lane_selector import LaneSelector
 from aico.control.models import GateADecision, GateBDecision, GateBStatus, LaneDecision
 from aico.control.ontology import LaneId, LifecycleStatus
 from aico.control.ontology_registry import OntologyRegistry
 from aico.control.policy_models import DisclosureAction, DisclosureProfile
-from aico.control.policy_registry import PolicyRegistry
+from aico.control.policy_registry import GateDPolicyRegistry, PolicyRegistry
 from aico.evidence.models import EvidencePackage
 from aico.evidence.policy import GateCPolicyRegistry
 from aico.evidence.provenance import GovernedProvenanceIndex
 from aico.evidence.source_registry import SourceRegistry
 from aico.memory.context_builder import MemoryContext, SessionReferenceContext, resolve_reference
 from aico.platform.model_gateway import CancellationToken
-from aico.rag.answer_service import AnswerResult, Blocked, Clarify, GroundedAnswerService
+from aico.rag.answer_service import (
+    AnswerResult,
+    Blocked,
+    Clarify,
+    GroundedAnswer,
+    GroundedAnswerService,
+    InsufficientEvidence,
+)
 from aico.rag.citation_validator import EvidenceChunk
 from aico.security.input_policy import PolicyOutcome, evaluate_policy
 from aico.security.normalization import normalize_input
@@ -337,6 +356,67 @@ class GateCIntegrationError(Exception):
     fully-configured-or-fully-inactive construction; exists to fail loudly
     at construction time rather than crash confusingly inside the first
     `.answer()` call that reaches the `rag` lane."""
+
+
+class GateDIntegrationError(Exception):
+    """Raised by `ControlPlaneAnswerService.__post_init__` when Gate-D
+    (Day 12) integration is configured (`gate_d_policy_registry` supplied)
+    but Gate-C is not also active. Gate-D's own required "Gate-C validated
+    evidence metadata" input (Task 10) is the candidate `EvidencePackage`/
+    `GateCDecision` only the Gate-C-active `rag` path
+    (`_answer_rag_with_gate_c`) ever produces -- there is no real Gate-C
+    decision to reconcile final citations against otherwise, the identical
+    reasoning `GateCIntegrationError` already gives one layer down for
+    Gate-C requiring Gate-B. Never raised for a normal,
+    fully-configured-or-fully-inactive construction."""
+
+
+# Day 12 Task 11 -- the two "must use the documented typed public error/
+# failure contract from Day 6" outcomes (Task 11's own words). Raised, not
+# returned as a `ControlPlaneAnswerResult` variant: `register_error_
+# handlers`'s existing `ApiError` handler (`api/errors.py`, Day 6 Task 4)
+# already turns any `ApiError` subclass into the one shared `ErrorResponse`
+# envelope, so this is the literal Day 6 contract, not a new one invented
+# here. Neither carries the candidate answer, raw evidence, or policy
+# internals -- only Gate-D's own already-sanitized `SafeFailureResponse`/
+# `reason_codes` (Task 9's own "must not include" guarantee, enforced at
+# the type level one layer down).
+class GateDSafeFailureError(ApiError):
+    """Gate-D (Task 10) returned `safe_failure` for what would otherwise
+    have been returned as a normal `rag`-lane answer. `error_code` is the
+    real, policy-driven `SafeFailureResponse.error_code` (Task 9,
+    `policy/gate_d_policy.v1.json`'s own `safe_failure.code`) -- an
+    instance attribute overriding this class's own default, since Gate-D's
+    policy, not this exception class, decides it. `422` (unprocessable):
+    a normal, policy-driven decline on an otherwise well-formed request,
+    not a server fault."""
+
+    status_code = 422
+    error_code = "gate_d_safe_failure"
+
+    def __init__(self, safe_failure: SafeFailureResponse):
+        self.error_code = safe_failure.error_code
+        self.reason_codes = safe_failure.reason_codes
+        super().__init__(safe_failure.message)
+
+
+class GateDRejectedError(ApiError):
+    """Gate-D (Task 10) returned `reject` -- Task 10's own documented
+    meaning: "invalid internal candidate / programming-policy error that
+    should not be exposed as normal answer." `500`, distinct from
+    `GateDSafeFailureError`'s `422` -- a genuine server-side fault (an
+    already-failed typed contract/semantic validation reaching this far,
+    or an unsupported response status this policy version does not
+    govern), never a caller-facing policy decline. The message is fixed,
+    generic, controlled text (Task 9's own rule) -- `reason_codes` (safe,
+    governed enum values only) carries the sanitized detail instead."""
+
+    status_code = 500
+    error_code = "gate_d_rejected"
+
+    def __init__(self, reason_codes: tuple[str, ...]):
+        self.reason_codes = reason_codes
+        super().__init__("the response could not be safely returned")
 
 # Task 11 -- same pattern `answer_service.py` already uses and documents:
 # `opentelemetry.trace.get_tracer(__name__)` directly, never importing
@@ -564,10 +644,12 @@ class ControlPlaneAnswerService:
     gate_c_policy_registry: GateCPolicyRegistry | None = None
     evidence_adapter: EvidenceAdapter | None = None
     provenance_index: GovernedProvenanceIndex | None = None
+    gate_d_policy_registry: GateDPolicyRegistry | None = None
     gate_a: GateA = field(init=False)
     lane_selector: LaneSelector = field(init=False)
     gate_b: GateB | None = field(init=False)
     gate_c: GateC | None = field(init=False)
+    gate_d: GateD | None = field(init=False)
 
     def __post_init__(self) -> None:
         self.gate_a = GateA(self.registry)
@@ -599,6 +681,21 @@ class ControlPlaneAnswerService:
             self.gate_c = GateC(source_registry=self.source_registry, policy_registry=self.gate_c_policy_registry)
         else:
             self.gate_c = None
+
+        # Day 12 Task 11 -- Gate-D is configured only when this service
+        # was also built with Gate-C active (see `GateDIntegrationError`'s
+        # own docstring: Gate-D's final citation reconciliation needs a
+        # real `GateCDecision`/candidate `EvidencePackage`, which only the
+        # Gate-C-active `rag` path ever produces).
+        if self.gate_d_policy_registry is not None:
+            if self.gate_c is None:
+                raise GateDIntegrationError(
+                    "Gate-D integration requires Gate-C to also be active -- Gate-D's final citation "
+                    "reconciliation needs a real GateCDecision/candidate EvidencePackage"
+                )
+            self.gate_d = GateD(policy_registry=self.gate_d_policy_registry)
+        else:
+            self.gate_d = None
 
     def answer(
         self,
@@ -788,6 +885,13 @@ class ControlPlaneAnswerService:
         assert self.gate_c is not None
         assert self.evidence_adapter is not None
 
+        # Day 12 Task 11/1 -- real, measured (never fabricated) timing,
+        # captured across this whole method: `started_at` becomes the
+        # eventual `FinalResponseCandidate.started_at`, `overall_start`
+        # (`time.monotonic()`) is what `elapsed_ms` is measured against.
+        started_at = datetime.now(UTC)
+        overall_start = time.monotonic()
+
         # Retrieval -- the identical span/call `GroundedAnswerService.
         # answer()` would otherwise run internally; done here instead so
         # Gate-C can see what was actually retrieved before any of it
@@ -856,7 +960,162 @@ class ControlPlaneAnswerService:
         validated_chunk_ids = {item.chunk_id for item in package.items if item.evidence_id in validated_ids}
         filtered_chunks = [chunk for chunk in retrieved if chunk.chunk_id in validated_chunk_ids]
 
-        return self.rag_service._answer_from_evidence(resolved_question, filtered_chunks, cancellation, memory_context)
+        # Day 12 Task 11 -- "Model Gateway -> contract validation ->
+        # semantic validation -> citation validation" is exactly this one
+        # call (`_answer_from_evidence()`, Day 5's real, already-tested
+        # pipeline, unmodified); `model_latency_ms` below measures it as a
+        # whole rather than only the raw Model Gateway sub-call, since
+        # that finer-grained value is not itself returned to this caller
+        # (`_answer_from_evidence()`'s own typed results predate Gate-D
+        # and have no reason to carry internal span timings) -- a real,
+        # not fabricated, measurement (Task 8's own rule), just at a
+        # slightly coarser boundary than "only the gateway call itself."
+        model_start = time.monotonic()
+        result = self.rag_service._answer_from_evidence(resolved_question, filtered_chunks, cancellation, memory_context)
+        model_latency_ms = (time.monotonic() - model_start) * 1000
+        elapsed_ms = (time.monotonic() - overall_start) * 1000
+
+        # "-> Gate-D -> API response": the one remaining step of Task 11's
+        # required order, never skipped for a real candidate answer (the
+        # normal answer path must not bypass Gate-D).
+        return self._finalize_with_gate_d(
+            result,
+            package=package,
+            gate_c_decision=gate_c_decision,
+            gate_b_decision=gate_b_decision,
+            started_at=started_at,
+            elapsed_ms=elapsed_ms,
+            model_latency_ms=model_latency_ms,
+        )
+
+    def _finalize_with_gate_d(
+        self,
+        result: AnswerResult,
+        *,
+        package: EvidencePackage,
+        gate_c_decision: GateCDecision,
+        gate_b_decision: GateBDecision,
+        started_at: datetime,
+        elapsed_ms: float,
+        model_latency_ms: float,
+    ) -> AnswerResult:
+        """Day 12 Task 11's final integration point. Runs only when
+        `self.gate_d` is active and `result` is one of Day 5's two
+        candidate-answer shapes (`GroundedAnswer`/`InsufficientEvidence`)
+        -- both already imply contract *and* semantic validation passed
+        (`_answer_from_evidence()`'s own structural guarantee: neither is
+        ever returned otherwise), so both status flags below are always
+        `PASSED`. Any other result (`TypedFailure`/`Clarify`/`Blocked`)
+        already represents "no releasable candidate exists" and is
+        returned unchanged -- there is nothing for Gate-D to validate.
+
+        On `allow`, returns `result` completely unchanged -- Task 12's own
+        immutability rule, satisfied structurally: the exact object
+        `_answer_from_evidence()` built is what is returned, never a copy
+        or a re-derived value. On `safe_failure`/`reject`, raises the
+        corresponding typed `ApiError` (Task 11's own rule: "candidate
+        answer must not be returned. API response must use the documented
+        typed public error/failure contract from Day 6.") -- the candidate
+        answer text this method holds locally never reaches a return
+        value, a log line, or any object serialized back to the caller.
+
+        `request_id`/`correlation_id` on the `FinalResponseCandidate` built
+        here are freshly generated (`uuid4`), not this request's own HTTP-
+        level IDs: this module deliberately never threads those through
+        (see module docstring, "request_id/correlation_id are deliberately
+        NOT explicit parameters ... here") -- `api/errors.py`'s
+        `error_response()` independently attaches the real HTTP request_id/
+        correlation_id (from `CorrelationMiddleware`'s own request.state)
+        to the JSON body a `GateDSafeFailureError`/`GateDRejectedError`
+        ultimately produces, so the two identifiers Gate-D's own internal
+        envelope carries need not, and structurally cannot, ever
+        disagree with what the caller actually sees."""
+        if self.gate_d is None or not isinstance(result, (GroundedAnswer, InsufficientEvidence)):
+            return result
+        assert self.policy_registry is not None  # Gate-D requires Gate-C, which requires Gate-B (policy_registry).
+
+        validated_ids = set(gate_c_decision.validated_evidence_ids)
+        validated_items = [item for item in package.items if item.evidence_id in validated_ids]
+        gate_c_validated_evidence = tuple(
+            GateCEvidenceRecord(
+                evidence_id=item.evidence_id,
+                chunk_id=item.chunk_id,
+                source_id=item.source_id,
+                source_version=item.source_version,
+            )
+            for item in validated_items
+        )
+
+        if isinstance(result, GroundedAnswer):
+            candidate_status = AnswerStatus.ANSWERED
+            candidate_answer = result.answer
+            evidence_by_chunk_id = {item.chunk_id: item for item in validated_items}
+            candidate_citations = []
+            for chunk_id in result.citation_ids:
+                item = evidence_by_chunk_id[chunk_id]
+                candidate_citations.append(
+                    FinalCitation(
+                        evidence_id=item.evidence_id,
+                        chunk_id=item.chunk_id,
+                        source_id=item.source_id,
+                        source_version=item.source_version,
+                    )
+                )
+        else:
+            candidate_status = AnswerStatus.INSUFFICIENT_EVIDENCE
+            candidate_answer = result.explanation
+            candidate_citations = []
+
+        candidate = FinalResponseCandidate(
+            request_id=str(uuid.uuid4()),
+            correlation_id=str(uuid.uuid4()),
+            candidate_status=candidate_status,
+            candidate_answer=candidate_answer,
+            candidate_citations=tuple(candidate_citations),
+            gate_c_validated_evidence_ids=gate_c_decision.validated_evidence_ids,
+            gate_b_disclosure_profile=gate_b_decision.disclosure_profile,
+            started_at=started_at,
+            elapsed_ms=round(elapsed_ms),
+            model_latency_ms=round(model_latency_ms),
+            contract_validation_status=ValidationStatus.PASSED,
+            semantic_validation_status=ValidationStatus.PASSED,
+        )
+
+        disclosure_profile = (
+            self.policy_registry.get_disclosure_profile(gate_b_decision.disclosure_profile)
+            if gate_b_decision.disclosure_profile
+            else None
+        )
+
+        # `protected_fields=()` -- this pipeline's `rag` answers are
+        # free text, not a structured, per-field-classified protected
+        # record (the identical observation `disclose()`'s own docstring
+        # already makes: "a free-text RAG answer ... [is] not a
+        # ProtectedField sequence"). Task 6's field-based disclosure check
+        # is honestly a no-op here as a result; Task 7's pattern-based
+        # secret/hidden-prompt-marker check still runs in full (it needs
+        # no protected fields at all).
+        gate_d_decision = self.gate_d.evaluate(
+            candidate=candidate,
+            gate_c_validated_evidence=gate_c_validated_evidence,
+            gate_b_decision=gate_b_decision,
+            disclosure_profile=disclosure_profile,
+            protected_fields=(),
+        )
+
+        if gate_d_decision.decision is GateDStatus.ALLOW:
+            return result
+
+        if gate_d_decision.decision is GateDStatus.SAFE_FAILURE:
+            safe_failure = build_safe_failure_response(
+                request_id=candidate.request_id,
+                correlation_id=candidate.correlation_id,
+                policy=self.gate_d.policy_registry.safe_failure,
+                reason_codes=gate_d_decision.reason_codes,
+            )
+            raise GateDSafeFailureError(safe_failure)
+
+        raise GateDRejectedError(gate_d_decision.reason_codes)
 
     def _safe_fast_path_answer(self, intent_id: str) -> str:
         """Deterministic, governed response for a `safe_fast_path` intent

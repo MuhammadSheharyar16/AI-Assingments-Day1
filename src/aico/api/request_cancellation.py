@@ -64,6 +64,21 @@ async def run_cancellable(request: Request, blocking_call: Callable[[Cancellatio
     gateway observes cancellation) is exactly what this returns. This
     function's only job is propagating the signal, never fabricating or
     swallowing an outcome.
+
+    Day 12 Task 11: `blocking_call` raising on purpose (Gate-D's typed
+    `GateDSafeFailureError`/`GateDRejectedError` -- `api/errors.py`'s
+    `ApiError` family, meant to be caught by FastAPI's own registered
+    `ApiError` exception handler) is a new scenario no earlier caller of
+    this function ever exercised - every pre-Day-12 `blocking_call` only
+    ever *returns* a typed result (`Blocked`/`Clarify`/`TypedFailure`/...),
+    never raises. `anyio.create_task_group()` wraps whatever a task
+    running inside it raises in a `BaseExceptionGroup`, even for a single
+    exception - left alone, that would reach FastAPI as an opaque group
+    `register_error_handlers`'s specific `ApiError`/`RequestValidationError`/
+    `StarletteHTTPException` handlers never match, silently falling through
+    to the generic 500 handler regardless of what `blocking_call` actually
+    raised. Unwrapped below so a real `ApiError` subclass still reaches
+    FastAPI as itself.
     """
 
     cancellation = CancellationToken()
@@ -79,14 +94,27 @@ async def run_cancellable(request: Request, blocking_call: Callable[[Cancellatio
                 return
             await anyio.sleep(DISCONNECT_POLL_SECONDS)
 
-    async with anyio.create_task_group() as task_group:
-        task_group.start_soon(_watch_for_disconnect)
-        await _run_blocking_call()
-        # The blocking call is done - stop watching. Cancelling this
-        # task group's own scope (rather than reaching for the watcher
-        # task directly) is the anyio-idiomatic way to stop a sibling
-        # task, and is what keeps this safe to mix with Starlette's own
-        # anyio-based `is_disconnected()` internals (see module docstring).
-        task_group.cancel_scope.cancel()
+    try:
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(_watch_for_disconnect)
+            await _run_blocking_call()
+            # The blocking call is done - stop watching. Cancelling this
+            # task group's own scope (rather than reaching for the watcher
+            # task directly) is the anyio-idiomatic way to stop a sibling
+            # task, and is what keeps this safe to mix with Starlette's own
+            # anyio-based `is_disconnected()` internals (see module docstring).
+            task_group.cancel_scope.cancel()
+    except BaseExceptionGroup as exc_group:
+        # Exactly one exception in practice - `_watch_for_disconnect` never
+        # raises on its own (it only sets `cancellation`/returns), and its
+        # own cancellation (from `cancel_scope.cancel()` above) is not
+        # itself an exception anyio surfaces here. Re-raise that one
+        # exception directly so callers/handlers see it as itself, never
+        # as an opaque group; the `len() > 1` branch is an unreached
+        # defensive fallback, not a case this function's own call sites
+        # are known to produce today.
+        if len(exc_group.exceptions) == 1:
+            raise exc_group.exceptions[0] from None
+        raise
 
     return result[0]

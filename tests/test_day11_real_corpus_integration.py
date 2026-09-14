@@ -237,3 +237,18 @@ def test_gate_c_rejects_an_ungoverned_chunk_and_reaches_the_model_zero_times():
     assert gateway.call_count == 0
     assert retriever.call_count == 1  # retrieval ran -- Gate-C needs something to evaluate.
     assert body["source_registry_version"] is not None
+
+
+def teardown_function() -> None:
+    # `app.dependency_overrides` is a process-wide dict FastAPI shares
+    # across every `TestClient(app)` in the whole test run, not something
+    # scoped to this module - the same reason `test_day09_api_
+    # integration.py`/`test_day10_api_integration.py` each already clear
+    # it after every test. This file's own last test above is the one
+    # most likely to leak (it overrides `get_answer_service` directly,
+    # with a rogue retriever a later, unrelated test file's real
+    # `get_gateway`-only override would never itself replace) - without
+    # this, a later test file that never touches `get_answer_service`
+    # would otherwise inherit that rogue retriever instead of the real
+    # one `get_control_plane_answer_service` builds.
+    app.dependency_overrides.clear()
