@@ -89,16 +89,86 @@ will load `tools/registry.v1.json` through. Every "Reject" bullet from
 Pydantic values -- this module only defines and self-validates the shape;
 Task 2's `registry.py` is what guarantees no runtime request/model output
 can register a new tool or mutate a loaded one.
+
+## Day 13 Task 3 -- the typed execution request.
+
+`ToolExecutionRequest` (near the end of this file) is the one typed shape
+every tool invocation enters the governed pipeline as -- built by a
+governed application/workflow, never by a model or by unchecked request-
+body parsing (the pipeline diagram, `Day 13 Task.pdf` page 5: "Governed
+Application / Workflow -> Typed ToolExecutionRequest -> Tool Registry ->
+...")). It is `frozen=True`: nothing downstream (policy, schema
+validation, the MCP Gateway, transport) is permitted to rewrite a field
+mid-pipeline.
+
+Its four "Trust rules" (`Day 13 Task.pdf` Task 3) are each satisfied by
+where a value the pipeline actually uses may come from, not by scanning
+`arguments` for forbidden keys:
+
+    - "arguments.role cannot grant permission"          -> permission is
+      only ever read from `trusted_permissions`, a field the caller sets
+      directly, independent of whatever keys `arguments` happens to
+      carry. `resolve_trusted_permissions()` below is the one function
+      that ever reads a request's authorized permission set, and it never
+      touches `arguments` -- there is no code path through which a value
+      placed in `arguments` (e.g. `{"role": "admin"}`,
+      `execution_cases.json` EXEC13-003) could reach it.
+    - "arguments.tenant_id cannot change trusted tenant
+      scope"                                            -> the identical
+      pattern, one field over: `effective_tenant_scope` is caller-set,
+      independent of `arguments`, and `resolve_effective_tenant_scope()`
+      is the one function that ever reads it.
+    - "model text cannot grant permission" /
+      "session memory cannot grant permission"          -> `ToolExecutionRequest`
+      has no field that accepts raw model output or session memory content
+      at all -- there is nothing for either to be assigned *to* that this
+      pipeline would ever treat as authorization. A governed caller that
+      wants to honor something a model said is expected to have already
+      turned it into `arguments` (untrusted, schema-validated business
+      input, Task 5) -- never into `trusted_permissions`/
+      `effective_tenant_scope`.
+
+"If tenant context is needed by transport, inject trusted effective scope
+separately from untrusted arguments" is exactly why `effective_tenant_scope`
+exists as its own field rather than as a documented convention for what
+key to put in `arguments` -- the MCP Gateway (Task 6) reads tenant scope
+from this field, never from `arguments`.
 """
 from __future__ import annotations
 
 import re
+import uuid
 from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+def _validate_semver_string(value: str, *, field_name: str) -> str:
+    """The one place a semantic-version string is ever checked
+    (`tool_registry_requirements.md`: "invalid version rejected"). Shared
+    by `ToolDefinition.tool_version` (Task 1) and
+    `ToolExecutionRequest.tool_version` (Task 3) -- Day 13's working rule
+    "Tool version is explicit" applies equally to a registered definition
+    and to a request naming one, so both are held to the identical strict
+    `MAJOR.MINOR.PATCH` shape rather than each re-implementing its own
+    check."""
+    if not _SEMVER_PATTERN.match(value):
+        raise ValueError(f"{field_name} must be MAJOR.MINOR.PATCH, got {value!r}")
+    return value
+
+
+def _generate_request_id() -> str:
+    """A fresh, opaque request identifier for `ToolExecutionRequest.
+    request_id`/`correlation_id` when the caller does not supply one --
+    the identical "correlation context may be generated, authorization
+    context may not" split `aico.api.correlation` already draws for the
+    HTTP boundary (Day 6 Task 3), reimplemented locally rather than
+    imported from `aico.api` so `aico.tools` never depends on the outer
+    API layer."""
+    return str(uuid.uuid4())
 
 
 class ToolStatus(str, Enum):
@@ -245,9 +315,7 @@ class ToolDefinition(BaseModel):
     @field_validator("tool_version")
     @classmethod
     def _validate_semver(cls, value: str) -> str:
-        if not _SEMVER_PATTERN.match(value):
-            raise ValueError(f"tool_version must be MAJOR.MINOR.PATCH, got {value!r}")
-        return value
+        return _validate_semver_string(value, field_name="tool_version")
 
     @field_validator("required_permissions")
     @classmethod
@@ -305,3 +373,111 @@ class ToolRegistryDocument(BaseModel):
                 raise ValueError(f"duplicate tool/version: {tool.tool_id!r}@{tool.tool_version!r}")
             seen.add(tool.key)
         return self
+
+
+def _validate_nonempty_string_tuple(value: tuple[str, ...], *, field_name: str) -> tuple[str, ...]:
+    """Shared entry-level guard for `ToolExecutionRequest.trusted_permissions`
+    / `effective_tenant_scope` -- each entry must itself be a real,
+    non-empty identifier, the same "unchecked dictionaries/strings are not
+    acceptable at this boundary" reading every other governed collection
+    in this codebase gets."""
+    if any(not entry for entry in value):
+        raise ValueError(f"{field_name} entries must be non-empty strings")
+    return value
+
+
+class ToolExecutionRequest(BaseModel):
+    """Day 13 Task 3 -- the typed shape every tool invocation enters the
+    governed execution pipeline as (`request_id` / `correlation_id` /
+    `tool_id` / `tool_version` / `arguments` / `trusted_permissions` /
+    `effective_tenant_scope` / `idempotency_key` / `execution_context`).
+    See this module's own "Day 13 Task 3" docstring section above for how
+    each Trust rule is satisfied by this type's shape.
+
+    `frozen=True`: once a governed application/workflow builds one, no
+    stage of the pipeline (Tool Registry lookup, policy, input schema
+    validation, the MCP Gateway, transport, output schema validation) may
+    rewrite a field -- e.g. widen `trusted_permissions` after a policy
+    denial, or swap `tool_version` mid-flight. A stage that needs a
+    *different* request (retry with a new `idempotency_key`, say) builds a
+    new `ToolExecutionRequest`, it never mutates this one."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request_id: str = Field(
+        default_factory=_generate_request_id, min_length=1, description="Identifies this one execution attempt."
+    )
+    correlation_id: str = Field(
+        default_factory=_generate_request_id,
+        min_length=1,
+        description="Identifies the logical operation this execution is part of.",
+    )
+    tool_id: str = Field(min_length=1, description="Registered tool_id this request asks to execute.")
+    tool_version: str = Field(description="Exact registered tool_version this request asks to execute.")
+    arguments: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Untrusted, caller-supplied tool arguments -- schema-validated (Task 5), never a source of trust.",
+    )
+    trusted_permissions: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Permission ids from trusted application/control-plane context. Never derived from arguments.",
+    )
+    effective_tenant_scope: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Trusted effective tenant scope, injected separately from arguments.",
+    )
+    idempotency_key: str | None = Field(
+        default=None, min_length=1, description="Caller-supplied key identifying a retry of the same logical call."
+    )
+    execution_context: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Trusted, caller-supplied operational metadata (e.g. channel/environment) -- never authorization.",
+    )
+
+    @field_validator("tool_version")
+    @classmethod
+    def _validate_semver(cls, value: str) -> str:
+        return _validate_semver_string(value, field_name="tool_version")
+
+    @field_validator("trusted_permissions")
+    @classmethod
+    def _validate_trusted_permissions(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _validate_nonempty_string_tuple(value, field_name="trusted_permissions")
+
+    @field_validator("effective_tenant_scope")
+    @classmethod
+    def _validate_effective_tenant_scope(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _validate_nonempty_string_tuple(value, field_name="effective_tenant_scope")
+
+    @property
+    def key(self) -> tuple[str, str]:
+        """The `(tool_id, tool_version)` pair this request asks the Tool
+        Registry to resolve -- `registry.get_tool(*request.key)`."""
+        return (self.tool_id, self.tool_version)
+
+
+def resolve_trusted_permissions(request: ToolExecutionRequest) -> tuple[str, ...]:
+    """The one place a `ToolExecutionRequest`'s authorized permission set
+    is ever read (Day 13 Task 7/8's "Do not hardcode behavior in multiple
+    unrelated files", the identical discipline `policy_models.py`'s own
+    `is_data_classification_permitted()` follows). Always
+    `request.trusted_permissions` -- `request.arguments` is never
+    consulted, no matter what keys it carries (Day 13 working rule:
+    "arguments.role cannot grant permission"; "Request body, model output
+    and session memory cannot self-assert tool permission"). Task 4's
+    execution policy is expected to call this rather than reading
+    `request.trusted_permissions` directly, so there is exactly one place
+    in the codebase this decision is ever made."""
+    return request.trusted_permissions
+
+
+def resolve_effective_tenant_scope(request: ToolExecutionRequest) -> tuple[str, ...]:
+    """The one place a `ToolExecutionRequest`'s effective tenant scope is
+    ever read -- the identical pattern `resolve_trusted_permissions()`
+    establishes, one field over. Always `request.effective_tenant_scope`;
+    `request.arguments` is never consulted (Day 13 working rule:
+    "arguments.tenant_id cannot change trusted tenant scope"). The MCP
+    Gateway (Task 6) is expected to call this, not read the field
+    directly, when it needs to inject tenant context into transport
+    separately from untrusted arguments."""
+    return request.effective_tenant_scope

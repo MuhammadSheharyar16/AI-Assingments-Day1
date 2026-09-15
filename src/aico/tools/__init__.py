@@ -19,6 +19,15 @@ committed `tools/registry.v1.json` through Task 1's types, exact
 `(tool_id, tool_version)` lookup, active/disabled state, and a typed
 `tool_not_found`/`version_not_found` failure distinction (`errors.py`) for
 anything this document does not govern.
+
+Task 3 adds `ToolExecutionRequest` (`models.py`) -- the typed, frozen
+shape every tool invocation enters this pipeline as (`request_id` /
+`correlation_id` / `tool_id` / `tool_version` / `arguments` /
+`trusted_permissions` / `effective_tenant_scope` / `idempotency_key` /
+`execution_context`) -- plus `resolve_trusted_permissions()` /
+`resolve_effective_tenant_scope()`, the only two functions that ever read
+a request's authorization context; neither ever consults `arguments`
+(Day 13 working rule: "arguments.role cannot grant permission").
 """
 from aico.tools.errors import (
     ToolNotFoundError,
@@ -31,9 +40,12 @@ from aico.tools.models import (
     RetryPolicy,
     RiskLevel,
     ToolDefinition,
+    ToolExecutionRequest,
     ToolRegistryDocument,
     ToolStatus,
     ToolTransportKind,
+    resolve_effective_tenant_scope,
+    resolve_trusted_permissions,
 )
 from aico.tools.registry import DEFAULT_REGISTRY_PATH, ToolRegistry
 
@@ -45,6 +57,9 @@ __all__ = [
     "ToolRegistryDocument",
     "ToolStatus",
     "ToolTransportKind",
+    "ToolExecutionRequest",
+    "resolve_trusted_permissions",
+    "resolve_effective_tenant_scope",
     "ToolRegistry",
     "DEFAULT_REGISTRY_PATH",
     "ToolRegistryError",

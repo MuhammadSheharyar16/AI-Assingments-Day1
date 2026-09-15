@@ -3,6 +3,8 @@ Day 13 Task 1 -- the typed Tool Registry model (`ToolDefinition` /
 `ToolRegistryDocument`, `src/aico/tools/models.py`).
 Day 13 Task 2 -- the Tool Registry service (`ToolRegistry`,
 `src/aico/tools/registry.py`).
+Day 13 Task 3 -- the typed execution request (`ToolExecutionRequest`,
+`src/aico/tools/models.py`).
 
 Mirrors `test_day12_gate_d_policy.py`'s two-section style: the first
 section proves `ToolRegistryDocument`'s own typed validation directly
@@ -14,7 +16,10 @@ registry rather than the fixture file itself, so every test only ever
 changes the one thing it is proving is rejected. The second section proves
 `ToolRegistry` end to end: loading the real committed `tools/registry.v1.json`,
 its read-only accessors, exact-version lookup, active/disabled state, and
-its typed `tool_not_found`/`version_not_found` failure distinction.
+its typed `tool_not_found`/`version_not_found` failure distinction. The
+third section proves `ToolExecutionRequest`'s own shape/validation and its
+four Trust rules -- Task 4's actual policy decision (does a request's
+`trusted_permissions` authorize this tool) is out of scope here.
 """
 from __future__ import annotations
 
@@ -32,9 +37,12 @@ from aico.tools.models import (
     RetryPolicy,
     RiskLevel,
     ToolDefinition,
+    ToolExecutionRequest,
     ToolRegistryDocument,
     ToolStatus,
     ToolTransportKind,
+    resolve_effective_tenant_scope,
+    resolve_trusted_permissions,
 )
 from aico.tools.registry import ToolRegistry
 
@@ -474,3 +482,161 @@ class TestToolRegistryReadOnly:
         forbidden_method_names = ("register_tool", "add_tool", "set_status", "update_tool", "remove_tool")
         for name in forbidden_method_names:
             assert not hasattr(registry, name)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Day 13 Task 3 -- the typed execution request (`ToolExecutionRequest`).
+# ══════════════════════════════════════════════════════════════════════
+
+
+def _minimal_valid_execution_request(**overrides: object) -> dict:
+    request = {
+        "tool_id": "supplier_status_lookup",
+        "tool_version": "1.0.0",
+        "arguments": {"supplier_id": "SUP-ALPHA"},
+        "trusted_permissions": ["read_structured_supplier"],
+        "effective_tenant_scope": ["TENANT-A"],
+    }
+    request.update(overrides)
+    return request
+
+
+class TestToolExecutionRequestShape:
+    def test_minimal_request_is_accepted(self) -> None:
+        request = ToolExecutionRequest.model_validate(_minimal_valid_execution_request())
+        assert request.tool_id == "supplier_status_lookup"
+        assert request.tool_version == "1.0.0"
+        assert request.arguments == {"supplier_id": "SUP-ALPHA"}
+        assert request.trusted_permissions == ("read_structured_supplier",)
+        assert request.effective_tenant_scope == ("TENANT-A",)
+        assert request.key == ("supplier_status_lookup", "1.0.0")
+
+    def test_request_id_and_correlation_id_are_auto_generated_and_distinct(self) -> None:
+        request = ToolExecutionRequest.model_validate(_minimal_valid_execution_request())
+        assert request.request_id
+        assert request.correlation_id
+        assert request.request_id != request.correlation_id
+
+        other = ToolExecutionRequest.model_validate(_minimal_valid_execution_request())
+        assert other.request_id != request.request_id
+
+    def test_caller_supplied_request_id_and_correlation_id_are_kept(self) -> None:
+        request = ToolExecutionRequest.model_validate(
+            _minimal_valid_execution_request(request_id="req-1", correlation_id="corr-1")
+        )
+        assert request.request_id == "req-1"
+        assert request.correlation_id == "corr-1"
+
+    def test_optional_fields_default_empty(self) -> None:
+        minimal = {"tool_id": "supplier_status_lookup", "tool_version": "1.0.0"}
+        request = ToolExecutionRequest.model_validate(minimal)
+        assert request.arguments == {}
+        assert request.trusted_permissions == ()
+        assert request.effective_tenant_scope == ()
+        assert request.idempotency_key is None
+        assert request.execution_context == {}
+
+    def test_idempotency_key_and_execution_context_are_carried(self) -> None:
+        request = ToolExecutionRequest.model_validate(
+            _minimal_valid_execution_request(idempotency_key="idem-1", execution_context={"channel": "api"})
+        )
+        assert request.idempotency_key == "idem-1"
+        assert request.execution_context == {"channel": "api"}
+
+    def test_invalid_semver_tool_version_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ToolExecutionRequest.model_validate(_minimal_valid_execution_request(tool_version="latest"))
+
+    def test_blank_tool_id_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ToolExecutionRequest.model_validate(_minimal_valid_execution_request(tool_id=""))
+
+    def test_blank_permission_entry_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="trusted_permissions"):
+            ToolExecutionRequest.model_validate(_minimal_valid_execution_request(trusted_permissions=[""]))
+
+    def test_blank_tenant_scope_entry_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="effective_tenant_scope"):
+            ToolExecutionRequest.model_validate(_minimal_valid_execution_request(effective_tenant_scope=[""]))
+
+    def test_unknown_field_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ToolExecutionRequest.model_validate(_minimal_valid_execution_request(unexpected_field="nope"))
+
+    def test_request_is_frozen(self) -> None:
+        request = ToolExecutionRequest.model_validate(_minimal_valid_execution_request())
+        with pytest.raises(ValidationError):
+            request.tool_id = "some_other_tool"
+
+
+class TestToolExecutionRequestTrustRules:
+    """Proves Task 3's own Trust rules: nothing placed in `arguments`
+    (an attempted `role`, `tenant_id`, or any other key) is ever surfaced
+    by the one functions Task 4/6 are expected to read authorization
+    context through."""
+
+    def test_argument_role_does_not_grant_permission(self) -> None:
+        """`execution_cases.json` EXEC13-003's own shape: an `arguments.role`
+        the caller injected must not appear anywhere in the resolved
+        permission set, which must equal exactly the trusted permissions
+        the caller separately declared."""
+        request = ToolExecutionRequest.model_validate(
+            _minimal_valid_execution_request(
+                arguments={"supplier_id": "SUP-ALPHA", "role": "admin"},
+                trusted_permissions=[],
+            )
+        )
+        assert resolve_trusted_permissions(request) == ()
+        assert "admin" not in resolve_trusted_permissions(request)
+
+    def test_argument_tenant_id_does_not_change_effective_tenant_scope(self) -> None:
+        request = ToolExecutionRequest.model_validate(
+            _minimal_valid_execution_request(
+                arguments={"supplier_id": "SUP-ALPHA", "tenant_id": "TENANT-OTHER"},
+                effective_tenant_scope=["TENANT-A"],
+            )
+        )
+        assert resolve_effective_tenant_scope(request) == ("TENANT-A",)
+        assert "TENANT-OTHER" not in resolve_effective_tenant_scope(request)
+
+    def test_resolve_trusted_permissions_never_reads_arguments(self) -> None:
+        """Even when `arguments` and `trusted_permissions` name the exact
+        same-looking permission string, only the trusted field counts --
+        an empty `trusted_permissions` alongside a matching `arguments`
+        value must still resolve to no granted permissions."""
+        request = ToolExecutionRequest.model_validate(
+            _minimal_valid_execution_request(
+                arguments={"permissions": ["read_structured_supplier"]},
+                trusted_permissions=[],
+            )
+        )
+        assert resolve_trusted_permissions(request) == ()
+
+    def test_no_field_accepts_raw_model_text_or_session_memory(self) -> None:
+        """`ToolExecutionRequest` has no field named/shaped for raw model
+        output or session memory at all -- there is nothing for either to
+        be assigned to that this pipeline would ever treat as
+        authorization (Day 13 working rule: "model text cannot grant
+        permission" / "session memory cannot grant permission")."""
+        field_names = set(ToolExecutionRequest.model_fields)
+        forbidden_field_names = {
+            "model_text",
+            "model_output",
+            "session_memory",
+            "memory",
+            "raw_model_response",
+            "role",
+            "permissions",
+        }
+        assert field_names.isdisjoint(forbidden_field_names)
+        assert field_names == {
+            "request_id",
+            "correlation_id",
+            "tool_id",
+            "tool_version",
+            "arguments",
+            "trusted_permissions",
+            "effective_tenant_scope",
+            "idempotency_key",
+            "execution_context",
+        }
