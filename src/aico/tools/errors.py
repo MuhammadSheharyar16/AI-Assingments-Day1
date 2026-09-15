@@ -154,3 +154,66 @@ class ToolExecutionPolicyInvariantError(ToolExecutionPolicyError):
     plays for Gate-B (`aico.control.errors`). Never raised for an ordinary
     authorization outcome: allow and deny are both normal, typed
     `ToolExecutionPolicyDecision` results, not exceptions."""
+
+
+class ToolTransportError(Exception):
+    """Base class for every typed failure a `ToolTransport` implementation
+    (`transport.py`, Task 6) may raise for a known, normalizable
+    transport-level condition -- mirrors `aico.platform.model_gateway`'s
+    own `Transport` contract: "a transport is expected to raise normalized
+    failures; the gateway wraps anything else as a last resort so a raw
+    exception never reaches a caller." Never raised directly -- see
+    `ToolTransportTimeoutError` / `ToolTransportUnavailableError` /
+    `ToolTransportCancelledError`. Any *other* exception a transport raises
+    (unnormalized -- a real bug, or a condition this taxonomy does not yet
+    name) is still caught by `MCPGateway.execute()`, just categorized as
+    the more general `transport_error` rather than one of these three."""
+
+
+class ToolTransportTimeoutError(ToolTransportError):
+    """Raised by a `ToolTransport` implementation when a call did not
+    complete within its own understanding of the tool's timeout budget.
+    `MCPGateway.execute()` (Task 6) catches this and returns a typed
+    `ToolTransportFailure(category=TIMEOUT)`, never letting it escape as a
+    raw exception."""
+
+
+class ToolTransportUnavailableError(ToolTransportError):
+    """Raised by a `ToolTransport` implementation for a transient
+    "server unreachable" condition -- the one category (alongside
+    `timeout`) `RetryPolicy.retryable_categories` (Task 1) may ever name.
+    `MCPGateway.execute()` catches this and returns a typed
+    `ToolTransportFailure(category=TRANSPORT_UNAVAILABLE)`."""
+
+
+class ToolTransportCancelledError(ToolTransportError):
+    """Raised by a `ToolTransport` implementation when it observes its own
+    `ToolCancellationToken` set while a call was in flight.
+    `MCPGateway.execute()` catches this and returns a typed
+    `ToolTransportFailure(category=CANCELLED)`."""
+
+
+class MCPGatewayError(Exception):
+    """Base class for every typed failure `MCPGateway` raises. Never
+    raised directly -- see `MCPGatewayInvariantError`."""
+
+
+class MCPGatewayInvariantError(MCPGatewayError):
+    """Raised by `MCPGateway.execute()` (Task 6) when it is given inputs
+    that violate an invariant it depends on: a `ToolExecutionRequest`/
+    `ToolDefinition` naming different `(tool_id, tool_version)` pairs, a
+    `ToolExecutionPolicyDecision` that does not correspond to the same
+    resolved tool, or one whose `decision` is not `ALLOW` (Day 13 working
+    rule: "The gateway receives only a request already: registered,
+    policy-approved, input-schema-valid" -- this is that precondition,
+    enforced rather than merely documented). Task 7's controlled executor
+    never produces such a mismatch by construction, since it always builds
+    the policy decision from the same resolved `(request, tool)` pair
+    immediately before calling `MCPGateway.execute()`; this exists to fail
+    loudly rather than silently invoke transport for a request that was
+    never actually approved -- the identical role
+    `ToolExecutionPolicyInvariantError` plays one stage earlier. Never
+    raised for an ordinary transport outcome: success and every typed
+    transport failure category are both normal, typed
+    `ToolTransportSuccess`/`ToolTransportFailure` results, not
+    exceptions."""

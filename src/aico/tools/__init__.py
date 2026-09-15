@@ -45,9 +45,22 @@ registered `input_schema`, returning either the arguments dict or a typed
 `ToolSchemaValidationFailure` (`errors.py`); never a bare `jsonschema`
 exception, never a value in that failure that echoes the raw submitted
 argument (only schema-declared property names/categories).
+
+Task 6 adds `MCPGateway` (`mcp_gateway.py`) -- the single approved MCP
+transport boundary, and `ToolTransport`/`ToolCancellationToken`/
+`FakeToolTransport` (`transport.py`) -- the injected transport seam and
+the deterministic, in-process double every mandatory test is built
+against. `MCPGateway.execute()` requires an already-registered
+`ToolDefinition`, an `ALLOW` `ToolExecutionPolicyDecision`, and already
+schema-validated arguments (raising `MCPGatewayInvariantError` otherwise),
+and normalizes every transport exception into a typed
+`ToolTransportSuccess`/`ToolTransportFailure` -- never a raw exception,
+never a fall-through to transport for an unapproved request.
 """
 from aico.tools.errors import (
     SCHEMA_VALIDATION_CATEGORIES,
+    MCPGatewayError,
+    MCPGatewayInvariantError,
     ToolExecutionPolicyError,
     ToolExecutionPolicyInvariantError,
     ToolExecutionPolicyLoadError,
@@ -55,8 +68,13 @@ from aico.tools.errors import (
     ToolRegistryError,
     ToolRegistryLoadError,
     ToolSchemaValidationFailure,
+    ToolTransportCancelledError,
+    ToolTransportError,
+    ToolTransportTimeoutError,
+    ToolTransportUnavailableError,
     ToolVersionNotFoundError,
 )
+from aico.tools.mcp_gateway import MCPGateway, ToolTransportFailure, ToolTransportFailureCategory, ToolTransportSuccess
 from aico.tools.models import (
     RetryableFailureCategory,
     RetryPolicy,
@@ -79,6 +97,7 @@ from aico.tools.policy import (
 )
 from aico.tools.registry import DEFAULT_REGISTRY_PATH, ToolRegistry
 from aico.tools.schema_validator import validate_tool_input
+from aico.tools.transport import FakeToolTransport, ToolCancellationToken, ToolTransport, ToolTransportRequest
 
 __all__ = [
     "RetryPolicy",
@@ -109,4 +128,18 @@ __all__ = [
     "validate_tool_input",
     "ToolSchemaValidationFailure",
     "SCHEMA_VALIDATION_CATEGORIES",
+    "MCPGateway",
+    "ToolTransportSuccess",
+    "ToolTransportFailure",
+    "ToolTransportFailureCategory",
+    "MCPGatewayError",
+    "MCPGatewayInvariantError",
+    "ToolTransport",
+    "ToolTransportRequest",
+    "ToolCancellationToken",
+    "FakeToolTransport",
+    "ToolTransportError",
+    "ToolTransportTimeoutError",
+    "ToolTransportUnavailableError",
+    "ToolTransportCancelledError",
 ]
