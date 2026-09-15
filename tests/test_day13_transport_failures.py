@@ -35,6 +35,27 @@ transports:
     side-effecting tool makes zero transport calls and zero retry attempts
     (TR13-005) because Task 4's policy stage denies it before the retry
     loop is ever reached.
+
+Day 13 Task 10 -- normalized errors. `ToolExecutionErrorCategory`
+(`executor.py`) already *is* Day 13's own required ten-name taxonomy
+(`tool_not_found` / `tool_disabled` / `version_not_found` /
+`policy_denied` / `input_invalid` / `timeout` / `cancelled` /
+`transport_unavailable` / `transport_error` / `output_invalid`) --
+necessarily defined as part of Task 7, since the controlled executor
+cannot produce a well-typed result without it. `TestNormalizedErrorTaxonomy`
+below is what Task 10 actually adds: proof that the enum is a *closed*
+set of exactly those ten names (no eleventh, no fewer), a single
+consolidated matrix proving every one of the ten is independently
+reachable and correctly assigned through the real end-to-end pipeline
+(most already proven individually elsewhere -- `test_day13_executor.py`,
+`test_day13_output_schema.py`, this file's own earlier sections -- this
+matrix is the one place all ten are checked together), and hardened proof
+that "raw transport exceptions must not escape as public/application
+results" holds for an exotic, entirely unanticipated exception type -- not
+just the three typed `ToolTransportError` subclasses/`RuntimeError` this
+file's earlier tests already exercise -- and that no raw exception
+message text (only a fixed, sanitized template) ever reaches the public
+`ToolExecutionResult`.
 """
 from __future__ import annotations
 
@@ -453,3 +474,191 @@ class TestTransportFailureCasesFixture:
     def test_every_fixture_case_id_is_known(self) -> None:
         case_ids = {c["id"] for c in _load_transport_failure_cases()}
         assert case_ids == {"TR13-001", "TR13-002", "TR13-003", "TR13-004", "TR13-005"}
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Day 13 Task 10 -- normalized errors.
+# ══════════════════════════════════════════════════════════════════════
+
+_REQUIRED_ERROR_CATEGORY_NAMES = {
+    "tool_not_found",
+    "tool_disabled",
+    "version_not_found",
+    "policy_denied",
+    "input_invalid",
+    "timeout",
+    "cancelled",
+    "transport_unavailable",
+    "transport_error",
+    "output_invalid",
+}
+
+
+class TestNormalizedErrorTaxonomy:
+    def test_error_category_enum_is_exactly_the_required_ten(self) -> None:
+        """Closed-set proof: `ToolExecutionErrorCategory` has exactly Day
+        13's ten required names -- no eleventh, ad hoc category, and none
+        missing."""
+        actual = {category.value for category in ToolExecutionErrorCategory}
+        assert actual == _REQUIRED_ERROR_CATEGORY_NAMES
+
+    def test_every_required_category_is_independently_reachable(self) -> None:
+        """One canonical, real-pipeline scenario per category -- the one
+        place all ten are checked together (most are already proven
+        individually elsewhere: `test_day13_executor.py`,
+        `test_day13_output_schema.py`, this file's earlier sections)."""
+        success_payload = {"supplier_id": "SUP-ALPHA", "status": "active", "as_of": "2026-09-15T09:00:00Z"}
+
+        def _tool_not_found():
+            executor, _ = _executor([])
+            request = _lookup_request(tool_id="model_invented_tool", tool_version="1.0.0", trusted_permissions=[])
+            return executor, request, None
+
+        def _version_not_found():
+            executor, _ = _executor([])
+            request = _lookup_request(tool_version="9.9.9")
+            return executor, request, None
+
+        def _tool_disabled():
+            executor, _ = _executor([])
+            request = _lookup_request(
+                tool_id="supplier_record_update",
+                tool_version="1.0.0",
+                arguments={"supplier_id": "SUP-ALPHA", "status": "inactive"},
+                trusted_permissions=["write_structured_supplier"],
+            )
+            return executor, request, None
+
+        def _policy_denied():
+            executor, _ = _executor([])
+            request = _lookup_request(trusted_permissions=[])
+            return executor, request, None
+
+        def _input_invalid():
+            executor, _ = _executor([])
+            request = _lookup_request(arguments={})
+            return executor, request, None
+
+        def _timeout():
+            executor, _ = _executor(["timeout", "timeout"])
+            request = _lookup_request()
+            return executor, request, None
+
+        def _cancelled():
+            executor, _ = _executor(["wait_until_cancelled"])
+            request = _lookup_request()
+            token = ToolCancellationToken()
+
+            def _cancel_shortly() -> None:
+                time.sleep(0.05)
+                token.cancel()
+
+            threading.Thread(target=_cancel_shortly, daemon=True).start()
+            return executor, request, token
+
+        def _transport_unavailable():
+            executor, _ = _executor(["transport_unavailable", "transport_unavailable"])
+            request = _lookup_request()
+            return executor, request, None
+
+        def _transport_error():
+            executor, _ = _executor(["transport_error"])
+            request = _lookup_request()
+            return executor, request, None
+
+        def _output_invalid():
+            executor, _ = _executor([{"supplier_id": "SUP-ALPHA"}])  # missing status/as_of
+            request = _lookup_request()
+            return executor, request, None
+
+        scenarios = {
+            ToolExecutionErrorCategory.TOOL_NOT_FOUND: _tool_not_found,
+            ToolExecutionErrorCategory.VERSION_NOT_FOUND: _version_not_found,
+            ToolExecutionErrorCategory.TOOL_DISABLED: _tool_disabled,
+            ToolExecutionErrorCategory.POLICY_DENIED: _policy_denied,
+            ToolExecutionErrorCategory.INPUT_INVALID: _input_invalid,
+            ToolExecutionErrorCategory.TIMEOUT: _timeout,
+            ToolExecutionErrorCategory.CANCELLED: _cancelled,
+            ToolExecutionErrorCategory.TRANSPORT_UNAVAILABLE: _transport_unavailable,
+            ToolExecutionErrorCategory.TRANSPORT_ERROR: _transport_error,
+            ToolExecutionErrorCategory.OUTPUT_INVALID: _output_invalid,
+        }
+
+        assert set(scenarios) == set(ToolExecutionErrorCategory)  # every enum member has a scenario
+
+        for expected_category, build in scenarios.items():
+            executor, request, token = build()
+            result = executor.execute(request, cancellation=token)
+            assert result.status is ToolExecutionStatus.FAILURE, expected_category
+            assert result.error_category is expected_category, (
+                f"expected {expected_category!r}, got {result.error_category!r}"
+            )
+
+        # Sanity: a genuinely successful call is not accidentally caught by
+        # any of the above and still resolves to SUCCESS with no category.
+        success_executor, _ = _executor([success_payload])
+        success_result = success_executor.execute(_lookup_request())
+        assert success_result.status is ToolExecutionStatus.SUCCESS
+        assert success_result.error_category is None
+
+    def test_exotic_unanticipated_transport_exception_is_normalized_not_raised(self) -> None:
+        """"Raw transport exceptions must not escape as public/application
+        results": a transport that raises something entirely outside this
+        codebase's own three typed `ToolTransportError` subclasses (and
+        outside `FakeToolTransport`'s own `"transport_error"` step, which
+        only ever raises a plain `RuntimeError`) must still never escape
+        `ToolExecutor.execute()` -- proven with a hand-built transport
+        raising a real stdlib exception unrelated to this pipeline
+        entirely."""
+
+        class _ExoticFailureTransport:
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            def execute(self, request, *, cancellation=None):
+                self.call_count += 1
+                raise ConnectionResetError("a totally unrelated low-level socket failure, never anticipated here")
+
+        registry = ToolRegistry.load(COMMITTED_REGISTRY_PATH)
+        policy = ToolExecutionPolicy.load(COMMITTED_POLICY_PATH)
+        transport = _ExoticFailureTransport()
+        gateway = MCPGateway(transport)
+        executor = ToolExecutor(registry, policy, gateway)
+        request = _lookup_request()
+
+        result = executor.execute(request)  # must not raise ConnectionResetError (or anything else)
+
+        assert isinstance(result, ToolExecutionResult)
+        assert result.status is ToolExecutionStatus.FAILURE
+        assert result.error_category is ToolExecutionErrorCategory.TRANSPORT_ERROR
+        assert transport.call_count == 1
+
+    def test_raw_exception_message_text_never_reaches_the_public_result(self) -> None:
+        """Beyond "it doesn't raise": the exotic exception's own message
+        text must not leak into `error_message` either -- only a fixed,
+        sanitized template, never `str(exc)`."""
+        secret_looking_detail = "INTERNAL-STACK-TRACE-DETAIL-98765-DO-NOT-LEAK"
+
+        class _LeakyTransport:
+            def execute(self, request, *, cancellation=None):
+                raise RuntimeError(secret_looking_detail)
+
+        registry = ToolRegistry.load(COMMITTED_REGISTRY_PATH)
+        policy = ToolExecutionPolicy.load(COMMITTED_POLICY_PATH)
+        gateway = MCPGateway(_LeakyTransport())
+        executor = ToolExecutor(registry, policy, gateway)
+        request = _lookup_request()
+
+        result = executor.execute(request)
+
+        assert result.error_category is ToolExecutionErrorCategory.TRANSPORT_ERROR
+        assert result.error_message is not None
+        assert secret_looking_detail not in result.error_message
+
+    def test_error_category_field_is_typed_never_a_bare_string(self) -> None:
+        """`ToolExecutionResult.error_category` is typed as the closed
+        `ToolExecutionErrorCategory` enum, not a free-form string field a
+        stage could populate with an unrecognized value."""
+        field = ToolExecutionResult.model_fields["error_category"]
+        annotation = field.annotation
+        assert annotation == (ToolExecutionErrorCategory | None)
