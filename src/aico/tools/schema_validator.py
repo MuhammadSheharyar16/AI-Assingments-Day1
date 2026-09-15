@@ -1,5 +1,8 @@
 """
 Day 13 Task 5 -- input schema validation.
+Day 13 Task 7 (necessarily, to complete the executor's own required
+pipeline order) -- output schema validation, `validate_tool_output()`,
+formalized in full by Task 11.
 
 `validate_tool_input()` is the one place a `ToolExecutionRequest.arguments`
 value is ever checked against its resolved tool's own registered
@@ -10,6 +13,9 @@ exception escaping to a caller and never an unchecked dict passed through
 untouched. Mirrors `aico.contracts.validator.validate_contract()`'s own
 `Model | ValidationFailure` shape exactly -- this is Day 13's analog one
 boundary over, for tool arguments instead of a model's JSON response.
+`validate_tool_output()` is the identical shape, one stage later, against
+`tool.output_schema` -- both share `_validate_against_schema()` below, the
+one place a payload is ever checked against a JSON Schema object at all.
 
 Critical (`Day 13 Task.pdf`, TASK 5): "invalid input -> transport calls =
 0". This module only validates; it has no reference to a transport or the
@@ -17,7 +23,13 @@ MCP Gateway at all, and calls neither -- Task 7's controlled executor is
 the one place that reads this function's result and is expected to stop
 *before* the gateway whenever it is a `ToolSchemaValidationFailure` rather
 than a dict, which is what actually makes "transport is not the first
-validator" true end to end.
+validator" true end to end. `validate_tool_output()`'s own critical
+property (Task 11): a `ToolSchemaValidationFailure` is never mistaken for
+or silently repaired into a successful payload -- "invalid output is not
+returned as success" reduces directly to a caller pattern-matching this
+function's return type, exactly the way "invalid input -> transport calls
+= 0" reduces to a caller checking `validate_tool_input()`'s return type
+before ever reaching the gateway.
 
 Required cases (`tool_registry_v1.json`'s own `supplier_status_lookup.
 input_schema`, `required=["supplier_id"]`, `additionalProperties=False`,
@@ -155,6 +167,21 @@ def _describe_error(error: JsonSchemaValidationError) -> ToolSchemaValidationFai
     )
 
 
+def _validate_against_schema(
+    schema: dict[str, Any], payload: dict[str, Any]
+) -> dict[str, Any] | ToolSchemaValidationFailure:
+    """The one place any payload is ever checked against a JSON Schema
+    object in this module -- shared by `validate_tool_input()` (Task 5)
+    and `validate_tool_output()` (Task 7/11). Returns `payload` unchanged
+    on success, or the single most relevant `ToolSchemaValidationFailure`
+    on failure (`jsonschema.exceptions.best_match`)."""
+    validator = jsonschema.Draft7Validator(schema)
+    error = jsonschema.exceptions.best_match(validator.iter_errors(payload))
+    if error is not None:
+        return _describe_error(error)
+    return payload
+
+
 def validate_tool_input(
     tool: ToolDefinition, arguments: dict[str, Any]
 ) -> dict[str, Any] | ToolSchemaValidationFailure:
@@ -166,8 +193,20 @@ def validate_tool_input(
     calls anything outside this module -- see module docstring's
     "Critical" paragraph for why that is what makes "transport is not the
     first validator" true."""
-    validator = jsonschema.Draft7Validator(tool.input_schema)
-    error = jsonschema.exceptions.best_match(validator.iter_errors(arguments))
-    if error is not None:
-        return _describe_error(error)
-    return arguments
+    return _validate_against_schema(tool.input_schema, arguments)
+
+
+def validate_tool_output(
+    tool: ToolDefinition, payload: dict[str, Any]
+) -> dict[str, Any] | ToolSchemaValidationFailure:
+    """Validate a transport call's raw success `payload` against
+    `tool.output_schema` -- external, untrusted/unvalidated data (Day 13
+    working rule: "Tool output is external/untrusted until validated")
+    until this function says otherwise. Returns `payload` unchanged on
+    success, or the single most relevant `ToolSchemaValidationFailure` on
+    failure. Never raises, and never repairs or drops an offending field
+    to make a malformed payload superficially valid -- Day 13 working
+    rule: "Schema-invalid tool output is not returned as success" / "Do
+    not ask the model to repair malformed tool output" (there is nothing
+    in this function's signature a model could even reach)."""
+    return _validate_against_schema(tool.output_schema, payload)

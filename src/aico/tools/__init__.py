@@ -56,6 +56,15 @@ schema-validated arguments (raising `MCPGatewayInvariantError` otherwise),
 and normalizes every transport exception into a typed
 `ToolTransportSuccess`/`ToolTransportFailure` -- never a raw exception,
 never a fall-through to transport for an unapproved request.
+
+Task 7 adds `ToolExecutor` (`executor.py`) -- the single controlled
+pipeline entrypoint: `execute(request)` runs registry -> policy -> input
+schema validation -> MCP Gateway -> transport -> output schema validation
+(`validate_tool_output()`, `schema_validator.py`) -> typed
+`ToolExecutionResult`, in that required order, with no second helper that
+bypasses any stage. Every stage's failure is tagged with one of Day 13's
+ten normalized `ToolExecutionErrorCategory` names (Task 10's own list,
+necessarily defined here -- see `executor.py`'s module docstring).
 """
 from aico.tools.errors import (
     SCHEMA_VALIDATION_CATEGORIES,
@@ -74,6 +83,7 @@ from aico.tools.errors import (
     ToolTransportUnavailableError,
     ToolVersionNotFoundError,
 )
+from aico.tools.executor import ToolExecutionErrorCategory, ToolExecutionResult, ToolExecutionStatus, ToolExecutor
 from aico.tools.mcp_gateway import MCPGateway, ToolTransportFailure, ToolTransportFailureCategory, ToolTransportSuccess
 from aico.tools.models import (
     RetryableFailureCategory,
@@ -96,7 +106,7 @@ from aico.tools.policy import (
     ToolExecutionPolicyStatus,
 )
 from aico.tools.registry import DEFAULT_REGISTRY_PATH, ToolRegistry
-from aico.tools.schema_validator import validate_tool_input
+from aico.tools.schema_validator import validate_tool_input, validate_tool_output
 from aico.tools.transport import FakeToolTransport, ToolCancellationToken, ToolTransport, ToolTransportRequest
 
 __all__ = [
@@ -126,6 +136,7 @@ __all__ = [
     "ToolExecutionPolicyLoadError",
     "ToolExecutionPolicyInvariantError",
     "validate_tool_input",
+    "validate_tool_output",
     "ToolSchemaValidationFailure",
     "SCHEMA_VALIDATION_CATEGORIES",
     "MCPGateway",
@@ -142,4 +153,8 @@ __all__ = [
     "ToolTransportTimeoutError",
     "ToolTransportUnavailableError",
     "ToolTransportCancelledError",
+    "ToolExecutor",
+    "ToolExecutionResult",
+    "ToolExecutionStatus",
+    "ToolExecutionErrorCategory",
 ]

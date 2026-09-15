@@ -2148,6 +2148,75 @@ been copied forward again, so `pytest.exe` briefly resolved `aico` from
 `AI-Assignments-Day11\.venv\...\src`); fixed the same way, by deleting
 `.venv` and running `uv sync --frozen` fresh.
 
+## Day 13 — Tool Registry and MCP Gateway
+
+Adds a governed tool boundary so only registered, versioned, schema-valid
+and policy-approved tools can execute through one controlled MCP gateway
+(`Day 13 Task.pdf`'s standing rule: "A model never receives a raw
+capability to execute arbitrary tools"). In progress — Tasks 1-7 are
+implemented so far.
+
+- `data/day13_pack/` — the Day 13 resource pack, copied verbatim from the
+  supplied `day13_pack/`: `tool_registry_requirements.md`,
+  `mcp_execution_rules.md`, and `fixtures/` (`tool_registry_v1.json`,
+  `tool_execution_policy_v1.json`, `registry_validation_cases.json`,
+  `execution_cases.json`, `transport_failure_cases.json`,
+  `output_validation_cases.json`) — fixed synthetic inputs, never edited.
+  `tools/registry.v1.json` and `policy/tool_execution_policy.v1.json` are
+  this pack's own fixtures, copied byte-identical.
+- `tools/models.py` (Task 1) — typed, self-validating `ToolDefinition`/
+  `ToolRegistryDocument` (Pydantic, `extra="forbid"`): duplicate tool/
+  version, missing owner, invalid semver, unknown status/transport,
+  invalid timeout/retry metadata, invalid/missing schema shape, and an
+  unsafe retry configuration on a side-effecting/non-idempotent tool are
+  all rejected at parse time.
+- `tools/registry.py` (Task 2) — `ToolRegistry`: loads/validates
+  `tools/registry.v1.json` once, exact `(tool_id, tool_version)` lookup,
+  active/disabled state, a typed `tool_not_found`/`version_not_found`
+  failure distinction, read-only at runtime (no mutator method exists).
+- `tools/models.py` (Task 3, same file as Task 1 — no separate file named
+  for it) — `ToolExecutionRequest` (frozen): `resolve_trusted_permissions()`/
+  `resolve_effective_tenant_scope()` are the only two functions that ever
+  read a request's authorization context, and neither ever consults
+  `arguments` (arguments.role/tenant_id cannot grant anything; there is no
+  field for raw model text or session memory at all).
+- `tools/policy.py` (Task 4) — `ToolExecutionPolicyDocument`/
+  `ToolExecutionPolicyRule` (`default_decision` pinned to `"deny"`) and
+  `ToolExecutionPolicy.authorize()`, a staged, default-deny decision
+  engine (tool status -> matching rule -> rule status -> rule allowed ->
+  required trusted permission -> approved server alias -> risk ceiling ->
+  unsafe-retry defense-in-depth -> allow).
+- `tools/schema_validator.py` (Task 5, extended for Task 7's own required
+  pipeline order) — `validate_tool_input()`/`validate_tool_output()`
+  (`jsonschema.Draft7Validator`, only the single most relevant failure
+  returned): both return a typed `ToolSchemaValidationFailure`
+  (`errors.py`, a frozen value mirroring Day 4's own `ValidationFailure`),
+  never a raw `jsonschema` exception, never a submitted argument *value*
+  echoed into the failure — only schema-declared property names.
+- `tools/transport.py` / `tools/mcp_gateway.py` (Task 6) — `ToolTransport`
+  (a `Protocol`), `ToolCancellationToken`, and `FakeToolTransport` (the
+  deterministic double every mandatory test is built against, covering
+  every `transport_failure_cases.json` step incl. `wait_until_cancelled`);
+  `MCPGateway.execute()` requires an already-registered tool, an `ALLOW`
+  policy decision, and schema-validated arguments (raising
+  `MCPGatewayInvariantError` otherwise) and normalizes every transport
+  exception into a typed `ToolTransportSuccess`/`ToolTransportFailure`.
+- `tools/executor.py` (Task 7) — `ToolExecutor.execute()`, the single
+  controlled pipeline entrypoint: registry -> policy -> input schema
+  validation -> MCP Gateway -> transport -> output schema validation ->
+  typed `ToolExecutionResult`, with no second helper that bypasses any
+  stage. Every failure is tagged with one of Day 13's ten normalized
+  `ToolExecutionErrorCategory` names (`tool_not_found`/`tool_disabled`/
+  `version_not_found`/`policy_denied`/`input_invalid`/`timeout`/
+  `cancelled`/`transport_unavailable`/`transport_error`/`output_invalid`
+  — Task 10's own list, necessarily defined here since the executor
+  cannot produce a well-typed result without it existing).
+
+`tests/test_day13_executor.py` is an additional file beyond the required
+structure's own list (no single named file maps onto Task 7's end-to-end
+wiring) — the "equivalent previously accepted filenames" allowance,
+documented here.
+
 ## Key design decisions
 
 **Day 1**

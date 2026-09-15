@@ -359,9 +359,11 @@ def test_no_module_outside_aico_tools_imports_transport() -> None:
     assert offending == []
 
 
-def test_gateway_module_is_the_only_importer_of_transport_within_aico_tools() -> None:
-    """Within `aico.tools` itself, only `mcp_gateway.py` (and, naturally,
-    `transport.py`'s own tests) ever imports the transport module -- the
+def test_only_the_gateway_and_executor_import_transport_within_aico_tools() -> None:
+    """Within `aico.tools` itself, only `mcp_gateway.py` (the transport
+    boundary itself) and `executor.py` (Task 7 -- it threads an optional
+    `ToolCancellationToken` through to the gateway, never calling
+    transport directly itself) ever import the transport module -- the
     registry/policy/schema layers stay transport-agnostic."""
     tools_dir = REPO_ROOT / "src" / "aico" / "tools"
     importers: list[str] = []
@@ -373,4 +375,4 @@ def test_gateway_module_is_the_only_importer_of_transport_within_aico_tools() ->
             if isinstance(node, ast.ImportFrom) and node.module == "aico.tools.transport":
                 importers.append(path.name)
 
-    assert importers == ["mcp_gateway.py"]
+    assert set(importers) == {"mcp_gateway.py", "executor.py"}
