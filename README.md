@@ -2153,7 +2153,7 @@ been copied forward again, so `pytest.exe` briefly resolved `aico` from
 Adds a governed tool boundary so only registered, versioned, schema-valid
 and policy-approved tools can execute through one controlled MCP gateway
 (`Day 13 Task.pdf`'s standing rule: "A model never receives a raw
-capability to execute arbitrary tools"). In progress — Tasks 1-13 are
+capability to execute arbitrary tools"). In progress — Tasks 1-14 are
 implemented so far.
 
 - `data/day13_pack/` — the Day 13 resource pack, copied verbatim from the
@@ -2325,6 +2325,30 @@ transport-normalization coverage — all three of
 declares. `tests/test_day13_observability.py` (Task 13) is another
 additional file, mirroring `test_day06_observability.py`'s own
 `caplog`-based style — the project's one other observability test file.
+
+- Task 14 (artifacts): `scripts/day13_generate_tool_artifacts.py`
+  (`uv run python scripts/day13_generate_tool_artifacts.py`) generates all
+  three required artifacts from real system behavior — the same
+  discipline `scripts/day12_generate_gate_d_artifacts.py` already
+  established — never hand-written prose:
+  - `artifacts/day13/tool_registry_report.md` — registry version, tool/
+    version count, active/disabled count, an owner/risk/side-effect
+    table, and one real invalid-registry rejection (a duplicate tool/
+    version fed through the real `ToolRegistryDocument` validator, Task 1).
+  - `artifacts/day13/mcp_execution_report.md` — a successful active-tool
+    execution, invalid input (`transport call_count` = 0), policy denial
+    (= 0), the disabled tool (= 0), and a valid output-schema result, each
+    a real `ToolExecutor.execute()` call against a `FakeToolTransport`.
+  - `artifacts/day13/failure_safety_report.md` — timeout (`DelayedStep`,
+    Task 8), cancellation, retry-then-success, retry exhaustion, and
+    output-schema failure, plus a consolidated table sweeping all ten
+    normalized `ToolExecutionErrorCategory` names (Task 10) against their
+    own real scenario. "Raw arguments/results absent" is checked
+    mechanically, not only asserted: two marker-shaped synthetic values
+    (one argument rejected before it could ever reach transport, one
+    transport-payload field value from the output-schema-failure case)
+    are searched for in the rendered report text itself before the script
+    ever writes the file, and the script asserts neither is present.
 
 ## Key design decisions
 
