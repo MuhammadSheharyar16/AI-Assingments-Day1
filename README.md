@@ -2153,8 +2153,11 @@ been copied forward again, so `pytest.exe` briefly resolved `aico` from
 Adds a governed tool boundary so only registered, versioned, schema-valid
 and policy-approved tools can execute through one controlled MCP gateway
 (`Day 13 Task.pdf`'s standing rule: "A model never receives a raw
-capability to execute arbitrary tools"). In progress — Tasks 1-14 are
-implemented so far.
+capability to execute arbitrary tools"). All 15 tasks are implemented —
+the typed Tool Registry, execution policy, input/output schema
+validation, controlled MCP gateway, deterministic fake transport,
+timeout/cancellation/retry handling, normalized errors, observability,
+the three required artifacts, and the required-coverage regression audit.
 
 - `data/day13_pack/` — the Day 13 resource pack, copied verbatim from the
   supplied `day13_pack/`: `tool_registry_requirements.md`,
@@ -2349,6 +2352,28 @@ additional file, mirroring `test_day06_observability.py`'s own
     transport-payload field value from the output-schema-failure case)
     are searched for in the rendered report text itself before the script
     ever writes the file, and the script asserts neither is present.
+
+238 Day 13-specific tests pass (2311 overall, up from 2064 after Day 12)
+across nine `tests/test_day13_*.py` files. `tests/test_day13_regression.py`
+(Task 15, the required structure's own named file) carries a full
+required-coverage audit in its own docstring — every Task 15 table row
+mapped to the exact real, behavioral test(s) that prove it (Task 15's own
+rule: "Reject existence-only tests") — and owns the two rows no earlier
+Day 13 file does: the Day 7 permanent evaluation gate (re-run via the real
+CLI entry point, isolated to a `tmp_path` artifacts dir) and a Day 8-12
+regression sweep — memory isolation, Gate-A/lane routing, Gate-B tenant
+scope/disclosure, Gate-C evidence trust, and Gate-D final-response
+validation, each re-checked directly against real committed policy/
+registry data, proving Day 13's entirely new `aico.tools` package (which
+no earlier day's code imports at all — `test_day13_no_direct_execution.py`'s
+own proof) has not silently broken any of them.
+
+**Environment note:** the same stale-`.venv`-launcher issue Day 11/Day
+12's own notes describe recurred once more at the very start of this day
+(`.venv` had been copied forward from Day 12, so bare `pytest`/`uv run
+pytest` briefly resolved `aico` from the wrong project); fixed the same
+way, by deleting `.venv` and running `uv sync --frozen` fresh, before Task
+1 work began in earnest.
 
 ## Key design decisions
 
