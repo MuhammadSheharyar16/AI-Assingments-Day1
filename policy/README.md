@@ -81,3 +81,38 @@ for Gate-D (Task 10).
 
 A new policy version is added as a new `gate_d_policy.vN.json` file, never
 by editing a previously committed version in place.
+
+# Tool execution policy
+
+`tool_execution_policy.v1.json` is the committed, governed Tool Execution
+Policy for Day 13 (`data/day13_pack/fixtures/tool_execution_policy_v1.json`,
+unmodified). It is **read-only at runtime**: nothing in the request path,
+model output, or session memory may create, mutate, or widen a rule in it
+(Day 13 working rule: "Execution policy defaults to deny").
+
+It declares two rules, one per registered tool/version
+(`tools/registry.v1.json`):
+
+- `TOOL-R001` -- `supplier_status_lookup@1.0.0`, `allowed: true`, requiring
+  `read_structured_supplier` and the `synthetic-procurement-mcp` server
+  alias at `max_risk_level: low`.
+- `TOOL-R002` -- `supplier_record_update@1.0.0`, `allowed: false` (the tool
+  itself is also `disabled` in the registry, so `tool_disabled` denies it
+  before this rule's own `allowed` is ever consulted -- Day 13 working
+  rule: "The disabled side-effecting lab tool must never execute").
+
+Typed models for this document live in `src/aico/tools/policy.py`
+(`ToolExecutionPolicyDocument` / `ToolExecutionPolicyRule` -- Task 4),
+self-validating a required `policy_version`, a `default_decision` pinned
+to `"deny"`, no duplicate `rule_id`, and no more than one rule governing
+the same `(tool_id, tool_version)` pair. The same module's
+`ToolExecutionPolicy.authorize()` is the one deterministic, default-deny
+decision engine -- registered tool/version, active/disabled status
+(tool's own and the rule's), required trusted permission
+(`resolve_trusted_permissions()`, Task 3 -- never `request.arguments`),
+approved server alias, risk-level ceiling, and side-effecting/idempotent
+retry safety -- returning a typed `ToolExecutionPolicyDecision`, never a
+fall-through to allow.
+
+A new policy version is added as a new `tool_execution_policy.vN.json`
+file, never by editing a previously committed version in place.

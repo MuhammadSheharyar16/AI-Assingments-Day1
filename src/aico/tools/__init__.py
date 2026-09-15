@@ -28,8 +28,21 @@ shape every tool invocation enters this pipeline as (`request_id` /
 `resolve_effective_tenant_scope()`, the only two functions that ever read
 a request's authorization context; neither ever consults `arguments`
 (Day 13 working rule: "arguments.role cannot grant permission").
+
+Task 4 adds `ToolExecutionPolicy` (`policy.py`) -- the deterministic,
+default-deny decision engine: loads the committed
+`policy/tool_execution_policy.v1.json` through
+`ToolExecutionPolicyDocument`/`ToolExecutionPolicyRule`, and
+`authorize(request, tool)` decides `allow`/`deny` from registered tool/
+version, active/disabled status (the tool's own and the rule's), required
+trusted permission, approved server alias, risk-level ceiling, and
+side-effecting/idempotent retry safety -- returning a typed
+`ToolExecutionPolicyDecision`, never a fall-through to allow.
 """
 from aico.tools.errors import (
+    ToolExecutionPolicyError,
+    ToolExecutionPolicyInvariantError,
+    ToolExecutionPolicyLoadError,
     ToolNotFoundError,
     ToolRegistryError,
     ToolRegistryLoadError,
@@ -46,6 +59,14 @@ from aico.tools.models import (
     ToolTransportKind,
     resolve_effective_tenant_scope,
     resolve_trusted_permissions,
+)
+from aico.tools.policy import (
+    DEFAULT_TOOL_EXECUTION_POLICY_PATH,
+    ToolExecutionPolicy,
+    ToolExecutionPolicyDecision,
+    ToolExecutionPolicyDocument,
+    ToolExecutionPolicyRule,
+    ToolExecutionPolicyStatus,
 )
 from aico.tools.registry import DEFAULT_REGISTRY_PATH, ToolRegistry
 
@@ -66,4 +87,13 @@ __all__ = [
     "ToolRegistryLoadError",
     "ToolNotFoundError",
     "ToolVersionNotFoundError",
+    "ToolExecutionPolicy",
+    "ToolExecutionPolicyDocument",
+    "ToolExecutionPolicyRule",
+    "ToolExecutionPolicyDecision",
+    "ToolExecutionPolicyStatus",
+    "DEFAULT_TOOL_EXECUTION_POLICY_PATH",
+    "ToolExecutionPolicyError",
+    "ToolExecutionPolicyLoadError",
+    "ToolExecutionPolicyInvariantError",
 ]

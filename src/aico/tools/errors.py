@@ -18,7 +18,14 @@ distinct categories -- `tool_not_found` (no such `tool_id` at all) and
 `version_not_found` (the `tool_id` is registered, but not at this exact
 `tool_version`) -- and this module is where that distinction is first
 drawn, at the registry boundary itself, so nothing downstream has to
-re-derive it from a single generic error's message text."""
+re-derive it from a single generic error's message text.
+
+Day 13 Task 4 -- typed Tool Execution Policy failures.
+`ToolExecutionPolicyLoadError`/`ToolExecutionPolicyError` are the identical
+pattern one layer over, for `ToolExecutionPolicy`
+(`policy.py`) and the committed `policy/tool_execution_policy.v1.json` --
+mirrors `PolicyLoadError`'s/`GateBError`'s role for Gate-B's own policy and
+authorization boundary (`aico.control.errors`)."""
 from __future__ import annotations
 
 
@@ -69,3 +76,36 @@ class ToolVersionNotFoundError(ToolRegistryError):
         self.tool_id = tool_id
         self.tool_version = tool_version
         super().__init__(f"tool {tool_id!r} has no registered version {tool_version!r}")
+
+
+class ToolExecutionPolicyError(Exception):
+    """Base class for every typed failure `ToolExecutionPolicy` raises.
+    Never raised directly -- see `ToolExecutionPolicyLoadError` /
+    `ToolExecutionPolicyInvariantError`."""
+
+
+class ToolExecutionPolicyLoadError(ToolExecutionPolicyError):
+    """Raised by `ToolExecutionPolicy.load()` (Task 4) when the committed
+    `policy/tool_execution_policy.v1.json` cannot be read, is not valid
+    JSON, or fails `ToolExecutionPolicyDocument`'s typed validation
+    (duplicate `rule_id`, more than one rule governing the same
+    `(tool_id, tool_version)` pair, an invalid semantic version, an
+    invalid `status`/`max_risk_level` enum, a `default_decision` other than
+    `deny`, ...). Carries a single sanitized message describing the
+    problem; there is never a silent fallback to an empty/default/
+    permissive policy."""
+
+
+class ToolExecutionPolicyInvariantError(ToolExecutionPolicyError):
+    """Raised by `ToolExecutionPolicy.authorize()` (Task 4) when it is
+    given inputs that violate an invariant it depends on -- specifically, a
+    `ToolExecutionRequest` and a `ToolDefinition` naming different
+    `(tool_id, tool_version)` pairs. Task 7's controlled executor never
+    produces such a mismatch by construction (it always resolves the
+    `ToolDefinition` from the registry using the request's own `key`
+    immediately before calling `authorize()`); this exists to fail loudly
+    rather than silently authorize the wrong tool if some other caller
+    ever passes a mismatched pair by hand -- the identical role `GateBError`
+    plays for Gate-B (`aico.control.errors`). Never raised for an ordinary
+    authorization outcome: allow and deny are both normal, typed
+    `ToolExecutionPolicyDecision` results, not exceptions."""
