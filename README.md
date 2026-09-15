@@ -2153,7 +2153,7 @@ been copied forward again, so `pytest.exe` briefly resolved `aico` from
 Adds a governed tool boundary so only registered, versioned, schema-valid
 and policy-approved tools can execute through one controlled MCP gateway
 (`Day 13 Task.pdf`'s standing rule: "A model never receives a raw
-capability to execute arbitrary tools"). In progress — Tasks 1-12 are
+capability to execute arbitrary tools"). In progress — Tasks 1-13 are
 implemented so far.
 
 - `data/day13_pack/` — the Day 13 resource pack, copied verbatim from the
@@ -2289,6 +2289,31 @@ implemented so far.
   full `ToolExecutor.execute()` sequence, failing exactly the way any
   other caller's equivalent request would.
 
+- `tools/executor.py` (Task 13) — `ToolExecutor._log_execution()`: every
+  `execute()` call now emits exactly one structured
+  `stage="tool_execution"` event through
+  `aico.observability.logging.log_event()`, Day 6's own shared,
+  already-reviewed facility on the same `"aico.api"` logger ("Preserve
+  Day 6 correlation context" is read literally — reuse the field
+  conventions and the logger itself, not a parallel logging shape; a
+  different reuse decision than the retry/transport contract, since this
+  utility carries no Model-Gateway-specific semantics to blindly inherit).
+  Every field is drawn from Task 13's own "safe metadata" list and
+  computed purely from already-typed, already-sanitized values —
+  `registry_version`/`policy_version` (constant per loaded document),
+  `tool_id`/`tool_version`/`server_alias`/`risk_level` (from the resolved
+  `ToolDefinition`, `None` when none was ever resolved —
+  `tool_not_found`/`version_not_found`), `input_validation_result`/
+  `output_validation_result` (`"valid"`/`"invalid"`/`"not_reached"`,
+  derived purely from which stage a `ToolExecutionResult.error_category`
+  shows the pipeline actually reached — a pure function, no extra state
+  threaded through the pipeline), `retry_count`, `outcome`,
+  `normalized_error` (`log_event()`'s own existing `error_category`
+  parameter), `request_id`/`correlation_id`, and `latency_ms`. Never
+  logged: `request.arguments`, any transport payload, or any raw/
+  sanitized exception message — even `ToolExecutionResult.error_message`
+  itself is deliberately excluded, only the normalized category.
+
 `tests/test_day13_executor.py` is an additional file beyond the required
 structure's own list (no single named file maps onto Task 7's end-to-end
 wiring) — the "equivalent previously accepted filenames" allowance,
@@ -2297,7 +2322,9 @@ the required structure's own named file for timeout/cancellation/retry/
 transport-normalization coverage — all three of
 `transport_failure_cases.json`'s retry-dependent cases
 (`TR13-001`/`TR13-002`/`TR13-003`) now resolve exactly as the fixture
-declares.
+declares. `tests/test_day13_observability.py` (Task 13) is another
+additional file, mirroring `test_day06_observability.py`'s own
+`caplog`-based style — the project's one other observability test file.
 
 ## Key design decisions
 

@@ -122,6 +122,8 @@ def _fast_tool_executor(steps, *, timeout_ms: int, cancellation_poll_seconds: fl
     )
 
     class _FastRegistry:
+        registry_version = real_registry.registry_version
+
         def get_tool(self, tool_id: str, tool_version: str):
             return real_registry.get_tool(tool_id, tool_version) if tool_id != "supplier_status_lookup" else fast_tool
 
@@ -374,10 +376,14 @@ class TestRetrySafety:
         tool`) denies it one stage earlier, so the retry loop's own gate
         (proven directly, below) is never the only thing standing between
         this shape and an unsafe retry."""
-        real_tool = ToolRegistry.load(COMMITTED_REGISTRY_PATH).get_tool("supplier_status_lookup", "1.0.0")
-        unsafe_tool = real_tool.model_copy(update={"idempotent": False})
+        real_registry = ToolRegistry.load(COMMITTED_REGISTRY_PATH)
+        unsafe_tool = real_registry.get_tool("supplier_status_lookup", "1.0.0").model_copy(
+            update={"idempotent": False}
+        )
 
         class _UnsafeRegistry:
+            registry_version = real_registry.registry_version
+
             def get_tool(self, tool_id: str, tool_version: str):
                 return unsafe_tool
 

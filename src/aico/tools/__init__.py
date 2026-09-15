@@ -77,6 +77,21 @@ can stop. `transport.py` adds `DelayedStep` -- a "slow fake transport"
 step that ignores cancellation entirely, for proving a late, in-flight
 result is discarded rather than surfacing as a success after the deadline
 has already produced a typed failure.
+
+Task 9 adds bounded, policy-safe retry (`ToolExecutor._dispatch_with_retry()`)
+around that same stage; Task 10 proves the resulting `ToolExecutionErrorCategory`
+taxonomy is closed and that raw transport exceptions never escape; Task 11
+proves `validate_tool_output()`; Task 12 proves the whole package's import
+graph never gives a model/RAG-facing caller a path to transport that
+skips registry/policy/schema. Task 13 adds one structured
+`stage="tool_execution"` observability event per `execute()` call
+(`aico.observability.logging.log_event()`, Day 6's own shared facility --
+"Preserve Day 6 correlation context"), carrying only already-typed, safe
+metadata (`tool_id`/`tool_version`/`registry_version`/`policy_version`/
+`server_alias`/`risk_level`/`input_validation_result`/
+`output_validation_result`/`retry_count`/`outcome`/`normalized_error`/
+`request_id`/`correlation_id`/`latency_ms`) -- never `request.arguments`,
+a transport payload, or a raw exception message.
 """
 from aico.tools.errors import (
     SCHEMA_VALIDATION_CATEGORIES,

@@ -135,7 +135,48 @@ For the disabled/unsafe-side-effecting lab tool, "zero transport calls,
 zero retry attempts" needs no special-casing here at all: Task 4's policy
 stage already denies it before `_dispatch_with_retry()` is ever reached,
 the identical "the disabled tool never gets this far" guarantee Task 6/7/8
-already give it."""
+already give it.
+
+Day 13 Task 13 -- observability. `execute()` emits exactly one structured
+log event per call -- `stage="tool_execution"` -- through
+`aico.observability.logging.log_event()`, Day 6's own shared, already-
+reviewed structured-logging facility (Task 13: "Preserve Day 6 correlation
+context" is read literally: reuse its `request_id`/`correlation_id`/
+`stage`/`outcome`/`latency_ms`/`error_category` field conventions rather
+than inventing a parallel logging shape). This is a different reuse
+decision than the retry/transport contract (`transport.py`'s own "own
+boundary" reasoning): `aico.observability.logging` is a small, generic,
+already-sanitizing-by-convention utility with no Model-Gateway-specific
+semantics baked into it, so there is nothing tool-specific to blindly
+inherit by calling it.
+
+Every field logged is drawn from `Day 13 Task.pdf`'s own "Safe metadata
+may include" list, computed purely from already-typed, already-sanitized
+values -- `registry_version`/`policy_version` (constant per loaded
+registry/policy), `tool_id`/`tool_version`/`server_alias`/`risk_level`
+(from the resolved `ToolDefinition`, when one was resolved --
+`None`/omitted for `tool_not_found`/`version_not_found`, where no such
+definition exists), `input_validation_result`/`output_validation_result`
+(`"not_reached"`/`"valid"`/`"invalid"`, derived purely from which stage a
+`ToolExecutionResult.error_category` shows the pipeline actually reached
+-- see `_stage_validation_results()`), `retry_count`, `outcome`
+(`ToolExecutionResult.status.value`), `normalized_error` (passed as
+`log_event()`'s own existing `error_category` parameter -- Day 6's
+established field for exactly this purpose, not a second, parallel field
+name), `request_id`/`correlation_id`, and `latency_ms` (the full
+`execute()` call's own wall-clock duration).
+
+Never logged, by construction -- there is no code path through which any
+of the following could even reach `log_event()`'s call site below:
+`request.arguments` (untrusted, may contain business data), the transport
+`payload`/`ToolExecutionResult.payload` (external, untrusted, and on
+success may carry the governed record itself), or any raw exception
+message (`ToolExecutionResult.error_message` is deliberately *not* logged
+here either, even though it is already sanitized -- Day 13's own stricter
+"do not log raw tool payloads, protected records, secrets or tokens" is
+read to mean the normalized *category* is what belongs in default
+telemetry, not stage-specific free text, mirroring Day 6's own
+`AskResponse.category`-not-message convention)."""
 from __future__ import annotations
 
 import queue
@@ -146,6 +187,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aico.observability.logging import log_event
 from aico.tools.errors import ToolNotFoundError, ToolSchemaValidationFailure, ToolVersionNotFoundError
 from aico.tools.mcp_gateway import MCPGateway, ToolTransportFailure, ToolTransportFailureCategory, ToolTransportSuccess
 from aico.tools.models import ToolDefinition, ToolExecutionRequest
@@ -180,6 +222,41 @@ class ToolExecutionErrorCategory(str, Enum):
     TRANSPORT_UNAVAILABLE = "transport_unavailable"
     TRANSPORT_ERROR = "transport_error"
     OUTPUT_INVALID = "output_invalid"
+
+
+def _stage_validation_results(
+    error_category: ToolExecutionErrorCategory | None,
+) -> tuple[str, str]:
+    """Derive `(input_validation_result, output_validation_result)` --
+    each `"valid"`, `"invalid"`, or `"not_reached"` -- purely from which
+    stage a `ToolExecutionResult.error_category` shows the pipeline
+    actually reached (Task 13's own safe metadata list). A pure function
+    of the already-typed result, not extra state threaded through
+    `_run_pipeline()` -- the required stage order (Task 7) already fixes
+    which stages a given category could only have come from."""
+    if error_category is None:  # SUCCESS -- every stage was reached and passed.
+        return "valid", "valid"
+
+    if error_category in (
+        ToolExecutionErrorCategory.TOOL_NOT_FOUND,
+        ToolExecutionErrorCategory.VERSION_NOT_FOUND,
+        ToolExecutionErrorCategory.TOOL_DISABLED,
+        ToolExecutionErrorCategory.POLICY_DENIED,
+    ):
+        return "not_reached", "not_reached"
+
+    if error_category is ToolExecutionErrorCategory.INPUT_INVALID:
+        return "invalid", "not_reached"
+
+    if error_category in (
+        ToolExecutionErrorCategory.TIMEOUT,
+        ToolExecutionErrorCategory.CANCELLED,
+        ToolExecutionErrorCategory.TRANSPORT_UNAVAILABLE,
+        ToolExecutionErrorCategory.TRANSPORT_ERROR,
+    ):
+        return "valid", "not_reached"  # input validation passed; transport never returned a payload to check
+
+    return "valid", "invalid"  # ToolExecutionErrorCategory.OUTPUT_INVALID
 
 
 class ToolExecutionResult(BaseModel):
@@ -241,9 +318,57 @@ class ToolExecutor:
     def execute(
         self, request: ToolExecutionRequest, *, cancellation: ToolCancellationToken | None = None
     ) -> ToolExecutionResult:
-        """Run the full, required-order pipeline for one request. Never
-        raises for an ordinary outcome -- success and every failure
-        category are both normal, typed `ToolExecutionResult` values."""
+        """Run the full, required-order pipeline for one request, and emit
+        exactly one sanitized `stage="tool_execution"` observability event
+        for it (Task 13 -- see module docstring). Never raises for an
+        ordinary outcome -- success and every failure category are both
+        normal, typed `ToolExecutionResult` values, and the event is
+        always emitted, on every path, before returning."""
+        start = time.monotonic()
+        result = self._run_pipeline(request, cancellation=cancellation)
+        latency_ms = (time.monotonic() - start) * 1000
+        self._log_execution(request, result, latency_ms=latency_ms)
+        return result
+
+    def _log_execution(self, request: ToolExecutionRequest, result: ToolExecutionResult, *, latency_ms: float) -> None:
+        """The one place a `tool_execution` observability event is ever
+        built and emitted -- see module docstring's "Day 13 Task 13"
+        paragraph for exactly which fields are safe and why."""
+        tool: ToolDefinition | None = None
+        try:
+            tool = self._registry.get_tool(result.tool_id, result.tool_version)
+        except (ToolNotFoundError, ToolVersionNotFoundError):
+            pass  # unregistered tool/version -- no ToolDefinition metadata to attach
+
+        input_validation_result, output_validation_result = _stage_validation_results(result.error_category)
+
+        log_event(
+            request_id=result.request_id,
+            correlation_id=result.correlation_id,
+            stage="tool_execution",
+            outcome=result.status.value,
+            latency_ms=latency_ms,
+            error_category=result.error_category.value if result.error_category is not None else None,
+            tool_id=result.tool_id,
+            tool_version=result.tool_version,
+            registry_version=self._registry.registry_version,
+            policy_version=self._policy.policy_version,
+            server_alias=tool.server_alias if tool is not None else None,
+            risk_level=tool.risk_level.value if tool is not None else None,
+            input_validation_result=input_validation_result,
+            output_validation_result=output_validation_result,
+            retry_count=result.retry_count,
+        )
+
+    def _run_pipeline(
+        self, request: ToolExecutionRequest, *, cancellation: ToolCancellationToken | None = None
+    ) -> ToolExecutionResult:
+        """The full, required-order pipeline for one request -- unchanged
+        from Task 7 other than its name (`execute()`, above, is now the
+        public entrypoint, wrapping this with Task 13's own observability
+        event); every "Do not create a second raw helper that bypasses
+        this sequence" guarantee still applies to this method exactly as
+        it did when it was named `execute()`."""
 
         # Stage 1 -- registry (Task 2). Missing/unknown tool/version fails
         # closed immediately; every later stage needs a resolved `tool`.
