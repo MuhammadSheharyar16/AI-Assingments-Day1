@@ -2153,7 +2153,7 @@ been copied forward again, so `pytest.exe` briefly resolved `aico` from
 Adds a governed tool boundary so only registered, versioned, schema-valid
 and policy-approved tools can execute through one controlled MCP gateway
 (`Day 13 Task.pdf`'s standing rule: "A model never receives a raw
-capability to execute arbitrary tools"). In progress — Tasks 1-10 are
+capability to execute arbitrary tools"). In progress — Tasks 1-11 are
 implemented so far.
 
 - `data/day13_pack/` — the Day 13 resource pack, copied verbatim from the
@@ -2254,6 +2254,20 @@ implemented so far.
   `ToolTransportError` family) still never escapes `ToolExecutor.execute()`
   as itself, nor leaks its own message text into the public
   `ToolExecutionResult` — only a fixed, sanitized template.
+
+- Task 11 (output schema validation) likewise needed no new production
+  code: `validate_tool_output()` (`schema_validator.py`) was already built
+  during Task 7, sharing `_validate_against_schema()` with Task 5's
+  `validate_tool_input()`. `tests/test_day13_output_schema.py` (the
+  required structure's own named file) is Task 11's dedicated proof,
+  mirroring `test_day13_input_schema.py`'s structure one stage later:
+  every `output_validation_cases.json` case (`OUT13-001..005`), the five
+  required categories, a structural check that
+  `validate_tool_output()`'s signature (`tool`, `payload`) has nowhere a
+  model repair suggestion could even be passed, an end-to-end confirmation
+  through the real `ToolExecutor` that malformed transport output never
+  surfaces as `SUCCESS`, and the identical no-raw-value-leak discipline
+  Task 5's own failures already have.
 
 `tests/test_day13_executor.py` is an additional file beyond the required
 structure's own list (no single named file maps onto Task 7's end-to-end
