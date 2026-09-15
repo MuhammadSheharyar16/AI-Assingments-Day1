@@ -25,8 +25,53 @@ Day 13 Task 4 -- typed Tool Execution Policy failures.
 pattern one layer over, for `ToolExecutionPolicy`
 (`policy.py`) and the committed `policy/tool_execution_policy.v1.json` --
 mirrors `PolicyLoadError`'s/`GateBError`'s role for Gate-B's own policy and
-authorization boundary (`aico.control.errors`)."""
+authorization boundary (`aico.control.errors`).
+
+Day 13 Task 5 -- `ToolSchemaValidationFailure`. Not an exception -- a
+frozen, JSON-safe *value* `schema_validator.py`'s `validate_tool_input()`
+returns as an ordinary function result (`dict[str, Any] |
+ToolSchemaValidationFailure`), the identical pattern
+`aico.contracts.errors.ValidationFailure` already establishes for Day 4's
+own parse/contract boundary (`validator.py`'s `validate_contract()`).
+Carries only sanitized fields -- `category`/`field_path`/a fixed-template
+`message` -- and never the raw submitted argument value itself (Day 13
+working rule: "Tool arguments/results containing protected data are not
+dumped into default logs"); see `schema_validator.py`'s own docstring for
+why `jsonschema`'s own auto-generated messages are not used verbatim."""
 from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+SchemaValidationCategory = Literal[
+    "missing_field", "extra_field", "wrong_type", "invalid_enum", "invalid_constraint", "other"
+]
+
+SCHEMA_VALIDATION_CATEGORIES: tuple[SchemaValidationCategory, ...] = (
+    "missing_field",
+    "extra_field",
+    "wrong_type",
+    "invalid_enum",
+    "invalid_constraint",
+    "other",
+)
+
+
+@dataclass(frozen=True)
+class ToolSchemaValidationFailure:
+    """A typed, safe-to-log schema-validation failure. `field_path` is a
+    dotted path into the validated payload (e.g. `"supplier_id"`),
+    `None` when the failure isn't about one specific field (e.g. more than
+    one additional property, or a failure at the payload's own top
+    level)."""
+
+    category: SchemaValidationCategory
+    message: str
+    field_path: str | None = None
+
+    def __str__(self) -> str:  # safe by construction -- see module docstring
+        where = f" at {self.field_path}" if self.field_path else ""
+        return f"[{self.category}]{where} {self.message}"
 
 
 class ToolRegistryError(Exception):

@@ -38,14 +38,23 @@ version, active/disabled status (the tool's own and the rule's), required
 trusted permission, approved server alias, risk-level ceiling, and
 side-effecting/idempotent retry safety -- returning a typed
 `ToolExecutionPolicyDecision`, never a fall-through to allow.
+
+Task 5 adds `validate_tool_input()` (`schema_validator.py`) -- the one
+place a request's `arguments` is ever checked against its resolved tool's
+registered `input_schema`, returning either the arguments dict or a typed
+`ToolSchemaValidationFailure` (`errors.py`); never a bare `jsonschema`
+exception, never a value in that failure that echoes the raw submitted
+argument (only schema-declared property names/categories).
 """
 from aico.tools.errors import (
+    SCHEMA_VALIDATION_CATEGORIES,
     ToolExecutionPolicyError,
     ToolExecutionPolicyInvariantError,
     ToolExecutionPolicyLoadError,
     ToolNotFoundError,
     ToolRegistryError,
     ToolRegistryLoadError,
+    ToolSchemaValidationFailure,
     ToolVersionNotFoundError,
 )
 from aico.tools.models import (
@@ -69,6 +78,7 @@ from aico.tools.policy import (
     ToolExecutionPolicyStatus,
 )
 from aico.tools.registry import DEFAULT_REGISTRY_PATH, ToolRegistry
+from aico.tools.schema_validator import validate_tool_input
 
 __all__ = [
     "RetryPolicy",
@@ -96,4 +106,7 @@ __all__ = [
     "ToolExecutionPolicyError",
     "ToolExecutionPolicyLoadError",
     "ToolExecutionPolicyInvariantError",
+    "validate_tool_input",
+    "ToolSchemaValidationFailure",
+    "SCHEMA_VALIDATION_CATEGORIES",
 ]
