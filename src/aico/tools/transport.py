@@ -59,12 +59,24 @@ names:
 `call_count` is exposed so a test can assert the critical invariant a
 disabled tool or an invalid-input/invalid-policy request must satisfy:
 "transport calls = 0" -- Task 6 makes this directly observable rather than
-inferred from a mock library's own call-tracking."""
+inferred from a mock library's own call-tracking.
+
+Day 13 Task 8 adds `DelayedStep` -- wraps any other step with a fixed,
+uninterruptible `time.sleep()` before it is produced ("Use a slow fake
+transport", Task 8's own instruction for proving timeout enforcement). Its
+delay deliberately does *not* observe `cancellation` at all, unlike
+`wait_until_cancelled` -- it simulates the worst case a caller-side
+timeout wrapper (`ToolExecutor`, Task 8) must still handle safely: a
+transport that ignores cancellation entirely and eventually produces a
+normal result regardless. Proving that late result is discarded rather
+than surfaced (Task 8: "cancelled transport does not later produce normal
+success") is exactly what `DelayedStep` makes possible to test."""
 from __future__ import annotations
 
 import threading
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -134,7 +146,20 @@ _TRANSPORT_UNAVAILABLE = "transport_unavailable"
 _TRANSPORT_ERROR = "transport_error"
 _WAIT_UNTIL_CANCELLED = "wait_until_cancelled"
 
-FakeTransportStep = dict[str, Any] | str
+_BareFakeTransportStep = dict[str, Any] | str
+
+
+@dataclass(frozen=True)
+class DelayedStep:
+    """Wraps another, bare `FakeTransportStep` with a fixed,
+    uninterruptible delay before it is produced -- see module docstring's
+    "Day 13 Task 8" paragraph."""
+
+    delay_seconds: float
+    step: _BareFakeTransportStep
+
+
+FakeTransportStep = _BareFakeTransportStep | DelayedStep
 
 
 class FakeToolTransport:
@@ -176,6 +201,12 @@ class FakeToolTransport:
                 f"{request.tool_id!r}@{request.tool_version!r}) -- test misconfiguration"
             )
         step = self._steps.pop(0)
+
+        if isinstance(step, DelayedStep):
+            # Deliberately does not observe `cancellation` at all -- see
+            # module docstring's "Day 13 Task 8" paragraph.
+            time.sleep(step.delay_seconds)
+            step = step.step
 
         if isinstance(step, dict):
             return step

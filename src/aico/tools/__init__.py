@@ -65,6 +65,18 @@ schema validation -> MCP Gateway -> transport -> output schema validation
 bypasses any stage. Every stage's failure is tagged with one of Day 13's
 ten normalized `ToolExecutionErrorCategory` names (Task 10's own list,
 necessarily defined here -- see `executor.py`'s module docstring).
+
+Task 8 makes that same MCP-Gateway/transport stage bounded and
+interruptible: `ToolExecutor` now runs it on a background thread and
+returns a typed `TIMEOUT` failure the instant `ToolDefinition.timeout_ms`
+elapses, or a typed `CANCELLED` failure the instant a caller-supplied
+`ToolCancellationToken` is cancelled -- bridging either signal into the
+gateway/transport call's own internal token so a cooperative transport
+(`FakeToolTransport`'s `wait_until_cancelled`) actually observes it and
+can stop. `transport.py` adds `DelayedStep` -- a "slow fake transport"
+step that ignores cancellation entirely, for proving a late, in-flight
+result is discarded rather than surfacing as a success after the deadline
+has already produced a typed failure.
 """
 from aico.tools.errors import (
     SCHEMA_VALIDATION_CATEGORIES,
@@ -107,7 +119,13 @@ from aico.tools.policy import (
 )
 from aico.tools.registry import DEFAULT_REGISTRY_PATH, ToolRegistry
 from aico.tools.schema_validator import validate_tool_input, validate_tool_output
-from aico.tools.transport import FakeToolTransport, ToolCancellationToken, ToolTransport, ToolTransportRequest
+from aico.tools.transport import (
+    DelayedStep,
+    FakeToolTransport,
+    ToolCancellationToken,
+    ToolTransport,
+    ToolTransportRequest,
+)
 
 __all__ = [
     "RetryPolicy",
@@ -149,6 +167,7 @@ __all__ = [
     "ToolTransportRequest",
     "ToolCancellationToken",
     "FakeToolTransport",
+    "DelayedStep",
     "ToolTransportError",
     "ToolTransportTimeoutError",
     "ToolTransportUnavailableError",

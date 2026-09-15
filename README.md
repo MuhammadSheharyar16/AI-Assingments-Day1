@@ -2153,7 +2153,7 @@ been copied forward again, so `pytest.exe` briefly resolved `aico` from
 Adds a governed tool boundary so only registered, versioned, schema-valid
 and policy-approved tools can execute through one controlled MCP gateway
 (`Day 13 Task.pdf`'s standing rule: "A model never receives a raw
-capability to execute arbitrary tools"). In progress — Tasks 1-7 are
+capability to execute arbitrary tools"). In progress — Tasks 1-8 are
 implemented so far.
 
 - `data/day13_pack/` — the Day 13 resource pack, copied verbatim from the
@@ -2212,10 +2212,27 @@ implemented so far.
   — Task 10's own list, necessarily defined here since the executor
   cannot produce a well-typed result without it existing).
 
+- `tools/executor.py` (Task 8) — `ToolExecutor._dispatch_with_timeout()`:
+  every MCP-Gateway/transport call now runs on a background thread bounded
+  by `ToolDefinition.timeout_ms`, the tool-boundary analog of
+  `aico.platform.model_gateway`'s own `_dispatch_with_cancellation()`
+  (reimplemented locally, never imported). Whichever happens first wins —
+  the deadline elapsing (-> typed `TIMEOUT`), a caller-supplied
+  `ToolCancellationToken` being cancelled (-> typed `CANCELLED`, bridged
+  into the gateway/transport call's own internal token so a cooperative
+  transport like `FakeToolTransport`'s `wait_until_cancelled` step
+  actually observes it), or the call finishing normally. `execute()` never
+  waits past whichever fires first; a slow/non-cooperative transport
+  (`transport.py`'s new `DelayedStep`, "use a slow fake transport") keeps
+  running in the background and its eventual result is simply discarded —
+  proven directly by `tests/test_day13_transport_failures.py`.
+
 `tests/test_day13_executor.py` is an additional file beyond the required
 structure's own list (no single named file maps onto Task 7's end-to-end
 wiring) — the "equivalent previously accepted filenames" allowance,
-documented here.
+documented here. `tests/test_day13_transport_failures.py` (Task 8, further
+extended by Task 9/10) is the required structure's own named file for
+timeout/cancellation/retry/transport-normalization coverage.
 
 ## Key design decisions
 

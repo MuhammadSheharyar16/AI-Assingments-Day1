@@ -52,23 +52,64 @@ is decided:
     - output schema validation: any `ToolSchemaValidationFailure` ->
       `output_invalid`.
 
-Task 8 (timeout/cancellation enforcement) and Task 9 (bounded, policy-safe
-retry) extend this same `execute()` method in place -- today it makes
-exactly one gateway call per request, passing through whatever
-`cancellation` token its own caller supplies, with no retry loop yet; both
-tasks add behavior to the existing MCP-Gateway/transport stage, not a
-second code path."""
+Day 13 Task 8 -- timeout and cancellation. Every gateway call now runs
+through `_dispatch_with_timeout()`, the tool-boundary analog of
+`aico.platform.model_gateway`'s own `_dispatch_with_cancellation()`
+(reimplemented locally, not imported -- see `transport.py`'s module
+docstring for why `aico.tools` never reaches into `aico.platform`):
+`MCPGateway.execute()` runs on a daemon background thread while this
+method polls, once per `cancellation_poll_seconds` tick, for whichever
+happens first --
+
+    - the tool's own bounded budget (`ToolDefinition.timeout_ms`,
+      Task 1) elapses -> the *internal* cancellation token passed to the
+      gateway/transport is cancelled (so a cooperative transport, e.g.
+      `FakeToolTransport`'s `wait_until_cancelled` step, can actually stop
+      on its own) and this method immediately returns a typed
+      `ToolExecutionErrorCategory.TIMEOUT` failure -- "timeout enforced",
+      "timeout normalized" (never a raw `TimeoutError`, always this one
+      typed category);
+    - the caller's own, externally supplied `cancellation` token is
+      cancelled -> bridged into the same internal token (so it reaches the
+      fake transport exactly the way `wait_until_cancelled` expects --
+      "request cancellation reaches fake transport") and this method
+      returns a typed `ToolExecutionErrorCategory.CANCELLED` failure;
+    - the background call actually finishes -> its real
+      `ToolTransportSuccess`/`ToolTransportFailure` result is returned, as
+      today.
+
+Either way, `execute()` never waits for the background thread past its
+own deadline/cancellation instant -- the identical "the caller is never
+left waiting on it" guarantee `_dispatch_with_cancellation()` gives.
+Python cannot forcibly stop an arbitrary blocking call on another thread,
+so a slow or non-cooperative transport (`transport.py`'s `DelayedStep`,
+Task 8's own "use a slow fake transport" tool) keeps running to completion
+in the background even after this method has already returned -- its
+eventual result is written to a queue nothing is listening to anymore and
+is simply discarded, which is exactly what proves "cancelled transport
+does not later produce normal success": there is no code path by which a
+late background result could still reach the caller once the deadline/
+cancellation instant has already produced and returned a typed failure.
+
+Task 9 (bounded, policy-safe retry) extends this same `execute()` method
+in place -- today `_dispatch_with_timeout()` makes exactly one gateway
+call per request; Task 9 adds a bounded retry loop around it for the one
+tool/failure-category combination `RetryPolicy` (Task 1) actually permits,
+not a second code path."""
 from __future__ import annotations
 
+import queue
+import threading
+import time
 from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from aico.tools.errors import ToolNotFoundError, ToolSchemaValidationFailure, ToolVersionNotFoundError
-from aico.tools.mcp_gateway import MCPGateway, ToolTransportFailure
+from aico.tools.mcp_gateway import MCPGateway, ToolTransportFailure, ToolTransportFailureCategory, ToolTransportSuccess
 from aico.tools.models import ToolDefinition, ToolExecutionRequest
-from aico.tools.policy import ToolExecutionPolicy, ToolExecutionPolicyStatus
+from aico.tools.policy import ToolExecutionPolicy, ToolExecutionPolicyDecision, ToolExecutionPolicyStatus
 from aico.tools.registry import ToolRegistry
 from aico.tools.schema_validator import validate_tool_input, validate_tool_output
 from aico.tools.transport import ToolCancellationToken
@@ -133,6 +174,7 @@ class ToolExecutionResult(BaseModel):
     def succeeded(self) -> bool:
         return self.status is ToolExecutionStatus.SUCCESS
 
+
 class ToolExecutor:
     """The one controlled pipeline entrypoint -- see module docstring for
     the required stage order and what "no second raw helper" means here.
@@ -140,10 +182,18 @@ class ToolExecutor:
     and an `MCPGateway` wrapping an injected transport; reused for every
     request."""
 
-    def __init__(self, registry: ToolRegistry, policy: ToolExecutionPolicy, gateway: MCPGateway) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        policy: ToolExecutionPolicy,
+        gateway: MCPGateway,
+        *,
+        cancellation_poll_seconds: float = 0.02,
+    ) -> None:
         self._registry = registry
         self._policy = policy
         self._gateway = gateway
+        self._cancellation_poll_seconds = cancellation_poll_seconds
 
     def execute(
         self, request: ToolExecutionRequest, *, cancellation: ToolCancellationToken | None = None
@@ -187,10 +237,12 @@ class ToolExecutor:
                 message=str(validated_input),
             )
 
-        # Stage 4/5 -- MCP Gateway / transport (Task 6). The gateway itself
-        # enforces "registered, policy-approved, input-schema-valid" as a
-        # precondition; every input it needs was just produced above.
-        transport_result = self._gateway.execute(
+        # Stage 4/5 -- MCP Gateway / transport (Task 6), bounded by the
+        # tool's own timeout and interruptible by cancellation (Task 8).
+        # The gateway itself enforces "registered, policy-approved,
+        # input-schema-valid" as a precondition; every input it needs was
+        # just produced above.
+        transport_result = self._dispatch_with_timeout(
             tool=tool,
             request=request,
             validated_arguments=validated_input,
@@ -226,6 +278,67 @@ class ToolExecutor:
             correlation_id=request.correlation_id,
             payload=validated_output,
         )
+
+    def _dispatch_with_timeout(
+        self,
+        *,
+        tool: ToolDefinition,
+        request: ToolExecutionRequest,
+        validated_arguments: dict[str, Any],
+        policy_decision: ToolExecutionPolicyDecision,
+        cancellation: ToolCancellationToken | None,
+    ) -> ToolTransportSuccess | ToolTransportFailure:
+        """Run `MCPGateway.execute()` bounded by `tool.timeout_ms` and
+        interruptible by `cancellation` -- see module docstring's "Day 13
+        Task 8" paragraph for the full mechanism. `MCPGateway.execute()`
+        itself never raises for an ordinary transport outcome (Task 6's
+        own guarantee); the `except BaseException` branch below exists
+        purely as a last-resort safety net for the background thread
+        itself, not a path this pipeline is expected to exercise."""
+        internal_token = ToolCancellationToken()
+        outcome: queue.Queue = queue.Queue(maxsize=1)
+
+        def _run() -> None:
+            try:
+                outcome.put(
+                    (
+                        "result",
+                        self._gateway.execute(
+                            tool=tool,
+                            request=request,
+                            validated_arguments=validated_arguments,
+                            policy_decision=policy_decision,
+                            cancellation=internal_token,
+                        ),
+                    )
+                )
+            except BaseException as exc:  # pragma: no cover -- defensive; see docstring
+                outcome.put(("error", exc))
+
+        threading.Thread(target=_run, daemon=True, name=f"tool-executor-{tool.tool_id}").start()
+
+        deadline_seconds = tool.timeout_ms / 1000.0
+        start = time.monotonic()
+        while True:
+            if cancellation is not None and cancellation.is_cancelled():
+                internal_token.cancel()
+                return ToolTransportFailure(
+                    category=ToolTransportFailureCategory.CANCELLED,
+                    message="execution was cancelled while in flight",
+                )
+            if time.monotonic() - start >= deadline_seconds:
+                internal_token.cancel()
+                return ToolTransportFailure(
+                    category=ToolTransportFailureCategory.TIMEOUT,
+                    message=f"tool call exceeded its {tool.timeout_ms}ms timeout budget",
+                )
+            try:
+                kind, payload = outcome.get(timeout=self._cancellation_poll_seconds)
+            except queue.Empty:
+                continue
+            if kind == "error":  # pragma: no cover -- defensive; see docstring
+                raise payload
+            return payload
 
     @staticmethod
     def _failure(
