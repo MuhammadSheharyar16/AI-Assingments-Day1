@@ -1,0 +1,105 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "EXEC13-001",
+      "name": "valid_lookup",
+      "request": {
+        "tool_id": "supplier_status_lookup",
+        "tool_version": "1.0.0",
+        "arguments": {
+          "supplier_id": "SUP-ALPHA"
+        },
+        "trusted_permissions": [
+          "read_structured_supplier"
+        ],
+        "effective_tenant_scope": [
+          "TENANT-A"
+        ]
+      },
+      "fake_transport_result": {
+        "supplier_id": "SUP-ALPHA",
+        "status": "active",
+        "as_of": "2026-09-15T09:00:00Z"
+      },
+      "expected": "success",
+      "expected_transport_calls": 1
+    },
+    {
+      "id": "EXEC13-002",
+      "name": "missing_required_input",
+      "request": {
+        "tool_id": "supplier_status_lookup",
+        "tool_version": "1.0.0",
+        "arguments": {},
+        "trusted_permissions": [
+          "read_structured_supplier"
+        ]
+      },
+      "expected": "input_invalid",
+      "expected_transport_calls": 0
+    },
+    {
+      "id": "EXEC13-003",
+      "name": "extra_privilege_argument",
+      "request": {
+        "tool_id": "supplier_status_lookup",
+        "tool_version": "1.0.0",
+        "arguments": {
+          "supplier_id": "SUP-ALPHA",
+          "role": "admin"
+        },
+        "trusted_permissions": [
+          "read_structured_supplier"
+        ]
+      },
+      "expected": "input_invalid",
+      "expected_transport_calls": 0
+    },
+    {
+      "id": "EXEC13-004",
+      "name": "permission_denied",
+      "request": {
+        "tool_id": "supplier_status_lookup",
+        "tool_version": "1.0.0",
+        "arguments": {
+          "supplier_id": "SUP-ALPHA"
+        },
+        "trusted_permissions": []
+      },
+      "expected": "policy_denied",
+      "expected_transport_calls": 0
+    },
+    {
+      "id": "EXEC13-005",
+      "name": "disabled_tool",
+      "request": {
+        "tool_id": "supplier_record_update",
+        "tool_version": "1.0.0",
+        "arguments": {
+          "supplier_id": "SUP-ALPHA",
+          "status": "inactive"
+        },
+        "trusted_permissions": [
+          "write_structured_supplier"
+        ]
+      },
+      "expected": "tool_disabled",
+      "expected_transport_calls": 0
+    },
+    {
+      "id": "EXEC13-006",
+      "name": "unknown_tool",
+      "request": {
+        "tool_id": "model_invented_tool",
+        "tool_version": "9.9.9",
+        "arguments": {},
+        "trusted_permissions": [
+          "read_structured_supplier"
+        ]
+      },
+      "expected": "tool_not_found",
+      "expected_transport_calls": 0
+    }
+  ]
+}

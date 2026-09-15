@@ -1,0 +1,35 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "REG13-001",
+      "name": "valid_registry",
+      "mutation": "none",
+      "expected": "valid"
+    },
+    {
+      "id": "REG13-002",
+      "name": "duplicate_tool_version",
+      "mutation": "duplicate supplier_status_lookup 1.0.0",
+      "expected": "invalid"
+    },
+    {
+      "id": "REG13-003",
+      "name": "invalid_semver",
+      "mutation": "set version to one",
+      "expected": "invalid"
+    },
+    {
+      "id": "REG13-004",
+      "name": "missing_owner",
+      "mutation": "remove owner",
+      "expected": "invalid"
+    },
+    {
+      "id": "REG13-005",
+      "name": "unsafe_retry_metadata",
+      "mutation": "non-idempotent side-effect tool max_attempts=3",
+      "expected": "invalid_or_policy_rejected"
+    }
+  ]
+}

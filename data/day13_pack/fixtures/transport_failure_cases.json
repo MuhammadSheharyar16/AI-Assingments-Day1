@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "TR13-001",
+      "name": "timeout",
+      "tool_id": "supplier_status_lookup",
+      "transport_sequence": [
+        "timeout",
+        "timeout"
+      ],
+      "expected": "timeout_or_retry_exhausted",
+      "max_transport_calls": 2
+    },
+    {
+      "id": "TR13-002",
+      "name": "transient_then_success",
+      "tool_id": "supplier_status_lookup",
+      "transport_sequence": [
+        "transport_unavailable",
+        {
+          "supplier_id": "SUP-ALPHA",
+          "status": "under_review",
+          "as_of": "2026-09-15T09:00:00Z"
+        }
+      ],
+      "expected": "success",
+      "expected_transport_calls": 2
+    },
+    {
+      "id": "TR13-003",
+      "name": "retry_exhaustion",
+      "tool_id": "supplier_status_lookup",
+      "transport_sequence": [
+        "transport_unavailable",
+        "transport_unavailable"
+      ],
+      "expected": "transport_unavailable",
+      "max_transport_calls": 2
+    },
+    {
+      "id": "TR13-004",
+      "name": "cancelled",
+      "tool_id": "supplier_status_lookup",
+      "transport_sequence": [
+        "wait_until_cancelled"
+      ],
+      "expected": "cancelled"
+    },
+    {
+      "id": "TR13-005",
+      "name": "disabled_side_effect_tool_never_retries",
+      "tool_id": "supplier_record_update",
+      "expected": "tool_disabled",
+      "expected_transport_calls": 0
+    }
+  ]
+}

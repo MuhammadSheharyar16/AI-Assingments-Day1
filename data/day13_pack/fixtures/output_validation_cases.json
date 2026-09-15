@@ -1,0 +1,60 @@
+{
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "OUT13-001",
+      "name": "valid_output",
+      "tool_id": "supplier_status_lookup",
+      "payload": {
+        "supplier_id": "SUP-ALPHA",
+        "status": "active",
+        "as_of": "2026-09-15T09:00:00Z"
+      },
+      "expected": "success"
+    },
+    {
+      "id": "OUT13-002",
+      "name": "missing_status",
+      "tool_id": "supplier_status_lookup",
+      "payload": {
+        "supplier_id": "SUP-ALPHA",
+        "as_of": "2026-09-15T09:00:00Z"
+      },
+      "expected": "output_invalid"
+    },
+    {
+      "id": "OUT13-003",
+      "name": "wrong_status_type",
+      "tool_id": "supplier_status_lookup",
+      "payload": {
+        "supplier_id": "SUP-ALPHA",
+        "status": 1,
+        "as_of": "2026-09-15T09:00:00Z"
+      },
+      "expected": "output_invalid"
+    },
+    {
+      "id": "OUT13-004",
+      "name": "invalid_status_enum",
+      "tool_id": "supplier_status_lookup",
+      "payload": {
+        "supplier_id": "SUP-ALPHA",
+        "status": "deleted",
+        "as_of": "2026-09-15T09:00:00Z"
+      },
+      "expected": "output_invalid"
+    },
+    {
+      "id": "OUT13-005",
+      "name": "extra_output_field",
+      "tool_id": "supplier_status_lookup",
+      "payload": {
+        "supplier_id": "SUP-ALPHA",
+        "status": "active",
+        "as_of": "2026-09-15T09:00:00Z",
+        "secret_internal_note": "must not pass"
+      },
+      "expected": "output_invalid"
+    }
+  ]
+}
