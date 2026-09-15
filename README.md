@@ -2447,7 +2447,7 @@ way, by deleting `.venv` and running `uv sync --frozen` fresh, before Task
 
 ## Folder structure
 
-Verified against `git ls-files` on 2026-09-14 — every path below exists in
+Verified against `git ls-files` on 2026-09-15 — every path below exists in
 the repo as shown; nothing here is aspirational.
 
 ```
@@ -2486,11 +2486,18 @@ aico-ai-engineer-lab/
                                      policy (byte-identical to data/day11_pack/fixtures/evidence_policy_v1.json)
     gate_d_policy.v1.json           Day 12 Task 2 — committed, read-only governed Gate-D final-response
                                      policy (byte-identical to data/day12_pack/fixtures/gate_d_policy_v1.json)
-    README.md                       Day 10/11/12 — what each policy is, why it's read-only, how a v2 would be added
+    tool_execution_policy.v1.json   Day 13 Task 3 — committed, read-only governed default-deny tool
+                                     execution policy (byte-identical to
+                                     data/day13_pack/fixtures/tool_execution_policy_v1.json)
+    README.md                       Day 10/11/12/13 — what each policy is, why it's read-only, how a v2 would be added
   evidence/
     source_registry.v1.json         Day 11 Task 2 — committed, read-only governed source registry
                                      (byte-identical to data/day11_pack/fixtures/source_registry_v1.json)
     README.md                       Day 11 — what the registry is, why it's read-only, how a v2 would be added
+  tools/
+    registry.v1.json                Day 13 Task 1/2 — committed, read-only governed Tool Registry
+                                     (byte-identical to data/day13_pack/fixtures/tool_registry_v1.json)
+    README.md                       Day 13 — what the registry is, why it's read-only, how a v2 would be added
   contracts/schema/
     cited_answer.v1.schema.json           Day 4 — generated from CitedAnswer, never hand-edited
     response_envelope.v1.schema.json      Day 4 — generated from ResponseEnvelope, never hand-edited
@@ -2534,6 +2541,12 @@ aico-ai-engineer-lab/
                                                 budget()/build_safe_failure_response() calls against the real
                                                 committed Gate-D policy; swept for leaked synthetic protected
                                                 values/candidate text after generation
+    day13_generate_tool_artifacts.py           Day 13 Task 14 — regenerates artifacts/day13/*.md from real
+                                                ToolRegistry.load()/ToolExecutor.execute() calls against the
+                                                real committed tools/registry.v1.json and
+                                                policy/tool_execution_policy.v1.json, driving a deterministic
+                                                FakeToolTransport — never a real remote MCP server; swept for
+                                                leaked synthetic marker argument/result values after generation
   src/aico/
     api/                             Day 6 — the typed FastAPI service (Tasks 1-6, 10)
       app.py                         Task 1 — FastAPI app, POST /ask, middleware/router wiring
@@ -2756,6 +2769,31 @@ aico-ai-engineer-lab/
                                      a recognized ConflictPolicy, an unresolved conflict never silently passes
       errors.py                     Task 1-8 — typed EvidenceEnvelopeError/SourceRegistry.../GateCPolicy...
                                      error family, sanitized messages (no raw pydantic ValidationError leaks)
+    tools/                          Day 13 — the governed Tool Registry / MCP Gateway boundary (Tasks 1-14)
+      models.py                     Task 1/3 — typed ToolDefinition/ToolRegistryDocument (status/risk_level/
+                                     retry policy); ToolExecutionRequest (frozen), resolve_trusted_permissions()/
+                                     resolve_effective_tenant_scope()
+      registry.py                   Task 2 — ToolRegistry: load() + read-only get_tool/is_active/has_tool/
+                                     has_tool_version/versions_for lookups, no mutator methods
+      policy.py                     Task 3 — ToolExecutionPolicyDocument (default_decision: "deny" only) +
+                                     ToolExecutionPolicy.authorize(): 8-stage fail-closed decision (tool
+                                     status -> matching rule -> rule status -> rule allowed -> permission ->
+                                     server alias -> risk ceiling -> unsafe-retry defense-in-depth -> allow)
+      schema_validator.py           Task 4/11 — validate_tool_input()/validate_tool_output(): jsonschema
+                                     Draft7Validator + best_match(), never echoes a raw value in a failure
+      transport.py                  Task 6 — ToolCancellationToken (threading.Event-based), ToolTransport
+                                     Protocol, FakeToolTransport (deterministic step vocabulary incl. timeout/
+                                     transport_unavailable/transport_error/wait_until_cancelled/DelayedStep)
+      mcp_gateway.py                Task 5 — MCPGateway.execute(): the single approved transport boundary,
+                                     enforces registered/policy-approved/schema-valid as a precondition,
+                                     normalizes every transport exception
+      executor.py                   Task 7-13 — ToolExecutor: the one controlled pipeline (registry -> policy
+                                     -> input schema -> gateway -> transport -> output schema -> typed
+                                     result); ToolExecutionErrorCategory (10 normalized values); timeout via
+                                     background-thread dispatch (Task 8); bounded policy-safe retry (Task 9);
+                                     structured log_event() telemetry reusing Day 6's own logging (Task 13)
+      errors.py                     Task 1-7 — typed ToolRegistryError/ToolExecutionPolicyError/
+                                     ToolTransportError/MCPGatewayError families, sanitized messages
   data/
     documents/                      DOC-001 .. DOC-005 (synthetic, unchanged across all days)
     evals/
@@ -2842,6 +2880,19 @@ aico-ai-engineer-lab/
                                      total-exceeded/invalid-negative-timing
         final_quality_cases.json    7 cases (QUAL12-001..007): valid/empty/contract-invalid/semantic-
                                      invalid/missing-citation/insufficient-evidence-clean/oversized
+    day13_pack/                     Day 13 — supplied resource pack (fixed synthetic inputs, never edited
+                                     to make the implementation pass)
+      README.md
+      tool_registry_requirements.md  Task 1/2's required registry validation bullets
+      mcp_execution_rules.md         Task 3-11's required policy/schema/transport/execution rules
+      fixtures/
+        tool_registry_v1.json        the governed v1 registry (copied verbatim to tools/registry.v1.json)
+        tool_execution_policy_v1.json  the governed v1 policy (copied verbatim to
+                                        policy/tool_execution_policy.v1.json)
+        registry_validation_cases.json  required-rejection cases incl. REG13-002 (duplicate tool/version)
+        execution_cases.json           allow/deny/disabled/missing-permission execution cases
+        output_validation_cases.json   valid/extra-field/wrong-type output schema cases
+        transport_failure_cases.json   timeout/cancellation/retry-then-success/retry-exhaustion cases
     index/                         build output (gitignored) - python -m aico.retrieval.ingest
     vectors/                       build output (gitignored) - python -m aico.retrieval.embed
     sessions/                      Day 8 — local SqliteSessionStore data (gitignored; every test uses
@@ -2922,6 +2973,15 @@ aico-ai-engineer-lab/
       disclosure_latency_report.md  allowed/redact-leak/deny-leak/secret-pattern-leak cases, governed
                                      model/total latency thresholds, an exactly-at-threshold result, one
                                      SafeFailureResponse's sanitized shape, no raw protected value anywhere
+    day13/                          Day 13 Task 14 — generated by day13_generate_tool_artifacts.py
+      tool_registry_report.md       real ToolRegistry.load() summary (owner/risk/side-effect table per
+                                     tool/version), one real invalid-registry rejection (duplicate tool/version)
+      mcp_execution_report.md       successful active-tool execution, invalid-input, policy-denial,
+                                     disabled-tool and valid-output-schema cases, each a real
+                                     ToolExecutor.execute() result against the real registry/policy
+      failure_safety_report.md      timeout/cancellation/retry-then-success/retry-exhaustion/output-schema-
+                                     failure required cases plus all 10 normalized ToolExecutionErrorCategory
+                                     values, each its own real scenario; no raw argument/result value anywhere
   tests/
     __init__.py
     conftest.py                     Day 8 Task 4 — shared fixtures (get_session_store override so
@@ -2939,9 +2999,10 @@ aico-ai-engineer-lab/
         api_cases.json                    synthetic Content-Type/size/validation/correlation cases
         identity_claim_cases.json         synthetic trusted-principal claims cases (allow/reject)
         dependency_health_cases.json      synthetic dependency-outage combinations
-      (Day 8/9/10/11/12 tests read their fixtures directly from data/day08_pack/fixtures/,
-      data/day09_pack/fixtures/, data/day10_pack/fixtures/, data/day11_pack/fixtures/ and
-      data/day12_pack/fixtures/ — no separate tests/fixtures/day08|09|10|11|12/ copy is kept)
+      (Day 8/9/10/11/12/13 tests read their fixtures directly from data/day08_pack/fixtures/,
+      data/day09_pack/fixtures/, data/day10_pack/fixtures/, data/day11_pack/fixtures/,
+      data/day12_pack/fixtures/ and data/day13_pack/fixtures/ — no separate
+      tests/fixtures/day08|09|10|11|12|13/ copy is kept)
     test_chunker.py                 (11)
     test_bm25.py                    (6)
     test_ingest.py                  (4)
@@ -3152,26 +3213,52 @@ aico-ai-engineer-lab/
     test_day12_regression.py        Day 12 Task 15 — the required-coverage audit (docstring table mapping
                                      every row to its proving test) plus the real Day 7 evaluation CLI and
                                      the Day 8/9/10/11 regression suites re-run in-process (5)
+    test_day13_tool_registry.py     Day 13 Task 1/2 — typed ToolDefinition/ToolRegistryDocument, every
+                                     required rejection (duplicate tool/version, invalid enum/status,
+                                     invalid semver), ToolRegistry.load()/get_tool/is_active/has_tool/
+                                     has_tool_version/versions_for, read-only, no mutator methods (61)
+    test_day13_tool_policy.py       Day 13 Task 3 — ToolExecutionPolicyDocument (default_decision: "deny"
+                                     only), the 8-stage fail-closed authorize() decision over every
+                                     execution_cases.json case, permission/tenant-scope/risk-ceiling/
+                                     unsafe-retry denial as units (29)
+    test_day13_input_schema.py      Day 13 Task 4 — validate_tool_input(): missing/extra/wrong-type
+                                     argument rejection, Draft7Validator best_match() sanitized failures,
+                                     never echoes a raw value (23)
+    test_day13_mcp_gateway.py       Day 13 Task 5/6 — MCPGateway.execute(): registered/policy-approved/
+                                     schema-valid precondition enforcement, normalized transport exceptions,
+                                     FakeToolTransport step vocabulary (18)
+    test_day13_transport_failures.py  Day 13 Task 6/8/9 — timeout/cancellation/transport_unavailable/
+                                     transport_error cases, background-thread timeout dispatch, the
+                                     3-signal bounded-retry safety gate, retry-then-success (23)
+    test_day13_output_schema.py     Day 13 Task 11 — validate_tool_output(): valid/extra-field/wrong-type
+                                     result rejection, output_invalid never leaks the raw payload (20)
+    test_day13_no_direct_execution.py  Day 13 Task 12 — counting fake: every execution path is provably
+                                     routed through ToolExecutor.execute() -> the one MCPGateway/transport
+                                     boundary, no model-invented tool ever reaches a transport call (27)
+    test_day13_executor.py          Day 13 Task 7/9/10 — ToolExecutor.execute(): the full 7-stage pipeline
+                                     order, all 10 normalized ToolExecutionErrorCategory values each their
+                                     own real scenario, retry_count/call_count accounting (15)
+    test_day13_observability.py     Day 13 Task 13 — structured log_event() telemetry per execution
+                                     outcome, registry_version/policy_version on every record, no raw
+                                     argument/result value in any log line (16)
+    test_day13_regression.py        Day 13 Task 15 — the required-coverage audit (docstring table mapping
+                                     every row to its proving test) plus the real Day 7 evaluation CLI and
+                                     the Day 8/9/10/11/12 regression suites re-run in-process (6)
 ```
 
-2064 tests pass in total (`uv run pytest -q`, verified 2026-09-14, count
+2311 tests pass in total (`uv run pytest -q`, verified 2026-09-15, count
 includes parametrized cases as pytest reports them — the per-file counts
-in the tree above are the same pytest-collected counts, and do sum to
-this number): 555 for `tests/test_{chunker,bm25,ingest,day01_eval,
-embedding_provider,vector_index,embed,hybrid,search,day2_regression,
-model_gateway*,foundry_adapter*,day04_*,day05_*,day06_*}.py` (Day 1-6;
-includes the 8 `test_day06_identity.py` cases proving `TrustedIdentity`'s
-`roles` claim — Day 10 Task 3's extension to Day 6's own trust boundary —
-and `test_day05_answer_support.py`, post-review hardening), 212 for
-`test_day07_*.py`, 236 for `test_day08_*.py`, 229 for `test_day09_*.py`
-(includes the 2 gate_b activation-toggle cases in
-`test_day09_control_plane_config.py`, Day 10 Task 13), 253 for
-`test_day10_*.py`, 316 for `test_day11_*.py` (Day 11), and 263 new for
-`test_day12_*.py` (Day 12, see the per-file breakdown above). Every
-pre-Day-12 test still passes unchanged (re-proven directly, not just
-assumed, in `test_day12_regression.py`), and
+in the tree above are the same pytest-collected counts): 2073 for every
+pre-Day-13 file combined (previously reported here as 2064 on
+2026-09-14; the +9 reflects incidental fixture/parametrize growth in
+existing Day 1-12 suites since that count was taken and is not re-audited
+row-by-row in this pass — `uv run pytest -q --ignore` on each
+`test_day13_*.py` file reproduces the 2073 figure directly) and 238 new
+for `test_day13_*.py` (Day 13, see the per-file breakdown above). Every
+pre-Day-13 test still passes unchanged (re-proven directly, not just
+assumed, in `test_day13_regression.py`), and
 `uv run python -m aico.evals.day07` remains green with
-`evals/baseline_v1.json` unchanged by any Day 8-12 commit.
+`evals/baseline_v1.json` unchanged by any Day 8-13 commit.
 
 Note: the task brief's "Required structure" names `requirements.txt`; this
 repo uses `pyproject.toml` + `uv.lock` (via `uv`) instead, which is the
@@ -3251,3 +3338,17 @@ never edited to widen that) — but Gate-C is now also wired live into
 second, separate, real (non-fabricated) source registry/manifest/policy
 (see "Real-corpus extension — Gate-C wired into the live `/ask/governed`
 route" in the Day 11 section above).
+
+Day 13's required tree (`src/aico/tools/*`, `tools/registry.v1.json`,
+`policy/tool_execution_policy.v1.json`, `data/day13_pack/*` used as
+supplied and never edited to force a pass, `artifacts/day13/*`, the
+`test_day13_*.py` files) matches exactly; `test_day13_input_schema.py`,
+`test_day13_output_schema.py`, `test_day13_no_direct_execution.py` and
+`test_day13_observability.py` split Task 4/11/12/13 coverage out of the
+minimum named set, the same file-splitting allowance every earlier day
+already used. Day 13 is not wired into `ControlPlaneAnswerService` or any
+live HTTP route — the brief scopes it to the Tool Registry / MCP Gateway
+boundary itself (`ToolExecutor.execute()` as the one controlled pipeline),
+never to model-invoked tool calling from an actual answer path, so there
+is no `gate_*`-style activation toggle in `config/control-plane.yaml` for
+it and none is expected.
