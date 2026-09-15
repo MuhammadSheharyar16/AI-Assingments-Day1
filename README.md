@@ -2153,7 +2153,7 @@ been copied forward again, so `pytest.exe` briefly resolved `aico` from
 Adds a governed tool boundary so only registered, versioned, schema-valid
 and policy-approved tools can execute through one controlled MCP gateway
 (`Day 13 Task.pdf`'s standing rule: "A model never receives a raw
-capability to execute arbitrary tools"). In progress — Tasks 1-11 are
+capability to execute arbitrary tools"). In progress — Tasks 1-12 are
 implemented so far.
 
 - `data/day13_pack/` — the Day 13 resource pack, copied verbatim from the
@@ -2268,6 +2268,26 @@ implemented so far.
   through the real `ToolExecutor` that malformed transport output never
   surfaces as `SUCCESS`, and the identical no-raw-value-leak discipline
   Task 5's own failures already have.
+
+- Task 12 (no direct model-to-tool execution) is also a proof-only task:
+  `tests/test_day13_no_direct_execution.py` (the required structure's own
+  named file) asserts `aico.tools`'s internal import graph is a strict,
+  acyclic layering (`models`/`errors` -> `registry`/`policy`/
+  `schema_validator`/`transport` -> `mcp_gateway` -> `executor`, encoded
+  as an explicit allowed-edge map so any future stray import is caught),
+  that neither `aico.rag` nor `aico.platform` (`ModelGateway`, the one
+  place this codebase calls an LLM) imports anything from `aico.tools` at
+  all today, that no `.execute(` call site anywhere in `src/` outside
+  `aico/tools/` reaches anything transport-shaped (the repository's one
+  unrelated exception, `memory/store.py`'s SQLite cursor, is named and
+  excluded explicitly), that `MCPGateway.execute()`/`ToolTransport.
+  execute()` accept only typed, already-resolved objects — never a bare
+  tool-name string — and, behaviorally, that an adversarial "model
+  proposes a tool call" payload (an unregistered tool name, smuggled
+  privilege-looking keys in `arguments`) still only reaches this pipeline
+  by being turned into a typed `ToolExecutionRequest` and run through the
+  full `ToolExecutor.execute()` sequence, failing exactly the way any
+  other caller's equivalent request would.
 
 `tests/test_day13_executor.py` is an additional file beyond the required
 structure's own list (no single named file maps onto Task 7's end-to-end
