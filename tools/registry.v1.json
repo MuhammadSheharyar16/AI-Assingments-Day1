@@ -1,0 +1,123 @@
+{
+  "registry_version": "1.0",
+  "tools": [
+    {
+      "tool_id": "supplier_status_lookup",
+      "tool_version": "1.0.0",
+      "display_name": "Synthetic Supplier Status Lookup",
+      "description": "Read-only lookup of synthetic supplier status.",
+      "owner": "AICO Synthetic Procurement Platform",
+      "status": "active",
+      "transport": "mcp",
+      "server_alias": "synthetic-procurement-mcp",
+      "risk_level": "low",
+      "side_effecting": false,
+      "idempotent": true,
+      "timeout_ms": 900,
+      "retry_policy": {
+        "max_attempts": 2,
+        "retryable_categories": [
+          "transport_unavailable",
+          "timeout"
+        ]
+      },
+      "required_permissions": [
+        "read_structured_supplier"
+      ],
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "supplier_id"
+        ],
+        "properties": {
+          "supplier_id": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 40,
+            "pattern": "^SUP-[A-Z0-9-]+$"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "supplier_id",
+          "status",
+          "as_of"
+        ],
+        "properties": {
+          "supplier_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "inactive",
+              "under_review"
+            ]
+          },
+          "as_of": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "tool_id": "supplier_record_update",
+      "tool_version": "1.0.0",
+      "display_name": "Synthetic Supplier Record Update",
+      "description": "Disabled side-effecting example for policy testing.",
+      "owner": "AICO Synthetic Procurement Platform",
+      "status": "disabled",
+      "transport": "mcp",
+      "server_alias": "synthetic-procurement-mcp",
+      "risk_level": "high",
+      "side_effecting": true,
+      "idempotent": false,
+      "timeout_ms": 900,
+      "retry_policy": {
+        "max_attempts": 1,
+        "retryable_categories": []
+      },
+      "required_permissions": [
+        "write_structured_supplier"
+      ],
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "supplier_id",
+          "status"
+        ],
+        "properties": {
+          "supplier_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "inactive",
+              "under_review"
+            ]
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "updated"
+        ],
+        "properties": {
+          "updated": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  ]
+}
