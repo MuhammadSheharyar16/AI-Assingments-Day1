@@ -91,11 +91,51 @@ does not later produce normal success": there is no code path by which a
 late background result could still reach the caller once the deadline/
 cancellation instant has already produced and returned a typed failure.
 
-Task 9 (bounded, policy-safe retry) extends this same `execute()` method
-in place -- today `_dispatch_with_timeout()` makes exactly one gateway
-call per request; Task 9 adds a bounded retry loop around it for the one
-tool/failure-category combination `RetryPolicy` (Task 1) actually permits,
-not a second code path."""
+Day 13 Task 9 -- retry safety. `_dispatch_with_retry()` wraps
+`_dispatch_with_timeout()` in a bounded loop, up to `tool.retry_policy.
+max_attempts` (Task 1) attempts total -- each attempt gets its own full
+`timeout_ms` budget, no shared/shrinking deadline across attempts, and
+(a deliberate simplification over `aico.platform.model_gateway`'s own
+exponential-backoff retry -- Day 13 working rule: "Do not reuse Model
+Gateway retry semantics blindly. Tool retry policy is its own boundary")
+no backoff delay between attempts at all: Task 9 asks for *bounded,
+policy-safe* retry, not backoff/jitter, so none is invented here. A
+failure is only ever retried when all three independent signals agree it
+is safe to:
+
+    1. `tool.retry_policy.max_attempts > 1` -- the tool declares retry at
+       all.
+    2. `tool.idempotent and not tool.side_effecting` -- redundant with
+       Task 1's own `ToolDefinition` validator (which already refuses to
+       register a retry-enabled side-effecting/non-idempotent tool at
+       all) and Task 4's policy-level defense-in-depth check one stage
+       earlier; checked a third time here on the same principle those two
+       already establish -- belt-and-suspenders, never trust a single
+       layer alone for a safety property this consequential.
+    3. the failure's own `ToolTransportFailureCategory` is one of `tool.
+       retry_policy.retryable_categories` (Task 1) -- e.g. the committed
+       `supplier_status_lookup` names `timeout`/`transport_unavailable`;
+       `transport_error`/`cancelled` are never retried regardless of what
+       a tool declares (Day 13 working rule: "Side-effecting/non-idempotent
+       operations are not blindly retried" -- and a cancellation is a
+       caller's own explicit request to stop, never a transient condition
+       to paper over with another attempt).
+
+Retry stops the moment any of those three is false, the attempt ceiling is
+reached (-> the same typed failure category `_dispatch_with_timeout()`
+already produced, "retry exhaustion returns typed failure" -- never a
+different/generic exhaustion category), or `cancellation` is observed
+cancelled between attempts. `ToolExecutionResult.retry_count` records how
+many *additional* attempts beyond the first were actually made (`0` for a
+first-try success or an immediately non-retryable failure) -- Task 6's own
+`FakeToolTransport.call_count` is the lower-level, transport-side mirror
+of the same number.
+
+For the disabled/unsafe-side-effecting lab tool, "zero transport calls,
+zero retry attempts" needs no special-casing here at all: Task 4's policy
+stage already denies it before `_dispatch_with_retry()` is ever reached,
+the identical "the disabled tool never gets this far" guarantee Task 6/7/8
+already give it."""
 from __future__ import annotations
 
 import queue
@@ -169,6 +209,9 @@ class ToolExecutionResult(BaseModel):
         default=None, description="Populated only when status is FAILURE."
     )
     error_message: str | None = Field(default=None, description="Sanitized detail. Populated only when status is FAILURE.")
+    retry_count: int = Field(
+        default=0, ge=0, description="Additional transport attempts beyond the first (Task 9). 0 unless a retry ran."
+    )
 
     @property
     def succeeded(self) -> bool:
@@ -238,11 +281,12 @@ class ToolExecutor:
             )
 
         # Stage 4/5 -- MCP Gateway / transport (Task 6), bounded by the
-        # tool's own timeout and interruptible by cancellation (Task 8).
-        # The gateway itself enforces "registered, policy-approved,
-        # input-schema-valid" as a precondition; every input it needs was
-        # just produced above.
-        transport_result = self._dispatch_with_timeout(
+        # tool's own timeout and interruptible by cancellation (Task 8),
+        # retried up to the tool's own bounded, policy-safe limit
+        # (Task 9). The gateway itself enforces "registered, policy-
+        # approved, input-schema-valid" as a precondition; every input it
+        # needs was just produced above.
+        transport_result, retry_count = self._dispatch_with_retry(
             tool=tool,
             request=request,
             validated_arguments=validated_input,
@@ -255,6 +299,7 @@ class ToolExecutor:
                 tool=tool,
                 category=ToolExecutionErrorCategory(transport_result.category.value),
                 message=transport_result.message,
+                retry_count=retry_count,
             )
 
         # Stage 6 -- output schema validation (Task 7/11). External,
@@ -267,6 +312,7 @@ class ToolExecutor:
                 tool=tool,
                 category=ToolExecutionErrorCategory.OUTPUT_INVALID,
                 message=str(validated_output),
+                retry_count=retry_count,
             )
 
         # Stage 7 -- typed result.
@@ -277,6 +323,7 @@ class ToolExecutor:
             request_id=request.request_id,
             correlation_id=request.correlation_id,
             payload=validated_output,
+            retry_count=retry_count,
         )
 
     def _dispatch_with_timeout(
@@ -340,6 +387,48 @@ class ToolExecutor:
                 raise payload
             return payload
 
+    def _dispatch_with_retry(
+        self,
+        *,
+        tool: ToolDefinition,
+        request: ToolExecutionRequest,
+        validated_arguments: dict[str, Any],
+        policy_decision: ToolExecutionPolicyDecision,
+        cancellation: ToolCancellationToken | None,
+    ) -> tuple[ToolTransportSuccess | ToolTransportFailure, int]:
+        """Run `_dispatch_with_timeout()` up to `tool.retry_policy.
+        max_attempts` times, retrying only when every safety signal in the
+        module docstring's "Day 13 Task 9" paragraph agrees it is safe.
+        Returns `(result, retry_count)` -- `retry_count` is the number of
+        *additional* attempts beyond the first that actually ran."""
+        retry_safe = (
+            tool.retry_policy.max_attempts > 1 and tool.idempotent and not tool.side_effecting
+        )
+        retryable_category_values = {category.value for category in tool.retry_policy.retryable_categories}
+
+        attempt = 0
+        while True:
+            attempt += 1
+            result = self._dispatch_with_timeout(
+                tool=tool,
+                request=request,
+                validated_arguments=validated_arguments,
+                policy_decision=policy_decision,
+                cancellation=cancellation,
+            )
+            if isinstance(result, ToolTransportSuccess):
+                return result, attempt - 1
+
+            # result is a ToolTransportFailure.
+            if not retry_safe:
+                return result, attempt - 1
+            if result.category.value not in retryable_category_values:
+                return result, attempt - 1
+            if attempt >= tool.retry_policy.max_attempts:
+                return result, attempt - 1  # retry exhaustion -- the same typed failure category
+            if cancellation is not None and cancellation.is_cancelled():
+                return result, attempt - 1  # never retry past an observed cancellation
+
     @staticmethod
     def _failure(
         request: ToolExecutionRequest,
@@ -347,6 +436,7 @@ class ToolExecutor:
         category: ToolExecutionErrorCategory,
         message: str,
         tool: ToolDefinition | None = None,
+        retry_count: int = 0,
     ) -> ToolExecutionResult:
         """Every failure path funnels through here so "nothing is granted
         on failure" is enforced in exactly one place -- `payload` stays at
@@ -364,4 +454,5 @@ class ToolExecutor:
             correlation_id=request.correlation_id,
             error_category=category,
             error_message=message,
+            retry_count=retry_count,
         )

@@ -323,4 +323,5 @@ def test_result_type_field_shape() -> None:
         "payload",
         "error_category",
         "error_message",
+        "retry_count",  # Task 9
     }

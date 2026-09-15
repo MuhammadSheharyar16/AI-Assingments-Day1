@@ -2153,7 +2153,7 @@ been copied forward again, so `pytest.exe` briefly resolved `aico` from
 Adds a governed tool boundary so only registered, versioned, schema-valid
 and policy-approved tools can execute through one controlled MCP gateway
 (`Day 13 Task.pdf`'s standing rule: "A model never receives a raw
-capability to execute arbitrary tools"). In progress — Tasks 1-8 are
+capability to execute arbitrary tools"). In progress — Tasks 1-9 are
 implemented so far.
 
 - `data/day13_pack/` — the Day 13 resource pack, copied verbatim from the
@@ -2226,13 +2226,30 @@ implemented so far.
   (`transport.py`'s new `DelayedStep`, "use a slow fake transport") keeps
   running in the background and its eventual result is simply discarded —
   proven directly by `tests/test_day13_transport_failures.py`.
+- `tools/executor.py` (Task 9) — `ToolExecutor._dispatch_with_retry()`:
+  wraps `_dispatch_with_timeout()` in a bounded loop, up to `tool.
+  retry_policy.max_attempts` (Task 1) attempts, each with its own full
+  timeout budget and no backoff delay (a deliberate simplification over
+  `ModelGateway`'s own exponential-backoff retry — "tool retry policy is
+  its own boundary"). A failure is only ever retried when three
+  independent signals all agree it is safe: the tool declares retry at
+  all, `tool.idempotent and not tool.side_effecting` (redundant with Task
+  1's registry validator and Task 4's policy check — belt-and-suspenders
+  for a safety property this consequential), and the failure's own
+  category is one of `tool.retry_policy.retryable_categories`. Retry
+  exhaustion returns the *same* typed failure category, never a distinct
+  "exhausted" one; `ToolExecutionResult.retry_count` records how many
+  additional attempts beyond the first actually ran.
 
 `tests/test_day13_executor.py` is an additional file beyond the required
 structure's own list (no single named file maps onto Task 7's end-to-end
 wiring) — the "equivalent previously accepted filenames" allowance,
-documented here. `tests/test_day13_transport_failures.py` (Task 8, further
-extended by Task 9/10) is the required structure's own named file for
-timeout/cancellation/retry/transport-normalization coverage.
+documented here. `tests/test_day13_transport_failures.py` (Task 8/9, to be
+further extended by Task 10) is the required structure's own named file
+for timeout/cancellation/retry/transport-normalization coverage — all
+three of `transport_failure_cases.json`'s retry-dependent cases
+(`TR13-001`/`TR13-002`/`TR13-003`) now resolve exactly as the fixture
+declares.
 
 ## Key design decisions
 
